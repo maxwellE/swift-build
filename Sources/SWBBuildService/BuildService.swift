@@ -53,15 +53,15 @@ open class BuildService: Service, @unchecked Sendable {
     private var lastBuildOperationID = LockedValue<Int>(0)
 
     /// The shared build manager.
-    let buildManager = BuildManager()
+    let buildManager = BazelBuildManager()
 
     /// The cache of core objects.
     ///
     /// We make this a heavy cache in debug mode, so that it can be explicitly cleared (via `clearAllCaches`), which helps considerably with memory leak debugging.
 #if DEBUG
-    private let sharedCoreCache = HeavyCache<CoreCacheKey, (Core?, [Diagnostic])>()
+    private let sharedCoreCache = HeavyCache<CoreCacheKey, (Core?, [SWBUtil.Diagnostic])>()
 #else
-    private let sharedCoreCache = Cache<CoreCacheKey, (Core?, [Diagnostic])>()
+    private let sharedCoreCache = Cache<CoreCacheKey, (Core?, [SWBUtil.Diagnostic])>()
 #endif
 
     /// Async lock to guard access to `sharedCoreCache`, since its `getOrInsert` method can't be given an async closure.
@@ -178,7 +178,7 @@ open class BuildService: Service, @unchecked Sendable {
                     .init(_diagnosticsEngine)
                 }
 
-                var diagnostics: [Diagnostic] {
+                var diagnostics: [SWBUtil.Diagnostic] {
                     _diagnosticsEngine.diagnostics
                 }
 

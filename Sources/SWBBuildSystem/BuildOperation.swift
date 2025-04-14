@@ -154,7 +154,7 @@ package extension BuildSystemOperation {
 }
 
 /// An in-flight build operation created in response to a build request.
-package final class BuildOperation: BuildSystemOperation {
+package class BuildOperation: BuildSystemOperation {
     /// Statistics on an executing operation.
     ///
     /// These statistics do not necessarily include all low-level commands.
@@ -530,7 +530,7 @@ package final class BuildOperation: BuildSystemOperation {
         // Create the low-level build system.
         let adaptor: OperationSystemAdaptor
         let system: BuildSystem
-        
+
         let llbQoS: SWBLLBuild.BuildSystem.QualityOfService?
         switch request.qos {
         case .default: llbQoS = .default

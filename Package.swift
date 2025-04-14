@@ -93,7 +93,7 @@ let package = Package(
         .executableTarget(
             name: "SWBBuildServiceBundle",
             dependencies: [
-                "SWBBuildService", "SWBBuildSystem", "SWBServiceCore", "SWBUtil", "SWBCore",
+                "SWBBuildService", "SWBBuildSystem", "SWBServiceCore", "SWBUtil", "SWBCore", .product(name: "SwiftProtobuf", package: "swift-protobuf"), .product(name: "Logging", package: "swift-log")
             ],
             exclude: ["CMakeLists.txt"],
             swiftSettings: swiftSettings(languageMode: .v6)),
@@ -101,7 +101,9 @@ let package = Package(
         // Libraries
         .target(
             name: "SwiftBuild",
-            dependencies: ["SWBCSupport", "SWBCore", "SWBProtocol", "SWBUtil", "SWBProjectModel"],
+            dependencies: [
+                "SWBCSupport", "SWBCore", "SWBProtocol", "SWBUtil", "SWBProjectModel", .product(name: "SwiftProtobuf", package: "swift-protobuf"), .product(name: "Logging", package: "swift-log")
+            ],
             exclude: ["CMakeLists.txt"],
             swiftSettings: swiftSettings(languageMode: .v5)),
         .target(
@@ -116,7 +118,7 @@ let package = Package(
             swiftSettings: swiftSettings(languageMode: .v5)),
         .target(
             name: "SWBBuildSystem",
-            dependencies: ["SWBCore", "SWBTaskConstruction", "SWBTaskExecution"],
+            dependencies: ["SWBCore", "SWBTaskConstruction", "SWBTaskExecution", .product(name: "SwiftProtobuf", package: "swift-protobuf"), .product(name: "Logging", package: "swift-log")],
             exclude: ["CMakeLists.txt"],
             swiftSettings: swiftSettings(languageMode: .v5)),
         .target(
@@ -458,6 +460,8 @@ if useLocalDependencies {
         .package(url: "https://github.com/swiftlang/swift-driver.git", branch: "main"),
         .package(url: "https://github.com/apple/swift-system.git", .upToNextMajor(from: "1.4.1")),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.0.3"),
+        .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.27.0"),
+        .package(url: "https://github.com/apple/swift-log.git", from: "1.0.0"),
     ]
     if !useLLBuildFramework {
         package.dependencies += [.package(url: "https://github.com/swiftlang/swift-llbuild.git", branch: "main"),]
