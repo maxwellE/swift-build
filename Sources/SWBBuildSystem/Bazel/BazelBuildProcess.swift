@@ -1,5 +1,6 @@
 import Combine
 import SWBUtil
+import SWBProtocol
 import Foundation
 import SwiftProtobuf
 import Logging

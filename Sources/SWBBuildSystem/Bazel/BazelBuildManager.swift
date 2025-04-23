@@ -76,7 +76,17 @@ package actor BazelBuildManager {
 
         let nodesToBuild = description.buildNodesToPrepareForIndex(buildRequest: request, buildRequestContext: buildRequestContext, workspaceContext: workspaceContext)
 
-        return BazelBuildOperation(request, buildRequestContext, description, environment: workspaceContext.userInfo?.processEnvironment, operationDelegate, clientDelegate, cachedBuildSystems, persistent: true, buildOutputMap: buildOutputMap, nodesToBuild: nodesToBuild, workspace: workspaceContext.workspace, core: workspaceContext.core, userPreferences: workspaceContext.userPreferences)
+        var environment: [String: String] = workspaceContext.userInfo?.processEnvironment ?? [:]
+
+        let settings: Settings = buildRequestContext.getCachedSettings(request.buildTargets.first!.parameters, target: request.buildTargets.first!.target)
+
+        let scriptEnvironment: [String: String] = computeScriptEnvironment(.shellScriptPhase, scope: settings.globalScope, settings: settings, workspaceContext: workspaceContext)
+
+        environment.merge(scriptEnvironment) { lhs, rhs in
+            lhs
+        }
+
+        return BazelBuildOperation(request, buildRequestContext, description, environment: environment, operationDelegate, clientDelegate, cachedBuildSystems, persistent: true, buildOutputMap: buildOutputMap, nodesToBuild: nodesToBuild, workspace: workspaceContext.workspace, core: workspaceContext.core, userPreferences: workspaceContext.userPreferences)
     }
 
     package nonisolated func enqueueClean(request buildRequest: BuildRequest, buildRequestContext: BuildRequestContext, workspaceContext: WorkspaceContext, style: BuildLocationStyle, operationDelegate: any BuildOperationDelegate, dependencyResolverDelegate: (any TargetDependencyResolverDelegate)?) -> CleanOperation {
