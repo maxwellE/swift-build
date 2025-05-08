@@ -65,7 +65,11 @@ package final class BazelBuildOperation: BuildOperation {
                 commandEnvironment["INTERNAL_DIR"] = self.workspace.projects.first!.xcodeprojPath.join("rules_xcodeproj").str
                 commandEnvironment["BAZEL_OUTPUT_BASE"] = "$(PROJECT_DIR)/../.."
 
-                commandEnvironment = commandEnvironment.mapValues({ value in
+                commandEnvironment = commandEnvironment
+                    .filter({ (key: String, value: String) in
+                        !key.hasPrefix("BAZEL_OUTPUTS_")
+                    })
+                    .mapValues({ value in
                     var mutatedValue: String = value
                     for key in commandEnvironment.keys {
                         if mutatedValue.contains("$(\(key))") {
@@ -96,10 +100,8 @@ package final class BazelBuildOperation: BuildOperation {
                 let commandLineString = startProcessHandler(
                     targetPatterns.joined(separator: "\n"),
                     commandEnvironment["SRCROOT"]!,
-                    commandEnvironment.filter({ (key: String, value: String) in
-                        !(key.hasPrefix("BAZEL_OUTPUTS_") || key.hasPrefix("$(INDEX_DATA_STORE_DIR)"))
-                    }),
-                    self.workspace.path.dirname.str + "/rules_xcodeproj/bazel/proxy_build.sh"
+                    commandEnvironment,
+                    self.workspace.path.dirname.join("rules_xcodeproj/bazel/proxy_build.sh").str
                 )
             } outputHandler: { data in
                 let fullMessage: String = .init(decoding: data, as: UTF8.self)
@@ -171,14 +173,14 @@ package final class BazelBuildOperation: BuildOperation {
                     self.delegate.updateBuildProgress(statusMessage: "Compilation complete", showInLog: true)
                 }
             } terminationHandler: { exitCode, cancelled in
-                var status: BuildOperationEnded.Status?
+                var status: BuildOperationEnded.Status = .failed
                 if cancelled {
                     status = .cancelled
                 } else {
                     status = exitCode == 0 ? .succeeded : .failed
                 }
                 self.delegate.buildComplete(self, status: status, delegate: self.buildOutputDelegate, metrics: nil)
-                continuation.resume(returning: status ?? .failed)
+                continuation.resume(returning: status)
             }
         }
     }
