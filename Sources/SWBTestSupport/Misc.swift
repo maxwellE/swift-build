@@ -39,7 +39,7 @@ package extension Sequence where Element: Equatable {
 /// - throws: ``StubError`` if the arguments list is an empty array.
 /// - throws: ``RunProcessNonZeroExitError`` if the process exited with a nonzero status code or uncaught signal.
 @discardableResult
-package func runProcess(_ args: [String], workingDirectory: String? = nil, environment: [String: String] = [:], interruptible: Bool = true, redirectStderr: Bool = false) async throws -> String {
+package func runProcess(_ args: [String], workingDirectory: String? = nil, environment: Environment = .init(), interruptible: Bool = true, redirectStderr: Bool = false) async throws -> String {
     guard let first = args.first else {
         throw StubError.error("Invalid number of arguments")
     }
@@ -66,19 +66,18 @@ package func runProcess(_ args: [String], workingDirectory: String? = nil, envir
 ///
 /// This method will use the current value of `DEVELOPER_DIR` in the environment by default, or the value of `overrideDeveloperDirectory` if specified.
 package func runProcessWithDeveloperDirectory(_ args: [String], workingDirectory: String? = nil, overrideDeveloperDirectory: String? = nil, interruptible: Bool = true, redirectStderr: Bool = true) async throws -> String {
-    let environment = ProcessInfo.processInfo.environment
+    let environment = Environment.current
         .filter(keys: ["DEVELOPER_DIR", "LLVM_PROFILE_FILE"])
-        .addingContents(of: overrideDeveloperDirectory.map { ["DEVELOPER_DIR": $0] } ?? [:])
+        .addingContents(of: overrideDeveloperDirectory.map { Environment(["DEVELOPER_DIR": $0]) } ?? .init())
     return try await runProcess(args, workingDirectory: workingDirectory, environment: environment, interruptible: interruptible, redirectStderr: redirectStderr)
 }
 
 package func runHostProcess(_ args: [String], workingDirectory: String? = nil, interruptible: Bool = true, redirectStderr: Bool = true) async throws -> String {
-    let processInfo = ProcessInfo.processInfo
-    switch try processInfo.hostOperatingSystem() {
+    switch try ProcessInfo.processInfo.hostOperatingSystem() {
     case .macOS:
         return try await InstalledXcode.currentlySelected().xcrun(args, workingDirectory: workingDirectory, redirectStderr: redirectStderr)
     default:
-        return try await runProcess(args, workingDirectory: workingDirectory, environment: processInfo.environment, interruptible: interruptible, redirectStderr: redirectStderr)
+        return try await runProcess(args, workingDirectory: workingDirectory, environment: .current, interruptible: interruptible, redirectStderr: redirectStderr)
     }
 }
 
@@ -106,7 +105,7 @@ package extension ConfiguredTarget {
     var platformDiscriminator: String? {
         // Converts the sdkroot/sdkvariant info into a set of normalized values.
         func normalize(platform: String, variant: String?) -> String {
-            // The suffix is not important in the discrimator as that can be verified via other means if necessary.
+            // The suffix is not important in the discriminator as that can be verified via other means if necessary.
             let platform = String(platform.split(separator: ".").first ?? "")
 
             if let variant, platform == "macosx" { return variant }
@@ -195,36 +194,6 @@ extension ProcessInfo {
         }
         #endif
         return false
-    }
-
-    /// Whether the process is running translated, e.g. using Rosetta on macOS, or Prism on Windows.
-    package var isTranslated: Bool {
-        #if os(Windows)
-        var pProcessMachine = USHORT(IMAGE_FILE_MACHINE_UNKNOWN)
-        var pNativeMachine = USHORT(IMAGE_FILE_MACHINE_UNKNOWN)
-        guard IsWow64Process2(GetCurrentProcess(), &pProcessMachine, &pNativeMachine) else {
-            return false
-        }
-        // Checking of specific architectures is a bit fragile, but we only support AMD64 and ARM64 on Windows for now.
-        guard pNativeMachine == IMAGE_FILE_MACHINE_ARM64 else {
-            return false
-        }
-        var systemInfo = SYSTEM_INFO()
-        GetNativeSystemInfo(&systemInfo)
-        return systemInfo.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64
-        #elseif canImport(Darwin)
-        let sysctl_proc_translated = "sysctl.proc_translated"
-        var len: Int = 0
-        if sysctlbyname(sysctl_proc_translated, nil, &len, nil, 0) == 0 {
-            var p = [CChar](repeating: 0, count: len)
-            if len > 0 && sysctlbyname(sysctl_proc_translated, &p, &len, nil, 0) == 0 {
-                return p[0] == 1
-            }
-        }
-        return false
-        #else
-        return false
-        #endif
     }
 
     // Get memory usage of current process in bytes

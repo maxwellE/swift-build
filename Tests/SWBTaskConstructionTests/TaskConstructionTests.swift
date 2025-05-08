@@ -21,6 +21,8 @@ import SWBUtil
 
 import SWBTaskConstruction
 
+import class SWBMacro.StringMacroDeclaration
+
 @Suite
 fileprivate struct TaskConstructionTests: CoreBasedTests {
     @Test(.requireSDKs(.macOS))
@@ -95,12 +97,13 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                         "ALTERNATE_OWNER": "fooOwner",
                         "ALTERNATE_GROUP": "",
                         "ALTERNATE_MODE": "",
-                        "GENERATE_MASTER_OBJECT_FILE": "YES",
+                        "GENERATE_PRELINK_OBJECT_FILE": "YES",
                     ]),
                 ],
                 targets: [
                     TestStandardTarget(
                         "AppTarget",
+                        type: .application,
                         buildConfigurations: [
                             TestBuildConfiguration("Debug", buildSettings: [
                                 "INFOPLIST_FILE": "Sources/Info.plist",
@@ -202,7 +205,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             try await fs.writePlist(Path(SRCROOT).join("Entitlements.plist"), .plDict([:]))
 
             // Check the debug build.
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["INFOPLIST_PREPROCESS": "YES", "COMBINE_HIDPI_IMAGES": "YES"]), fs: fs) { results -> Void in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["INFOPLIST_PREPROCESS": "YES", "COMBINE_HIDPI_IMAGES": "YES"]), runDestination: .macOS, fs: fs) { results -> Void in
                 // There should be two warnings about our custom output files, since we won't reprocess the custom file it generates with the same name.
                 results.checkWarning(.prefix("no rule to process file '\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/DerivedSources-normal/x86_64/Custom.fake-lang'"))
                 results.checkWarning(.prefix("no rule to process file '\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/DerivedSources-normal/x86_64/en.lproj/Standard.fake-lang'"))
@@ -517,9 +520,6 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                             .path("\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget_lto.o"),
                             .path("\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget_dependency_info.dat"),
                         ])
-
-                        // We used to pass the deployment target to the linker in the environment, but this is supposedly no longer necessary.
-                        task.checkEnvironment([:], exact: true)
                     }
 
                     // There should be two CpHeader tasks.
@@ -658,7 +658,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                             "SCRIPT_INPUT_FILE_1": .equal(""),
                             "SCRIPT_INPUT_FILE_COUNT": .equal("2"),
                             "SCRIPT_OUTPUT_FILE_COUNT": .equal("0"),
-                            "TOOLCHAIN_DIR": .equal("\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain"),
+                            "TOOLCHAIN_DIR": .equal("\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain"),
                         ]
                         // Validate that MACOSX_DEPLOYMENT_TARGET is present in the environment, but deployment targets for other platforms are not.
                         scriptVariables["MACOSX_DEPLOYMENT_TARGET"] = StringPattern.equal(MACOSX_DEPLOYMENT_TARGET)
@@ -836,7 +836,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             try await localFS.writePlist(Path(SRCROOT).join("Entitlements.plist"), .plDict([:]))
 
             // Check an install release build.
-            try await tester.checkBuild(BuildParameters(action: .install, configuration: "Release"), fs: localFS) { results -> Void in
+            try await tester.checkBuild(BuildParameters(action: .install, configuration: "Release"), runDestination: .macOS, fs: localFS) { results -> Void in
                 try results.checkTarget("AppTarget") { target -> Void in
                     // There should be a symlink task.
                     try results.checkTask(.matchTarget(target), .matchRuleType("SymLink")) { task in
@@ -885,9 +885,9 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                     }
                     results.checkNoTask(.matchTarget(target), .matchRuleType("Copy"))
 
-                    // There should be one master object link task.
-                    results.checkTask(.matchTarget(target), .matchRuleType("MasterObjectLink")) { task in
-                        task.checkRuleInfo(["MasterObjectLink", "\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/AppTarget-x86_64-master.o"])
+                    // There should be one prelinked object link task.
+                    results.checkTask(.matchTarget(target), .matchRuleType("PrelinkedObjectLink")) { task in
+                        task.checkRuleInfo(["PrelinkedObjectLink", "\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/AppTarget-x86_64-prelink.o"])
                         let nonUniqueObjs = task.commandLineAsStrings.filter { $0.contains("NonUnique") }
                         if nonUniqueObjs.count != 2 {
                             #expect(nonUniqueObjs.count == 2)
@@ -895,7 +895,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                         }
 
                         #expect(nonUniqueObjs[0] != nonUniqueObjs[1])
-                        task.checkCommandLineMatches([StringPattern.suffix("ld"), "-r", "-arch", "x86_64", "-syslibroot", .equal(core.loadSDK(.macOS).path.str), .equal("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/x86_64/SourceFile.o"), .equal("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/x86_64/SourceFile-Matched-Excluded.o"), .equal("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/x86_64/SourceFile-Matched-Included.o"), .equal(nonUniqueObjs[0]), .equal(nonUniqueObjs[1]), .equal("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/x86_64/SourceFile_MRR.o"), .equal("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/x86_64/Lex.yy.o"), .equal("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/x86_64/y.tab.o"), .equal("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/x86_64/Script-Output-Custom-SourceFile.o"), .equal("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/x86_64/Script-Output-Standard-SourceFile.o"), "-o", .equal("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/AppTarget-x86_64-master.o")])
+                        task.checkCommandLineMatches([StringPattern.suffix("ld"), "-r", "-arch", "x86_64", "-syslibroot", .equal(core.loadSDK(.macOS).path.str), .equal("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/x86_64/SourceFile.o"), .equal("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/x86_64/SourceFile-Matched-Excluded.o"), .equal("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/x86_64/SourceFile-Matched-Included.o"), .equal(nonUniqueObjs[0]), .equal(nonUniqueObjs[1]), .equal("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/x86_64/SourceFile_MRR.o"), .equal("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/x86_64/Lex.yy.o"), .equal("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/x86_64/y.tab.o"), .equal("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/x86_64/Script-Output-Custom-SourceFile.o"), .equal("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/x86_64/Script-Output-Standard-SourceFile.o"), "-o", .equal("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/AppTarget-x86_64-prelink.o")])
 
                         task.checkInputs([
                             .path("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/x86_64/SourceFile.o"),
@@ -915,7 +915,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                             .namePattern(.prefix("target-"))])
 
                         task.checkOutputs([
-                            .path("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/AppTarget-x86_64-master.o"),])
+                            .path("\(SRCROOT)/build/aProject.build/Release/AppTarget.build/Objects-normal/AppTarget-x86_64-prelink.o"),])
 
                     }
 
@@ -1139,7 +1139,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                 let parameters = BuildParameters(action: .install, configuration: "Release", overrides: [
                     "RETAIN_RAW_BINARIES": "YES",
                 ])
-                await tester.checkBuild(parameters, fs: localFS) {
+                await tester.checkBuild(parameters, runDestination: .macOS, fs: localFS) {
                     results in
                     results.checkTarget("AppTarget") { target in
                         // Check that there is a "copy aside" task.
@@ -1157,7 +1157,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                 let parameters = BuildParameters(configuration: "Release", overrides: [
                     "APPLY_RULES_IN_COPY_FILES": "YES",
                 ])
-                await tester.checkBuild(parameters, fs: localFS) {
+                await tester.checkBuild(parameters, runDestination: .macOS, fs: localFS) {
                     results in
                     results.checkTarget("AppTarget") { target in
                         // There should be only one Copy.
@@ -1184,7 +1184,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                 let parameters = BuildParameters(configuration: "Release", overrides: [
                     "APPLY_RULES_IN_COPY_HEADERS": "YES",
                 ])
-                await tester.checkBuild(parameters, fs: localFS) {
+                await tester.checkBuild(parameters, runDestination: .macOS, fs: localFS) {
                     results in
                     results.checkTarget("AppTarget") { target in
                         // There should be only one CpHeader.
@@ -1312,7 +1312,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let MACOSX_DEPLOYMENT_TARGET = core.loadSDK(.macOS).defaultDeploymentTarget
 
         // Check the debug build.
-        await tester.checkBuild { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget("FrameworkTarget") { target in
                 // There should be an Info.plist processing task.
                 results.checkTask(.matchTarget(target), .matchRuleType("ProcessInfoPlistFile")) { task in
@@ -1339,9 +1339,6 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                         ["-dynamiclib", "-isysroot", core.loadSDK(.macOS).path.str, "-Os", "-L\(SRCROOT)/build/EagerLinkingTBDs/Debug", "-L\(SRCROOT)/build/Debug", "-F\(SRCROOT)/build/EagerLinkingTBDs/Debug", "-F\(SRCROOT)/build/Debug", "-filelist", "\(SRCROOT)/build/aProject.build/Debug/FrameworkTarget.build/Objects-normal/x86_64/FrameworkTarget.LinkFileList", "-install_name", "/Library/Frameworks/FrameworkTarget.framework/Versions/A/FrameworkTarget"],
                         ["-Xlinker", "-object_path_lto", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug/FrameworkTarget.build/Objects-normal/x86_64/FrameworkTarget_lto.o", "-Xlinker", "-dependency_info", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug/FrameworkTarget.build/Objects-normal/x86_64/FrameworkTarget_dependency_info.dat", "-fobjc-link-runtime", "-lstatic", "-ldynamic", "-Xlinker", "-no_adhoc_codesign", "-o", "\(SRCROOT)/build/Debug/FrameworkTarget.framework/Versions/A/FrameworkTarget"]
                     ].reduce([], +))
-
-                    // We used to pass the deployment target to the linker in the environment, but this is supposedly no longer necessary.
-                    task.checkEnvironment([:], exact: true)
                 }
 
                 // There should be three CpHeader tasks.
@@ -1439,7 +1436,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
 
         // Check an install release build.
-        await tester.checkBuild(BuildParameters(action: .install, configuration: "Release")) { results in
+        await tester.checkBuild(BuildParameters(action: .install, configuration: "Release"), runDestination: .macOS) { results in
             results.checkTarget("FrameworkTarget") { target in
                 // There should be an Info.plist processing task.
                 results.checkTask(.matchTarget(target), .matchRuleType("ProcessInfoPlistFile")) { task in
@@ -1484,9 +1481,6 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                         .path("\(SRCROOT)/build/aProject.build/Release/FrameworkTarget.build/Objects-normal/x86_64/FrameworkTarget_lto.o"),
                         .path("\(SRCROOT)/build/aProject.build/Release/FrameworkTarget.build/Objects-normal/x86_64/FrameworkTarget_dependency_info.dat"),
                     ])
-
-                    // We used to pass the deployment target to the linker in the environment, but this is supposedly no longer necessary.
-                    task.checkEnvironment([:], exact: true)
                 }
 
                 results.checkTask(.matchTarget(target), .matchRuleType("GenerateTAPI")) { task in
@@ -1674,7 +1668,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             "ARCHS": architectures.joined(separator: " "),
         ]
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: runDestination == .macOS ? .anyMac: .host, overrides: overrides), runDestination: .host) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: overrides), runDestination: runDestination == .macOS ? .anyMac: .host) { results in
             results.consumeTasksMatchingRuleTypes(["CreateBuildDirectory", "Gate", "MkDir", "Touch", "RegisterExecutionPolicyException"])
             results.checkTarget("Tool") { target in
                 let effectivePlatformName = results.builtProductsDirSuffix(target)
@@ -1744,7 +1738,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                 let effectivePlatformName = results.builtProductsDirSuffix(target)
                 let targetBuildDir = Path("\(SRCROOT)/build/Debug\(effectivePlatformName)")
                 let targetObjectsPerArchBuildBaseDir = Path("\(SRCROOT)/build/aProject.build/Debug\(effectivePlatformName)/Support.build/Objects-normal/")
-                let libSupportFileName = "libSupport\(runDestination == .windows ? ".lib" : ".a")"
+                let libSupportFileName = runDestination == .windows ? "Support.lib" : "libSupport.a"
 
                 if versioningSupported {
                     results.checkTask(.matchTarget(target), .matchRuleType("WriteAuxiliaryFile"), .matchRuleItemBasename("Support_vers.c")) { _ in }
@@ -1785,7 +1779,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                                                    "-o", targetObjectsPerArchBuildDir.join("Binary/\(libSupportFileName)").str
                                                   ])
                         case .linux:
-                            task.checkCommandLine(["ar", "rcs", targetBuildDir.join(libSupportFileName).str, "@\(targetObjectsPerArchBuildDir.join("Support.LinkFileList").str)"])
+                            task.checkCommandLine(["llvm-ar", "rcs", targetBuildDir.join(libSupportFileName).str, "@\(targetObjectsPerArchBuildDir.join("Support.LinkFileList").str)"])
                         case .windows:
                             task.checkCommandLine(["llvm-lib.exe",
                                                    "/out:\(architectures.count > 1 ? targetObjectsPerArchBuildDir.join("Binary/\(libSupportFileName)").str : targetBuildDir.join(libSupportFileName).str)",
@@ -1948,6 +1942,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug", buildSettings: [
                             "INFOPLIST_FILE": "Sources/Info.plist",
@@ -1963,13 +1958,13 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                         ], destinationSubfolder: .frameworks, onlyForDeployment: false),
                         // The destination here matches how the "XPCServices" popup in the build phase UI populates it.  See <rdar://problem/15366863>
                         TestCopyFilesBuildPhase([
-                            TestBuildFile("Servicible.xpc", codeSignOnCopy: true),
+                            TestBuildFile("Serviceable.xpc", codeSignOnCopy: true),
                         ], destinationSubfolder: .builtProductsDir, destinationSubpath: "$(CONTENTS_FOLDER_PATH)/XPCServices", onlyForDeployment: false),
                         TestCopyFilesBuildPhase([
                             TestBuildFile("Extending.appex", codeSignOnCopy: true),
                         ], destinationSubfolder: .plugins, onlyForDeployment: false),
                     ],
-                    dependencies: ["FwkTarget", "Servicible", "Extending"]
+                    dependencies: ["FwkTarget", "Serviceable", "Extending"]
                 ),
                 TestStandardTarget(
                     "FwkTarget",
@@ -1989,7 +1984,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                     ]
                 ),
                 TestStandardTarget(
-                    "Servicible",
+                    "Serviceable",
                     type: .xpcService,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug", buildSettings: [:]),
@@ -2025,7 +2020,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         try fs.write(Path(SRCROOT).join("Info.plist"), contents: "<dict/>")
 
         // Check the debug build.
-        await tester.checkBuild(BuildParameters(configuration: "Debug"), fs: fs) { results in
+        await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
             results.checkTarget("FwkTarget") { target in
                 // The linker task should have the expected value for -install_path.
                 results.checkTask(.matchTarget(target), .matchRuleType("Ld"), .matchRuleItem("\(SRCROOT)/build/Debug/FwkTarget.framework/Versions/A/FwkTarget")) { task in
@@ -2035,9 +2030,9 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                 results.checkTask(.matchTarget(target), .matchRuleType("CodeSign"), .matchRuleItem("\(SRCROOT)/build/Debug/FwkTarget.framework/Versions/A")) { task in
                 }
             }
-            results.checkTarget("Servicible") { target in
+            results.checkTarget("Serviceable") { target in
                 // There should be one codesign task.
-                results.checkTask(.matchTarget(target), .matchRuleType("CodeSign"), .matchRuleItem("\(SRCROOT)/build/Debug/Servicible.xpc")) { task in
+                results.checkTask(.matchTarget(target), .matchRuleType("CodeSign"), .matchRuleItem("\(SRCROOT)/build/Debug/Serviceable.xpc")) { task in
                 }
             }
             results.checkTarget("Extending") { target in
@@ -2053,9 +2048,9 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                 }
 
                 // For the XPC service, there should be a copy task, and no signing task.
-                results.checkTask(.matchTarget(target), .matchRuleType("Copy"), .matchRuleItem("\(SRCROOT)/build/Debug/AppTarget.app/Contents/XPCServices/Servicible.xpc"), .matchRuleItem("\(SRCROOT)/build/Debug/Servicible.xpc")) { task in
+                results.checkTask(.matchTarget(target), .matchRuleType("Copy"), .matchRuleItem("\(SRCROOT)/build/Debug/AppTarget.app/Contents/XPCServices/Serviceable.xpc"), .matchRuleItem("\(SRCROOT)/build/Debug/Serviceable.xpc")) { task in
                 }
-                results.checkNoTask(.matchTarget(target), .matchRuleType("CodeSign"), .matchRuleItem("\(SRCROOT)/build/Debug/AppTarget.app/Contents/XPCServices/Servicible.xpc"))
+                results.checkNoTask(.matchTarget(target), .matchRuleType("CodeSign"), .matchRuleItem("\(SRCROOT)/build/Debug/AppTarget.app/Contents/XPCServices/Serviceable.xpc"))
 
                 // For the appex, there should be a copy task, no signing task, and a validation task.
                 results.checkTask(.matchTarget(target), .matchRuleType("Copy"), .matchRuleItem("\(SRCROOT)/build/Debug/AppTarget.app/Contents/PlugIns/Extending.appex"), .matchRuleItem("\(SRCROOT)/build/Debug/Extending.appex")) { task in
@@ -2083,7 +2078,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
     }
 
-    @Test(.requireSDKs(.macOS))
+    @Test(.requireSDKs(.host), .skipHostOS(.windows, "not yet working"))
     func emptyTarget() async throws {
         let testProject = TestProject(
             "aProject",
@@ -2100,7 +2095,8 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             "RETAIN_RAW_BINARIES": "YES",
             "INSTALL_USER": "root",
         ])
-        try await TaskConstructionTester(getCore(), testProject).checkBuild(parameters) { results in
+        let runDestination = RunDestinationInfo.host
+        try await TaskConstructionTester(getCore(), testProject).checkBuild(parameters, runDestination: runDestination) { results in
             // There should be no tasks.
             //
             // FIXME: This isn't true yet, we test for the absence of particular tasks.
@@ -2138,7 +2134,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                             .namePattern(.prefix("CreateBuildDirectory-/tmp/aProject.dst")),
                             .namePattern(.prefix("CreateBuildDirectory-/tmp/Test/aProject/build")),
                             .namePattern(.prefix("CreateBuildDirectory-/tmp/Test/aProject/build")),
-                            .namePattern(.prefix("CreateBuildDirectory-/tmp/Test/aProject/build/Release/BuiltProducts")),
+                            .namePattern(.prefix("CreateBuildDirectory-/tmp/Test/aProject/build/Release\(runDestination.builtProductsDirSuffix)/BuiltProducts")),
                             .namePattern(.prefix("CreateBuildDirectory-/tmp/Test/aProject/build/EagerLinkingTBDs")),
                             .namePattern(.and(.prefix("target"), .suffix("-begin-compiling"))),
                         ])
@@ -2147,7 +2143,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                             .namePattern(.prefix("CreateBuildDirectory-/tmp/aProject.dst")),
                             .namePattern(.prefix("CreateBuildDirectory-/tmp/Test/aProject/build")),
                             .namePattern(.prefix("CreateBuildDirectory-/tmp/Test/aProject/build")),
-                            .namePattern(.prefix("CreateBuildDirectory-/tmp/Test/aProject/build/Release/BuiltProducts")),
+                            .namePattern(.prefix("CreateBuildDirectory-/tmp/Test/aProject/build/Release\(runDestination.builtProductsDirSuffix)/BuiltProducts")),
                             .namePattern(.and(.prefix("target"), .suffix("-begin-compiling"))),
                         ])
                     }
@@ -2171,7 +2167,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
     }
 
-    @Test(.requireSDKs(.macOS))
+    @Test(.requireSDKs(.host), .skipHostOS(.windows, "not yet working"))
     func emptySourcesTarget() async throws {
         let testProject = TestProject(
             "aProject",
@@ -2194,7 +2190,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let parameters = BuildParameters(action: .install, configuration: "Release", overrides: [
             "INSTALL_USER": "root",
         ])
-        await tester.checkBuild(parameters) { results in
+        await tester.checkBuild(parameters, runDestination: .host) { results in
             // There should be no tasks other than gate and auxiliary file tasks (writing headermaps).
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("WriteAuxiliaryFile")) { _ in }
@@ -2210,7 +2206,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
     }
 
-    @Test(.requireSDKs(.macOS))
+    @Test(.requireSDKs(.host), .skipHostOS(.windows, "not yet working"))
     func copyFilesOnlyOnDeploymentTarget() async throws {
         let testProject = TestProject(
             "aProject",
@@ -2237,9 +2233,9 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        // Test a regular build.  Since `only-for-deplyment` is set, this should not result in any tasks.
+        // Test a regular build.  Since `only-for-deployment` is set, this should not result in any tasks.
         let buildParameters = BuildParameters(action: .build, configuration: "Debug", overrides: [:])
-        await tester.checkBuild(buildParameters) { results in
+        await tester.checkBuild(buildParameters, runDestination: .host) { results in
             // We need to filter out boilerplate tasks such as `Gate` and `WriteAuxiliaryFile`, but there should be no others besides those.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("WriteAuxiliaryFile")) { _ in }
@@ -2258,7 +2254,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let installParameters = BuildParameters(action: .install, configuration: "Release", overrides: [
             "INSTALL_USER": "root",
         ])
-        await tester.checkBuild(installParameters) { results in
+        await tester.checkBuild(installParameters, runDestination: .host) { results in
             // We need to filter out boilerplate tasks such as `Gate` and `WriteAuxiliaryFile`.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("WriteAuxiliaryFile")) { _ in }
@@ -2275,7 +2271,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
     }
 
-    @Test(.requireSDKs(.macOS))
+    @Test(.requireSDKs(.host), .skipHostOS(.windows, "not yet working"))
     func externalBuildTarget() async throws {
         let testProject = TestProject(
             "aProject",
@@ -2302,14 +2298,16 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
 
         @PluginExtensionSystemActor func pluginSearchPaths() -> [Path] {
             core.pluginManager.extensions(of: SpecificationsExtensionPoint.self).flatMap { ext in
-                ext.specificationSearchPaths().compactMap { try? $0.filePath }
+                ext.specificationSearchPaths(resourceSearchPaths: core.resourceSearchPaths).compactMap { try? $0.filePath }
             }.sorted()
         }
 
         let searchPaths = await pluginSearchPaths().map(\.str)
 
+        let runDestination = RunDestinationInfo.host
+
         // Check a debug build.
-        await tester.checkBuild(BuildParameters(configuration: "Release"), processEnvironment: ["PATH": "/usr/local/bin"]) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Release"), runDestination: runDestination, processEnvironment: ["PATH": "/usr/local/bin"]) { results in
             results.checkTarget("External") { target in
                 // There should be one main task.
                 results.checkTask(.matchRuleType("ExternalBuildToolExecution")) { task in
@@ -2318,31 +2316,40 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                     task.checkCommandLine(["fooBar", "this", "and", "that"])
                     #expect(task.workingDirectory == Path.root.join("tmp"))
 
-                    let developerPath = core.developerPath.str
+                    let developerPath = core.developerPath
 
                     // Check interesting environment variables.
                     task.checkEnvironment([
                         "ACTION": .equal(""),                                       // No ACTION is passed for a 'build' action.
-                        "TARGET_BUILD_DIR": .equal("\(SRCROOT)/build/Release"),
-                        "BUILT_PRODUCTS_DIR": .equal("\(SRCROOT)/build/Release"),
+                        "TARGET_BUILD_DIR": .equal("\(SRCROOT)/build/Release\(runDestination.builtProductsDirSuffix)"),
+                        "BUILT_PRODUCTS_DIR": .equal("\(SRCROOT)/build/Release\(runDestination.builtProductsDirSuffix)"),
                         // Check that we don't export SDK_VARIANT or macCatalyst settings.
                         "SDK_VARIANT": .none,
                         "IS_MACCATALYST": .none,
                     ])
 
-                    for path in searchPaths + [
-                        "\(developerPath)/Toolchains/XcodeDefault.xctoolchain/usr/bin",
-                        "\(developerPath)/Toolchains/XcodeDefault.xctoolchain/usr/local/bin",
-                        "\(developerPath)/Toolchains/XcodeDefault.xctoolchain/usr/libexec",
-                        "\(developerPath)/Platforms/MacOSX.platform/usr/bin",
-                        "\(developerPath)/Platforms/MacOSX.platform/usr/local/bin",
-                        "\(developerPath)/Platforms/MacOSX.platform/Developer/usr/bin",
-                        "\(developerPath)/Platforms/MacOSX.platform/Developer/usr/local/bin",
-                        "\(developerPath)/usr/bin",
-                        "\(developerPath)/usr/local/bin",
+                    let platformSearchPaths: [Path]
+                    switch runDestination.platform {
+                    case "macosx":
+                        platformSearchPaths = [
+                            developerPath.path.join("Toolchains/XcodeDefault.xctoolchain/usr/bin"),
+                            developerPath.path.join("Toolchains/XcodeDefault.xctoolchain/usr/local/bin"),
+                            developerPath.path.join("Toolchains/XcodeDefault.xctoolchain/usr/libexec"),
+                            developerPath.path.join("Platforms/MacOSX.platform/usr/bin"),
+                            developerPath.path.join("Platforms/MacOSX.platform/usr/local/bin"),
+                            developerPath.path.join("Platforms/MacOSX.platform/Developer/usr/bin"),
+                            developerPath.path.join("Platforms/MacOSX.platform/Developer/usr/local/bin"),
+                        ]
+                    default:
+                        platformSearchPaths = []
+                    }
+
+                    for path in searchPaths + platformSearchPaths.map(\.str) + [
+                        developerPath.path.join("usr/bin").str,
+                        developerPath.path.join("usr/local/bin").str,
                         "/usr/local/bin"
                     ] {
-                        #expect(task.environment.bindingsDictionary["PATH"]?.contains(path) == true)
+                        #expect(task.environment.bindingsDictionary["PATH"]?.contains(path) == true, "PATH environment variable did not contain entry: \(path)")
                     }
                 }
 
@@ -2362,7 +2369,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
 
         // Check an install build.
-        await tester.checkBuild(BuildParameters(action: .install, configuration: "Release")) { results in
+        await tester.checkBuild(BuildParameters(action: .install, configuration: "Release"), runDestination: runDestination) { results in
             results.checkTarget("External") { target in
                 // There should be one main task.
                 results.checkTask(.matchRuleType("ExternalBuildToolExecution")) { task in
@@ -2375,7 +2382,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                     task.checkEnvironment([
                         "ACTION": .equal("install"),
                         "TARGET_BUILD_DIR": .equal("/tmp/aProject.dst"),
-                        "BUILT_PRODUCTS_DIR": .equal("\(SRCROOT)/build/Release"),
+                        "BUILT_PRODUCTS_DIR": .equal("\(SRCROOT)/build/Release\(runDestination.builtProductsDirSuffix)"),
                         // Check that we don't export SDK_VARIANT or macCatalyst settings.
                         "SDK_VARIANT": .none,
                         "IS_MACCATALYST": .none,
@@ -2398,7 +2405,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
 
         // Check an install build in which INSTALLED_PRODUCT_ASIDES is defined in the environment.
-        await tester.checkBuild(BuildParameters(action: .install, configuration: "Release"), processEnvironment: ["INSTALLED_PRODUCT_ASIDES": "YES"]) { results in
+        await tester.checkBuild(BuildParameters(action: .install, configuration: "Release"), runDestination: runDestination, processEnvironment: ["INSTALLED_PRODUCT_ASIDES": "YES"]) { results in
             results.checkTarget("External") { target in
                 // There should be one main task.
                 results.checkTask(.matchRuleType("ExternalBuildToolExecution")) { task in
@@ -2411,11 +2418,11 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                     task.checkEnvironment([
                         "ACTION": .equal("install"),
                         "TARGET_BUILD_DIR": .equal("/tmp/aProject.dst"),
-                        "BUILT_PRODUCTS_DIR": .equal("\(SRCROOT)/build/Release/BuiltProducts"),
+                        "BUILT_PRODUCTS_DIR": .equal("\(SRCROOT)/build/Release\(runDestination.builtProductsDirSuffix)/BuiltProducts"),
                     ])
                 }
 
-                // Ignore all Gate and build direcotry tasks.
+                // Ignore all Gate and build directory tasks.
                 results.checkTasks(.matchRuleType("Gate")) { _ in }
                 results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
 
@@ -2431,7 +2438,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
 
         // Check an install build in which SKIP_INSTALL is defined.
-        await tester.checkBuild(BuildParameters(action: .install, configuration: "SkipInstall")) { results in
+        await tester.checkBuild(BuildParameters(action: .install, configuration: "SkipInstall"), runDestination: runDestination) { results in
             results.checkTarget("External") { target in
                 // There should be one main task.
                 results.checkTask(.matchRuleType("ExternalBuildToolExecution")) { task in
@@ -2443,8 +2450,8 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                     // Check interesting environment variables.
                     task.checkEnvironment([
                         "ACTION": .equal("install"),
-                        "TARGET_BUILD_DIR": .equal("\(SRCROOT)/build/UninstalledProducts/macosx"),
-                        "BUILT_PRODUCTS_DIR": .equal("\(SRCROOT)/build/SkipInstall"),
+                        "TARGET_BUILD_DIR": .equal("\(SRCROOT)/build/UninstalledProducts/\(runDestination.platform)"),
+                        "BUILT_PRODUCTS_DIR": .equal("\(SRCROOT)/build/SkipInstall\(runDestination.builtProductsDirSuffix)"),
                     ])
                 }
 
@@ -2464,7 +2471,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
     }
 
-    @Test(.requireSDKs(.macOS))
+    @Test(.requireSDKs(.host), .skipHostOS(.windows, "not yet working"))
     func externalBuildTargetDependencies() async throws {
         let testProject = TestProject(
             "aProject",
@@ -2499,7 +2506,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
         // Check a release build.
-        await tester.checkBuild(BuildParameters(configuration: "Release"), processEnvironment: ["PATH": "/usr/local/bin"]) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Release"), runDestination: .host, processEnvironment: ["PATH": "/usr/local/bin"]) { results in
             results.checkTarget("EmptyTool") { target in
                 // Check that the EmptyTool target depends on the ExternalBuildToolExecution.
                 results.checkTask(.matchTarget(target), .matchRuleType("CompileC")) { compileTask in
@@ -2514,7 +2521,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
     }
 
-    @Test(.requireSDKs(.macOS))
+    @Test(.requireSDKs(.macOS, "mig is Apple-only"))
     func outputFileProcessing() async throws {
         let testProject = try await TestProject(
             "aProject",
@@ -2545,7 +2552,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
         // Check the debug build.
-        await tester.checkBuild { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget("Tool") { target in
                 // There should be one Mig task.
                 results.checkTask(.matchTarget(target), .matchRuleType("Mig")) { task in
@@ -2574,7 +2581,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
     }
 
-    @Test(.requireSDKs(.macOS))
+    @Test(.requireSDKs(.macOS, "multi-arch builds are Apple-specific"))
     func perArchIncludedSourceFileNames() async throws {
         let testProject = TestProject(
             "aProject",
@@ -2624,7 +2631,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                     ]
                 ),
             ])
-        try await TaskConstructionTester(getCore(), testProject).checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .anyMac), userPreferences: UserPreferences.defaultForTesting.with(enableDebugActivityLogs: true)) { results in
+        try await TaskConstructionTester(getCore(), testProject).checkBuild(BuildParameters(configuration: "Debug"), runDestination: .anyMac, userPreferences: UserPreferences.defaultForTesting.with(enableDebugActivityLogs: true)) { results in
             results.checkTask(.matchRuleType("CompileC"), .matchRuleItemBasename("foo_normal_x86_64.c")) { _ in }
             results.checkTask(.matchRuleType("CompileC"), .matchRuleItemBasename("foo_normal_x86_64h.c")) { _ in }
             results.checkTask(.matchRuleType("CompileC"), .matchRuleItemBasename("foo_normal_arm64.c")) { _ in }
@@ -2661,7 +2668,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
     }
 
-    // Test vaguaries of build variant handling.
+    // Test vagaries of build variant handling.
     @Test(.requireSDKs(.macOS))
     func buildVariants() async throws {
         let variants = ["normal", "debug"]
@@ -2750,7 +2757,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
         // Check an install build to examine per-variant postprocessing steps.
-        await tester.checkBuild(BuildParameters(action: .install, configuration: "Release")) { results in
+        await tester.checkBuild(BuildParameters(action: .install, configuration: "Release"), runDestination: .macOS) { results in
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
 
@@ -2933,7 +2940,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
         // Check an install build to examine per-variant postprocessing steps.
-        await tester.checkBuild(BuildParameters(action: .install, configuration: "Release")) { results in
+        await tester.checkBuild(BuildParameters(action: .install, configuration: "Release"), runDestination: .macOS) { results in
             results.checkTarget("Framework") { target in
                 // There should be two strip tasks, one per variant.
                 results.checkTasks(.matchTarget(target), .matchRuleType("Strip")) { tasks in
@@ -2971,6 +2978,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "App",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug",
                                                buildSettings: [
@@ -2985,7 +2993,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             // Ignore all the auxiliary file tasks.
             results.checkTasks(.matchRuleType("WriteAuxiliaryFile")) { tasks in }
             // Ignore all the mkdir and touch tasks.
@@ -3060,7 +3068,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
         // Check that setting VERSION_INFO_EXPORT_DECL to 'export' generates the expected file contents.
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["VERSION_INFO_EXPORT_DECL": "export"])) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["VERSION_INFO_EXPORT_DECL": "export"]), runDestination: .macOS) { results in
             // There should be a WriteAuxiliaryFile task to create the versioning file.
             results.checkWriteAuxiliaryFileTask(.matchRule(["WriteAuxiliaryFile", "\(SRCROOT)/build/aProject.build/Debug/Framework.build/DerivedSources/Framework_vers.c"])) { task, contents in
                 task.checkInputs([
@@ -3077,7 +3085,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
 
         // Check that setting VERSION_INFO_EXPORT_DECL to 'static' generates the expected file contents, omitting the 'extern' lines.
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["VERSION_INFO_EXPORT_DECL": "static"])) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["VERSION_INFO_EXPORT_DECL": "static"]), runDestination: .macOS) { results in
             // There should be a WriteAuxiliaryFile task to create the versioning file.
             results.checkWriteAuxiliaryFileTask(.matchRule(["WriteAuxiliaryFile", "\(SRCROOT)/build/aProject.build/Debug/Framework.build/DerivedSources/Framework_vers.c"])) { task, contents in
                 task.checkInputs([
@@ -3135,13 +3143,13 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let tester = try TaskConstructionTester(core, testProject)
 
         // Choose any include path that's part of the macosx SDK.
-        let parameters = BuildParameters(configuration: "Debug", activeRunDestination: .anyMac, overrides: [
+        let parameters = BuildParameters(configuration: "Debug", overrides: [
             "HEADER_SEARCH_PATHS": "/usr/include/libxml2 $(CURRENT_VARIANT)/variantbased $(CURRENT_ARCH)/archbased",
         ])
 
         // Need to use `localFS` so that the remapping logic can find the filesystem SDK in order to check for the presence
         // of the include path that may require remapping.
-        await tester.checkBuild(parameters, fs: localFS) { results in
+        await tester.checkBuild(parameters, runDestination: .anyMac, fs: localFS) { results in
             results.checkTarget(targetName) { target in
                 for variant in buildVariants {
                     for arch in archs {
@@ -3210,7 +3218,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
 
         // Need to use `localFS` so that the remapping logic can find the filesystem SDK in order to check for the presence
         // of the include path that may require remapping.
-        await tester.checkBuild(parameters, fs: localFS) { results in
+        await tester.checkBuild(parameters, runDestination: .macOS, fs: localFS) { results in
             results.checkTarget(targetName) { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("CompileC")) { task in
                     task.checkCommandLineContains([
@@ -3337,7 +3345,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
 
             // Check the tasks.
             // What we're checking for here is that the command lines include the expected sparse SDK-driven options.
-            await tester.checkBuild(fs: localFS) { results in
+            await tester.checkBuild(runDestination: .macOS, fs: localFS) { results in
                 results.checkTarget(targetName) { target in
                     // Check the search paths in the CompileC task.
                     results.checkTask(.matchTarget(target), .matchRuleType("CompileC")) { task in
@@ -3418,7 +3426,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                 "LIBRARY_SEARCH_PATHS": "/usr/local/lib/one $(SDKROOT)/usr/local/lib/two $(inherited)",
                 "FRAMEWORK_SEARCH_PATHS": "/Library/Frameworks/one $(SDKROOT)/Library/Frameworks/two $(inherited)",
             ])
-            await tester.checkBuild(parameters, fs: localFS) { results in
+            await tester.checkBuild(parameters, runDestination: .macOS, fs: localFS) { results in
                 results.checkTarget(targetName) { target in
                     // Check the search paths in the CompileC task.
                     results.checkTask(.matchTarget(target), .matchRuleType("CompileC")) { task in
@@ -3590,7 +3598,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let intermediates = arena.buildIntermediatesPath
         let parameters = BuildParameters(configuration: "Debug", arena: arena)
         let request1 = BuildRequest(parameters: parameters, buildTargets: tester.workspace.projects[0].targets.map({ BuildRequest.BuildTargetInfo(parameters: parameters, target: $0) }), continueBuildingAfterErrors: true, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
-        await tester.checkBuild(parameters, buildRequest: request1) { results in
+        await tester.checkBuild(parameters, runDestination: .macOS, buildRequest: request1) { results in
             results.checkTarget(targetName) { target in
                 // There should be one CompileC task.
                 results.checkTask(.matchTarget(target), .matchRuleType("CompileC")) { task in
@@ -3621,7 +3629,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
 
         // Check a build with just the first target -- this should have no VFS.
         let request2 = BuildRequest(parameters: parameters, buildTargets: [BuildRequest.BuildTargetInfo(parameters: parameters, target: tester.workspace.projects[0].targets[0])], continueBuildingAfterErrors: true, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
-        await tester.checkBuild(parameters, buildRequest: request2) { results in
+        await tester.checkBuild(parameters, runDestination: .macOS, buildRequest: request2) { results in
             results.checkTarget(targetName) { target in
                 // There should be one CompileC task.
                 results.checkTask(.matchTarget(target), .matchRuleType("CompileC")) { task in
@@ -3675,7 +3683,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
 
         // Check for a set of expected tasks instead of checking for the absence of Ld, because checking checkNoTask("Ld") exposes us to bugs if Ld changes name.
         let expectedTasks = Set(["CompileMetalFile", "MetalLink", "Gate", "WriteAuxiliaryFile", "MkDir", "Touch", "CreateBuildDirectory", "ProcessInfoPlistFile"])
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.consumeTasksMatchingRuleTypes(["RegisterExecutionPolicyException"])
             results.checkNoDiagnostics()
             results.checkTasks() { tasks in
@@ -3714,7 +3722,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkNoDiagnostics()
 
             results.checkTask(.matchRule(["CompileC", "/tmp/Test/ProjectName/build/ProjectName.build/Debug/TargetName.build/Objects-normal/x86_64/File.o", "/tmp/Test/ProjectName/Sources/File.s", "normal", "x86_64", "assembler-with-cpp", "com.apple.compilers.llvm.clang.1_0.compiler"])) { _ in }
@@ -3764,7 +3772,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
 
         let arena = ArenaInfo.buildArena(derivedDataRoot: Path("/tmp/DerivedData"), enableIndexDataStore: true)
         let indexDataStoreRoot = try #require(arena.indexDataStoreFolderPath).str
-        try await tester.checkBuild(BuildParameters(configuration: "Debug", arena: arena)) { results in
+        try await tester.checkBuild(BuildParameters(configuration: "Debug", arena: arena), runDestination: .macOS) { results in
             results.checkNoDiagnostics()
 
             let file1ObjectRelPath = "ProjectName.build/Debug/TargetName.build/Objects-normal/x86_64/File1.o"
@@ -3835,7 +3843,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
         let arena = ArenaInfo.buildArena(derivedDataRoot: Path("/tmp/DerivedData"), enableIndexDataStore: true)
-        try await tester.checkBuild(BuildParameters(configuration: "Debug", arena: arena)) { results in
+        try await tester.checkBuild(BuildParameters(configuration: "Debug", arena: arena), runDestination: .macOS) { results in
             results.checkNoDiagnostics()
 
             results.checkTask(.matchRule(["CompileC", "\(arena.buildIntermediatesPath.str)/ProjectName.build/Debug/TargetName.build/Objects-normal/x86_64/File1.o", "\(SRCROOT)/Sources/File1.m", "normal", "x86_64", "objective-c", "com.apple.compilers.llvm.clang.1_0.compiler"])) { task in
@@ -3899,7 +3907,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testProject)
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkNoDiagnostics()
 
             results.checkTask(.matchRuleType("CopyStringsFile"), .matchRuleItemBasename("Strings-UTF8.strings")) { task in
@@ -3972,7 +3980,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
         // Check the tasks' search paths.  Note that this will include headermaps, and paths to the built products dir and derived files dir.
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget(targetName) { target in
                 // Check options in the clang command.
                 results.checkTask(.matchTarget(target), .matchRuleType("CompileC")) { task in
@@ -4037,7 +4045,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                         }
                     }
                     // Note that system framework search paths are presently not deduplicated for the linker args.
-                    #expect(searchPaths == ["-L\(SRCROOT)/build/EagerLinkingTBDs/Debug", "-L\(SRCROOT)/build/Debug", "-L/Local/Library/Libs", "-F\(SRCROOT)/build/EagerLinkingTBDs/Debug", "-F\(SRCROOT)/build/Debug", "-F/Local/Library/Frameworks", "-F/Local/Library/Frameworks", "-iframework", "/System/Library/PrivateFrameworks", "-iframework", "/Local/Library/Frameworks", "-iframework", "/Local/Library/Frameworks", "-L\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx", "-L/usr/lib/swift"])
+                    #expect(searchPaths == ["-L\(SRCROOT)/build/EagerLinkingTBDs/Debug", "-L\(SRCROOT)/build/Debug", "-L/Local/Library/Libs", "-F\(SRCROOT)/build/EagerLinkingTBDs/Debug", "-F\(SRCROOT)/build/Debug", "-F/Local/Library/Frameworks", "-F/Local/Library/Frameworks", "-iframework", "/System/Library/PrivateFrameworks", "-iframework", "/Local/Library/Frameworks", "-iframework", "/Local/Library/Frameworks", "-L\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx", "-L/usr/lib/swift"])
                     // FIXME: <rdar://problem/37033578> [Swift Build] Extra "//" in framework search path for Ld command
                 }
             }
@@ -4074,6 +4082,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         targetName,
+                        type: .application,
                         buildConfigurations: [
                             TestBuildConfiguration("Debug"),
                         ],
@@ -4094,24 +4103,24 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
 
             try fs.write(Path(SRCROOT).join("Info.plist"), contents: "<dict/>")
 
-            let clangTool = try await discoveredClangToolInfo(toolPath: Path("\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"), arch: RunDestinationInfo.macOS.targetArchitecture, sysroot: nil)
+            let clangTool = try await discoveredClangToolInfo(toolPath: Path("\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"), arch: RunDestinationInfo.macOS.targetArchitecture, sysroot: nil)
             guard let clangLibDarwinPath = clangTool.getLibDarwinPath() else {
                 Issue.record("Could not get lib darwin path")
                 return
             }
 
             // Check the LibSystem address sanitizer.
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["ENABLE_ADDRESS_SANITIZER": "YES","ENABLE_SYSTEM_SANITIZERS": "YES" ]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["ENABLE_ADDRESS_SANITIZER": "YES","ENABLE_SYSTEM_SANITIZERS": "YES" ]), runDestination: .macOS, fs: fs) { results in
                 results.checkTarget(targetName) { target in
                     // There should be one CompileC task, which includes the ASan option, and which puts its output in a -asan directory.
                     results.checkTask(.matchTarget(target), .matchRuleType("CompileC")) { task in
                         task.checkRuleInfo([.equal("CompileC"), .equal("\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-asan/x86_64/SourceFile.o"), .suffix("SourceFile.m"), .any, .any, .any, .any])
-                        task.checkCommandLineContains(["\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", "-fsanitize=address", "-fsanitize-stable-abi", "\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-asan/x86_64/SourceFile.o"])
+                        task.checkCommandLineContains(["\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", "-fsanitize=address", "-fsanitize-stable-abi", "\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-asan/x86_64/SourceFile.o"])
                     }
                     //There should be no task to copy dylib. While testing for -fsanitize-stable-abi is a temporary test. This test should remain.
                     results.checkNoTask(.matchTarget(target), .matchRuleType("Copy"), .matchRuleItemBasename("libclang_rt.asan_osx_dynamic.dylib"))
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
-                        task.checkCommandLineContains(["\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc", "-sanitize=address", "-sanitize-stable-abi", "\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-asan/x86_64/\(targetName)-OutputFileMap.json"])
+                        task.checkCommandLineContains(["\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc", "-sanitize=address", "-sanitize-stable-abi", "\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-asan/x86_64/\(targetName)-OutputFileMap.json"])
                     }
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(
@@ -4121,23 +4130,23 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                 }
             }
             // Check the address sanitizer.
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["ENABLE_ADDRESS_SANITIZER": "YES"]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["ENABLE_ADDRESS_SANITIZER": "YES"]), runDestination: .macOS, fs: fs) { results in
                 results.checkTarget(targetName) { target in
                     // There should be one CompileC task, which includes the ASan option, and which puts its output in a -asan directory.
                     results.checkTask(.matchTarget(target), .matchRuleType("CompileC")) { task in
                         task.checkRuleInfo([.equal("CompileC"), .equal("\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-asan/x86_64/SourceFile.o"), .suffix("SourceFile.m"), .any, .any, .any, .any])
-                        task.checkCommandLineContains(["\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", "-fsanitize=address", "-D_LIBCPP_HAS_NO_ASAN", "\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-asan/x86_64/SourceFile.o"])
+                        task.checkCommandLineContains(["\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", "-fsanitize=address", "-D_LIBCPP_HAS_NO_ASAN", "-D_LIBCPP_HAS_ASAN=0", "\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-asan/x86_64/SourceFile.o"])
                     }
 
                     // There should be one CompileSwiftSources task, which includes the ASan option, and which puts its output in a -asan directory.
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
-                        task.checkCommandLineContains(["\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc", "-sanitize=address", "\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-asan/x86_64/\(targetName)-OutputFileMap.json"])
+                        task.checkCommandLineContains(["\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc", "-sanitize=address", "\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-asan/x86_64/\(targetName)-OutputFileMap.json"])
                     }
 
                     // There should be one Ld task.
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkRuleInfo([.equal("Ld"), .equal("\(SRCROOT)/build/Debug/\(targetName).app/Contents/MacOS/\(targetName)"), .any])
-                        task.checkCommandLineContains(["\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", "\(SRCROOT)/build/Debug/\(targetName).app/Contents/MacOS/\(targetName)"])
+                        task.checkCommandLineContains(["\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", "\(SRCROOT)/build/Debug/\(targetName).app/Contents/MacOS/\(targetName)"])
                     }
 
                     // There should be one task to copy the Asan library into the product.
@@ -4183,7 +4192,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             ]
 
             // Check sanitizers conditionally enabled by build variants.
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: overrides), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: overrides), runDestination: .macOS, fs: fs) { results in
                 results.checkTarget(targetName) { target in
                     // There should be one task to copy the ASan library into the product.
                     results.checkTask(.matchTarget(target), .matchRuleType("Copy"), .matchRuleItemBasename("libclang_rt.asan_osx_dynamic.dylib")) { task in
@@ -4242,7 +4251,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                 results.checkNoDiagnostics()
             }
 
-            await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug", overrides: overrides), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug", overrides: overrides), runDestination: .macOS, fs: fs) { results in
                 results.checkTarget(targetName) { target in
                     // There should not be any tasks to copy these sanitizer libraries into the product because they are enabled
                     // via variant-conditional build settings, and those are ignored for the "install" action.
@@ -4255,23 +4264,23 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             }
 
             // Check the thread sanitizer.
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["ENABLE_THREAD_SANITIZER": "YES"]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["ENABLE_THREAD_SANITIZER": "YES"]), runDestination: .macOS, fs: fs) { results in
                 results.checkTarget(targetName) { target in
                     // There should be one CompileC task, which includes the TSan option, and which puts its output in a -tsan directory.
                     results.checkTask(.matchTarget(target), .matchRuleType("CompileC")) { task in
                         task.checkRuleInfo([.equal("CompileC"), .equal("\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-tsan/x86_64/SourceFile.o"), .suffix("SourceFile.m"), .any, .any, .any, .any])
-                        task.checkCommandLineContains(["\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", "-fsanitize=thread", "\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-tsan/x86_64/SourceFile.o"])
+                        task.checkCommandLineContains(["\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", "-fsanitize=thread", "\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-tsan/x86_64/SourceFile.o"])
                     }
 
                     // There should be one CompileSwiftSources task, which includes the TSan option, and which puts its output in a -tsan directory.
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
-                        task.checkCommandLineContains(["\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc", "-sanitize=thread", "\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-tsan/x86_64/\(targetName)-OutputFileMap.json"])
+                        task.checkCommandLineContains(["\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc", "-sanitize=thread", "\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-tsan/x86_64/\(targetName)-OutputFileMap.json"])
                     }
 
                     // There should be one Ld task.
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkRuleInfo([.equal("Ld"), .equal("\(SRCROOT)/build/Debug/\(targetName).app/Contents/MacOS/\(targetName)"), .any])
-                        task.checkCommandLineContains(["\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", "\(SRCROOT)/build/Debug/\(targetName).app/Contents/MacOS/\(targetName)"])
+                        task.checkCommandLineContains(["\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", "\(SRCROOT)/build/Debug/\(targetName).app/Contents/MacOS/\(targetName)"])
                     }
 
                     // There should be one task to copy the TSan library into the product.
@@ -4310,23 +4319,23 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             }
 
             // Check the undefined behavior sanitizer.
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["ENABLE_UNDEFINED_BEHAVIOR_SANITIZER": "YES"]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["ENABLE_UNDEFINED_BEHAVIOR_SANITIZER": "YES"]), runDestination: .macOS, fs: fs) { results in
                 results.checkTarget(targetName) { target in
                     // There should be one CompileC task, which includes the UBSan option, and which puts its output in a -ubsan directory.
                     results.checkTask(.matchTarget(target), .matchRuleType("CompileC")) { task in
                         task.checkRuleInfo([.equal("CompileC"), .equal("\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-ubsan/x86_64/SourceFile.o"), .suffix("SourceFile.m"), .any, .any, .any, .any])
-                        task.checkCommandLineContains(["\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", "-fsanitize=undefined", "\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-ubsan/x86_64/SourceFile.o"])
+                        task.checkCommandLineContains(["\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", "-fsanitize=undefined", "\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-ubsan/x86_64/SourceFile.o"])
                     }
 
                     // There should be one CompileSwiftSources task, which puts its output in a -ubsan directory.  But the UBSan option is not passed for swift.
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
-                        task.checkCommandLineContains(["\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc", "\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-ubsan/x86_64/\(targetName)-OutputFileMap.json"])
+                        task.checkCommandLineContains(["\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc", "\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/Objects-normal-ubsan/x86_64/\(targetName)-OutputFileMap.json"])
                     }
 
                     // There should be one Ld task.
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkRuleInfo([.equal("Ld"), .equal("\(SRCROOT)/build/Debug/\(targetName).app/Contents/MacOS/\(targetName)"), .any])
-                        task.checkCommandLineContains(["\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", "\(SRCROOT)/build/Debug/\(targetName).app/Contents/MacOS/\(targetName)"])
+                        task.checkCommandLineContains(["\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", "\(SRCROOT)/build/Debug/\(targetName).app/Contents/MacOS/\(targetName)"])
                     }
 
                     // There should be one task to copy the UBSan library into the product.
@@ -4388,7 +4397,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
 
         let tester = try await TaskConstructionTester(getCore(), testWorkspace)
 
-        await tester.checkBuild() { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkError(.prefix("Unable to resolve build file"))
             results.checkNoDiagnostics()
         }
@@ -4492,7 +4501,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         try fs.createDirectory(Path(SRCROOT), recursive: true)
         try fs.write(Path(SRCROOT).join("Info.plist"), contents: "<dict/>")
 
-        await tester.checkBuild(fs: fs) { results in
+        await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
             results.checkTarget("Tool") { target in
                 results.checkTask(.matchTarget(target), .matchRule(["CodeSign", "\(SRCROOT)/build/Debug/Tool_profile"])) { _ in }
                 results.checkTask(.matchTarget(target), .matchRule(["CodeSign", "\(SRCROOT)/build/Debug/Tool"])) { _ in }
@@ -4567,7 +4576,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let testWorkspace = TestWorkspace("aWorkspace", projects: [testProject])
         let tester = try await TaskConstructionTester(getCore(), testWorkspace)
 
-        await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug")) { results in
+        await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug"), runDestination: .macOS) { results in
             results.checkTarget("Tool") { target in
                 // This really just checks that we didn't crash while creating strip with a path containing '/..' (rdar://32178321)
                 results.checkTask(.matchTarget(target), .matchRuleType("Strip")) { _ in }
@@ -4630,7 +4639,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let testWorkspace = TestWorkspace("aWorkspace", projects: [testProject])
         let tester = try await TaskConstructionTester(getCore(), testWorkspace)
 
-        await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug")) { results in
+        await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug"), runDestination: .macOS) { results in
             results.checkTarget("MyFramework") { target in
 
                 results.checkWriteAuxiliaryFileTask(.matchTarget(target), .matchRuleType("WriteAuxiliaryFile"), .matchRuleItemBasename("unextended-module-overlay.yaml")) { task, contents in
@@ -4677,6 +4686,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug", buildSettings: ["INFOPLIST_FILE": "Sources/Info.plist"]),
                         TestBuildConfiguration("Release", buildSettings: ["INFOPLIST_FILE": "Sources/Info.plist"]),
@@ -4696,7 +4706,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         // Presently we don't perform the Debug build.
 
         // Check the debug build.
-        await tester.checkBuild(BuildParameters(configuration: "Release", activeRunDestination: .anyMac)) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Release"), runDestination: .anyMac) { results in
 
             // Skip all the task types we don't care about.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
@@ -4754,7 +4764,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
     }
 
     /// Check recursive header search paths.
-    @Test(.requireSDKs(.macOS))
+    @Test(.requireSDKs(.host))
     func recursiveHeaderSearchPaths() async throws {
         let testProject = TestProject(
             "aProject",
@@ -4795,26 +4805,29 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         try fs.createDirectory(Path(SRCROOT).join("Framework/FooFramework/Bar"), recursive: true)
 
         // Check the build.
-        await tester.checkBuild(fs: fs) { results in
+        await tester.checkBuild(runDestination: .host, fs: fs) { results in
             results.checkTarget("Tool") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("CompileC")) { task in
+                    let buildProductsDirSuffix = RunDestinationInfo.host.builtProductsDirSuffix
                     let iQuoteArgs = task.commandLine.enumerated().filter { (i, arg) in
                         (task.commandLine[safe: i - 1]?.asString ?? "") == "-iquote"
                     }.map{ $0.1.asString }
                     let capIArgs = task.commandLine.filter{ $0.asString.hasPrefix("-I") }.map{ $0.asString }
                     let capFArgs = task.commandLine.filter{ $0.asString.hasPrefix("-F") }.map{ $0.asString }
                     #expect(iQuoteArgs == [
-                        "User", "User/FooUser", "User/FooUser/Bar",
-                        "/MissingPath", "OtherMissingPath"])
+                        "User", Path("User/FooUser").str, Path("User/FooUser/Bar").str,
+                        Path("/MissingPath").str, "OtherMissingPath"])
                     #expect(capIArgs == [
-                        "-I\(SRCROOT)/build/Debug/include",
-                        "-ISystem", "-ISystem/FooSystem", "-ISystem/FooSystem/Bar",
-                        "-I\(SRCROOT)/build/aProject.build/Debug/Tool.build/DerivedSources-normal/x86_64",
-                        "-I\(SRCROOT)/build/aProject.build/Debug/Tool.build/DerivedSources/x86_64",
-                        "-I\(SRCROOT)/build/aProject.build/Debug/Tool.build/DerivedSources"])
-                    #expect(capFArgs == [
-                        "-F\(SRCROOT)/build/Debug",
-                        "-FFramework", "-FFramework/FooFramework", "-FFramework/FooFramework/Bar"])
+                        "-I\(Path(SRCROOT).join("build/Debug\(buildProductsDirSuffix)/include").str)",
+                        "-ISystem", "-I\(Path("System/FooSystem").str)", "-I\(Path("System/FooSystem/Bar").str)",
+                        "-I\(Path(SRCROOT).join("build/aProject.build/Debug\(buildProductsDirSuffix)/Tool.build/DerivedSources-normal/\(results.runDestinationTargetArchitecture)").str)",
+                        "-I\(Path(SRCROOT).join("build/aProject.build/Debug\(buildProductsDirSuffix)/Tool.build/DerivedSources/\(results.runDestinationTargetArchitecture)").str)",
+                        "-I\(Path(SRCROOT).join("build/aProject.build/Debug\(buildProductsDirSuffix)/Tool.build/DerivedSources").str)"])
+                    if RunDestinationInfo.host == .macOS {
+                        #expect(capFArgs == [
+                            "-F\(SRCROOT)/build/Debug",
+                            "-FFramework", "-FFramework/FooFramework", "-FFramework/FooFramework/Bar"])
+                    }
                 }
             }
 
@@ -4862,7 +4875,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         try fs.createDirectory(Path(SRCROOT).join("Library/A/B"), recursive: true)
 
         // Check the build.
-        await tester.checkBuild(fs: fs) { results in
+        await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
             results.checkTarget("Tool") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                     let capLArgs = task.commandLine.filter{ $0.asString.hasPrefix("-L") }.map{ $0.asString }
@@ -4914,7 +4927,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
-        await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug")) { results in
+        await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug"), runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkTask(.matchRuleType("BuildInstrumentsPackage")) { task in
                 task.checkOutputs([
@@ -4946,7 +4959,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                 TestBuildConfiguration("Debug", buildSettings: [
                     "PRODUCT_NAME": "$(TARGET_NAME)",
                     "CODE_SIGN_IDENTITY": "-",
-                    "ARCH": "x86_64",
+                    "ARCHS": "arm64",
                     "LIBTOOL": libtoolPath.str,
                 ]),
             ],
@@ -5008,7 +5021,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testProject)
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget("Tool") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                     // The command line should contain an option to link against libStaticLib1.a, but not libStaticLib2.a.
@@ -5029,8 +5042,8 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                     task.checkNoInputs(contain: [.pathPattern(.suffix("libAnotherStatic.a"))])
                     // Check that the task does *not* declare libStaticLib2.a as an input, since it is located via search paths.  Some projects may have a file reference whose path does not refer to a file, but which relies on finding the library via search paths anyway.
                     task.checkNoInputs(contain: [.pathPattern(.suffix("libStaticLib2.a"))])
-                    // Check that the task contains a command line option to link Object.o, and declares it as an input.
-                    task.checkCommandLineContains(["\(SRCROOT)/Object.o"])
+                    // Check that the task does *not* contain a command line option to link Object.o (it will be in the LinkFileList instead, checked below), but that it *does* declare it as an input.
+                    task.checkCommandLineDoesNotContain("\(SRCROOT)/Object.o")
                     task.checkInputs(contain: [.path("\(SRCROOT)/Object.o")])
 
                     // Check that the task does *not* have a command line option to find libDynamicLib1.dylib, nor does it declare it as an input, because static libraries can't link against dynamic libraries.  We presently don't emit a diagnostic for this - see LibtoolLinkerSpec.constructLinkerTasks() and <rdar://problem/34314195> for more.
@@ -5038,6 +5051,16 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                     task.checkNoInputs(contain: [.pathPattern(.suffix("libDynamicLib1.dylib"))])
 
                     task.checkOutputs(contain: [.path("\(SRCROOT)/build/Debug/libStaticLib1.a")])
+                }
+
+                // Check the contents of the LinkFileList.
+                results.checkWriteAuxiliaryFileTask(.matchTarget(target), .matchRuleType("WriteAuxiliaryFile"), .matchRuleItemPattern(.suffix("/StaticLib1.LinkFileList"))) { task, contents in
+                    task.checkRuleInfo(["WriteAuxiliaryFile", "\(SRCROOT)/build/aProject.build/Debug/StaticLib1.build/Objects-normal/arm64/StaticLib1.LinkFileList"])
+                    let contentsLines = contents.asString.dropLast().components(separatedBy: .newlines)
+                    #expect(contentsLines == [
+                        "\(SRCROOT)/build/aProject.build/Debug/StaticLib1.build/Objects-normal/arm64/File.o",
+                        "\(SRCROOT)/Object.o",
+                  ])
                 }
             }
 
@@ -5152,8 +5175,8 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             results.checkNoErrors()
         }
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .macOS)) { results in checkResults(results) }
-        await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .iOS)) { results in checkResults(results) }
+        await tester.checkBuild(runDestination: .macOS) { results in checkResults(results) }
+        await tester.checkBuild(runDestination: .iOS) { results in checkResults(results) }
     }
 
     // Test that we actually link and embed dynamic products if they were requested.
@@ -5212,7 +5235,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let tester = try TaskConstructionTester(core, project)
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
-        // We need to construct a csutom build request because `PACKAGE_BUILD_DYNAMICALLY` only works in the per-target parameters.
+        // We need to construct a custom build request because `PACKAGE_BUILD_DYNAMICALLY` only works in the per-target parameters.
         let targets = tester.workspace.projects[0].targets.map({ BuildRequest.BuildTargetInfo(parameters: buildParameters.replacing(activeRunDestination: destination, activeArchitecture: nil), target: $0) })
         let buildRequest = BuildRequest(parameters: buildParameters.replacing(activeRunDestination: destination, activeArchitecture: nil), buildTargets: targets, continueBuildingAfterErrors: false, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
 
@@ -5220,7 +5243,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         try fs.createDirectory(Path("/Users/whoever/Library/MobileDevice/Provisioning Profiles"), recursive: true)
         try fs.write(Path("/Users/whoever/Library/MobileDevice/Provisioning Profiles/8db0e92c-592c-4f06-bfed-9d945841b78d.mobileprovision"), contents: "profile")
 
-        await tester.checkBuild(buildParameters.replacing(activeRunDestination: destination, activeArchitecture: nil), buildRequest: buildRequest, fs: fs) { results in
+        await tester.checkBuild(buildParameters.replacing(activeRunDestination: destination, activeArchitecture: nil), runDestination: nil, buildRequest: buildRequest, fs: fs) { results in
             results.checkTarget("Tool") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                     task.checkCommandLineContains(["-framework", "PackageLibProduct-dynamic"])
@@ -5321,7 +5344,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             try fs.createDirectory(tmpDirPath.join("aFrameworkProject"), recursive: true)
             try fs.write(tmpDirPath.join("aFrameworkProject").join("SourceFile.swift"), contents: ByteString())
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug"), fs: fs) { results in
+            await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
                 results.checkTarget("Tool") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContainsUninterrupted(["-weak_library", "\(tmpDirPath.str)/aFrameworkProject/build/Debug/Framework.framework/Versions/A/Framework"])
@@ -5417,7 +5440,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testProject)
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget("Tool") { target in
                 results.checkWriteAuxiliaryFileTask(.matchTarget(target), .matchRuleType("WriteAuxiliaryFile"), .matchRuleItemBasename("Tool.LinkFileList")) { task, contents in
                     #expect(contents == "/tmp/Test/aProject/build/aProject.build/Debug/Tool.build/Objects-normal/x86_64/SourceFile.o\n/tmp/Test/aProject/build/Debug/ObjectFile1.o\n")
@@ -5486,7 +5509,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testProject)
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget("Tool") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("CompileC"), .matchRuleItemBasename("File.c")) { task in
                     task.checkCommandLineContains(["\(SRCROOT)/build/aProject.build/Debug/Tool.build/Objects-normal/x86_64/File-\(BuildPhaseWithBuildFiles.filenameUniquefierSuffixFor(path: Path(SRCROOT).join("File.c"))).o"])
@@ -5518,7 +5541,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                         TestSourcesBuildPhase(["a.c"])])])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkTask(.matchRuleType("CompileC"), .matchRuleItemBasename("a.c")) { task in
                 #expect(task.workingDirectory == Path("/TEST"))
@@ -5552,7 +5575,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                         TestSourcesBuildPhase(["a.s"])])])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("WriteAuxiliaryFile")) { _ in }
@@ -5610,7 +5633,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let testWorkspace = TestWorkspace("aWorkspace", projects: [testProject, referencedProject])
         let tester = try await TaskConstructionTester(getCore(), testWorkspace)
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkTask(.matchRuleType("Libtool"), .matchRuleItemBasename("libCore.a")) { task in
                 task.checkCommandLineContains(["-o", "/TEST/REFERENCED/build/Debug/libCore.a"])
@@ -5661,7 +5684,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let testWorkspace = TestWorkspace("aWorkspace", projects: [testProject])
         let tester = try await TaskConstructionTester(getCore(), testWorkspace)
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug"), checkTaskGraphIntegrity: false) { results in
+        await tester.checkBuild(runDestination: .macOS, checkTaskGraphIntegrity: false) { results in
             // The sources and resources build phase generate identical tasks in the same target.
             results.checkError(.equal([
                 "Unexpected duplicate tasks",
@@ -5723,7 +5746,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let testWorkspace = TestWorkspace("aWorkspace", projects: [testProject])
         let tester = try await TaskConstructionTester(getCore(), testWorkspace)
 
-        await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug")) { results in
+        await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug"), runDestination: .macOS) { results in
             results.checkTarget("Tool") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("SymLink")) { task in
                     task.checkCommandLine(["/bin/ln", "-sfh", "../../../../aProject.dst/foo/bar/Tool", "/tmp/aWorkspace/aProject/build/Debug/Tool"])
@@ -5790,7 +5813,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         try fs.createDirectory(Path(SRCROOT + "/A/B"), recursive: true)
         try fs.write(Path(SRCROOT + "/A/B/private.modulemap"), contents: "")
 
-        await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug"), fs: fs) { results in
+        await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug"), runDestination: .macOS, fs: fs) { results in
             results.checkTarget("FrameworkTarget") { target in
 
                 func recursivelyForEachDict(_ item: PropertyListItem, _ body: ([String:PropertyListItem]) -> Void) {
@@ -5906,7 +5929,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
 
         let request1 = BuildRequest(parameters: parameters, buildTargets: buildTargets, continueBuildingAfterErrors: true, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
         var frame1VFSContents: ByteString?
-        try await tester.checkBuild(parameters, buildRequest: request1) { results in
+        try await tester.checkBuild(parameters, runDestination: .macOS, buildRequest: request1) { results in
             try results.checkWriteAuxiliaryFileTask(.matchRuleType("WriteAuxiliaryFile"), .matchRuleItemBasename("all-product-headers.yaml")) { task, contents in
                 frame1VFSContents = contents
                 var hasFrame1ObjCHeader = false
@@ -5925,7 +5948,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
 
         let request2 = BuildRequest(parameters: parameters, buildTargets: buildTargets.reversed(), continueBuildingAfterErrors: true, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
-        await tester.checkBuild(parameters, buildRequest: request2) { results in
+        await tester.checkBuild(parameters, runDestination: .macOS, buildRequest: request2) { results in
             results.checkWriteAuxiliaryFileTask(.matchRuleType("WriteAuxiliaryFile"), .matchRuleItemBasename("all-product-headers.yaml")) { task, contents in
                 #expect(contents == frame1VFSContents)
             }
@@ -5972,7 +5995,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                 )
 
                 let tester = try await TaskConstructionTester(getCore(), testProject)
-                await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+                await tester.checkBuild(runDestination: .macOS) { results in
                     results.checkTask(.matchRuleType("SwiftDriver Compilation")) { task in
                         if installHeaderSetting != "NO" && buildForDistribution == "YES" {
                             task.checkCommandLineContains(["-no-verify-emitted-module-interface"])
@@ -6022,7 +6045,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
 
         // Record the PCH path of the first build.
         var firstBuildPCHPath: String? = nil
-        await tester.checkBuild(BuildParameters(configuration: "Debug", commandLineOverrides: ["GCC_TREAT_WARNINGS_AS_ERRORS": "NO"]), fs: fs) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", commandLineOverrides: ["GCC_TREAT_WARNINGS_AS_ERRORS": "NO"]), runDestination: .macOS, fs: fs) { results in
             results.checkNoDiagnostics()
 
             results.checkTask(.matchRuleType("ProcessPCH")) { task in
@@ -6035,7 +6058,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
 
         // Introduce a new warning flag that shouldn't effect the PCH hash.
-        await tester.checkBuild(BuildParameters(configuration: "Debug", commandLineOverrides: ["GCC_TREAT_WARNINGS_AS_ERRORS": "YES"]), fs: fs) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", commandLineOverrides: ["GCC_TREAT_WARNINGS_AS_ERRORS": "YES"]), runDestination: .macOS, fs: fs) { results in
             results.checkNoDiagnostics()
 
             results.checkTask(.matchRuleType("ProcessPCH")) { task in
@@ -6117,7 +6140,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         try fs.write(Path("/MyProject/Prefix2.pch"), contents: [])
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
-        await tester.checkBuild(BuildParameters(configuration: "Debug"), fs: fs) { results in
+        await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
             results.checkNoDiagnostics()
 
             results.checkTask(.matchRuleType("CompileC"), .matchRuleItemBasename("SourceFile1.m")) { task in
@@ -6166,7 +6189,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         try fs.write(Path("/MyProject/Prefix.pch"), contents: [])
         try fs.write(Path("/MyProject/MyFramework.modulemap"), contents: [])
         let tester = try await TaskConstructionTester(getCore(), testProject)
-        await tester.checkBuild(BuildParameters(configuration: "Debug"), fs: fs) { results in
+        await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
             results.checkNoDiagnostics()
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("WriteAuxiliaryFile")) { _ in }
@@ -6229,7 +6252,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testWorkspace)
 
         // We are just trying not to crash here, so no further checks.
-        try await tester.checkBuild() { planningResults in
+        try await tester.checkBuild(runDestination: .macOS) { planningResults in
             let fs = localFS
             try withTemporaryDirectory(fs: fs) { tmpDir in
                 // Clear out any existing temporary build plan directory.
@@ -6285,7 +6308,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let testWorkspace = TestWorkspace("aWorkspace", projects: [testProject])
         let tester = try await TaskConstructionTester(getCore(), testWorkspace)
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkNoDiagnostics()
 
             results.checkTarget("App") { target in
@@ -6356,7 +6379,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testWorkspace)
 
         // Test that we get a precompile task for each dialect.
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget("Framework") { target in
                 // Check that there is a task to precompile the prefix header for each dialect.
                 results.checkTask(.matchTarget(target), .matchRuleType("ProcessPCH"), .matchRuleItem("c")) { _ in }
@@ -6375,7 +6398,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
 
         // Use GCC_PFE_FILE_C_DIALECTS to only precompile for objective-c++.
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["GCC_PFE_FILE_C_DIALECTS": "objective-c++"])) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["GCC_PFE_FILE_C_DIALECTS": "objective-c++"]), runDestination: .macOS) { results in
             results.checkTarget("Framework") { target in
                 // Check that there is a task to precompile the prefix header *only* for ObjC++.
                 results.checkNoTask(.matchTarget(target), .matchRuleType("ProcessPCH"), .matchRuleItem("c"))
@@ -6448,7 +6471,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         try fs.createDirectory(Path(SRCROOT).join("Sources"), recursive: true)
         try fs.write(Path(SRCROOT).join("Sources/Framework-Private.modulemap"), contents: "foo")
 
-        try await tester.checkBuild(BuildParameters(configuration: "Debug"), fs: fs) { results in
+        try await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
             results.checkNoDiagnostics()
             results.consumeTasksMatchingRuleTypes(["CreateBuildDirectory", "Gate"])
 
@@ -6525,7 +6548,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let testWorkspace = TestWorkspace("aWorkspace", projects: [testProject])
         let tester = try await TaskConstructionTester(getCore(), testWorkspace)
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkNoDiagnostics()
 
             results.checkTarget("App") { target in
@@ -6600,7 +6623,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
 
             let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(runDestination: .iOS) { results in
                 results.checkTarget("CoreFoo") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("ProcessInfoPlistFile")) { task in
                         task.checkCommandLine(["builtin-infoPlistUtility", "\(SRCROOT)/Sources/Info.plist", "-producttype", "com.apple.product-type.framework", "-expandbuildsettings", "-format", "binary", "-platform", "iphoneos", "-requiredArchitecture", requiredArch, "-o", "\(SRCROOT)/build/Debug-iphoneos/CoreFoo.framework/Info.plist"])
@@ -6654,7 +6677,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
 
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .watchOS)) { results in
+        await tester.checkBuild(runDestination: .watchOS) { results in
             results.checkTarget("CoreFoo") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("ProcessInfoPlistFile")) { task in
                     // check that command line does not include -requiredArchitecture
@@ -6708,7 +6731,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testWorkspace)
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .anyMac)) { results in
+        await tester.checkBuild(runDestination: .anyMac) { results in
             results.checkNoDiagnostics()
             results.consumeTasksMatchingRuleTypes(["Gate", "MkDir", "SymLink", "WriteAuxiliaryFile", "Touch", "RegisterWithLaunchServices"])
 
@@ -6796,7 +6819,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testProject)
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
-        await tester.checkBuild { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget("FrameworkTarget") { target in
                 results.checkWarning(.prefix("The Copy Bundle Resources build phase contains this target's entitlements file '\(SRCROOT)/Entitlements.entitlements"))
                 results.checkWarning(.prefix("The Copy Bundle Resources build phase contains this target's Info.plist file '\(SRCROOT)/MyInfo.plist"))
@@ -6863,7 +6886,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         try fs.write(Path(SRCROOT).join("output1.xcfilelist"), contents: "$(DERIVED_FILE_DIR)/bar.c\n$(DERIVED_FILE_DIR)/baz.c")
         try fs.write(Path(SRCROOT).join("output2.xcfilelist"), contents: "#A comment to be ignored.\n\n      # whitespace prefixed comment - ignore\n\n\n")
 
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug"), fs: fs) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .macOS, fs: fs) { results in
             results.checkTarget("App") { target in
                 results.checkNoDiagnostics()
                 results.checkTasks(.matchRuleType("Gate")) { _ in }
@@ -6923,14 +6946,14 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                         "SCRIPT_OUTPUT_FILE_LIST_1": .equal("\(SRCROOT)/build/aProject.build/Debug/App.build/OutputFileList-FileList-output2-49b85065e1ab5f8726dafd7606a852ce-resolved.xcfilelist"),
                         "SCRIPT_OUTPUT_FILE_LIST_COUNT": .equal("2"),
 
-                        "TOOLCHAIN_DIR": .equal("\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain"),
+                        "TOOLCHAIN_DIR": .equal("\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain"),
                     ]
                     task.checkEnvironment(scriptVariables)
                 }
             }
         }
 
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", overrides: ["USE_RECURSIVE_SCRIPT_INPUTS_IN_SCRIPT_PHASES": "YES"]), fs: fs) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", overrides: ["USE_RECURSIVE_SCRIPT_INPUTS_IN_SCRIPT_PHASES": "YES"]), runDestination: .macOS, fs: fs) { results in
             results.checkTarget("App") { target in
                 results.checkNoDiagnostics()
                 results.checkTasks(.matchRuleType("Gate")) { _ in }
@@ -6990,7 +7013,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                         "SCRIPT_OUTPUT_FILE_LIST_1": .equal("\(SRCROOT)/build/aProject.build/Debug/App.build/OutputFileList-FileList-output2-49b85065e1ab5f8726dafd7606a852ce-resolved.xcfilelist"),
                         "SCRIPT_OUTPUT_FILE_LIST_COUNT": .equal("2"),
 
-                        "TOOLCHAIN_DIR": .equal("\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain"),
+                        "TOOLCHAIN_DIR": .equal("\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain"),
                     ]
                     task.checkEnvironment(scriptVariables)
                 }
@@ -7030,7 +7053,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testProject)
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug"), fs: PseudoFS()) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .macOS, fs: PseudoFS()) { results in
             results.checkWarning(.equal("Unable to read contents of XCFileList '\(SRCROOT)/output1-noexists.xcfilelist' (in target 'App' from project 'aProject')"))
             results.checkError(.equal("Unable to load contents of file list: '\(SRCROOT)/input1-noexists.xcfilelist' (in target 'App' from project 'aProject')"))
             results.checkError(.equal("Unable to load contents of file list: '\(SRCROOT)/output1-noexists.xcfilelist' (in target 'App' from project 'aProject')"))
@@ -7064,7 +7087,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkNoTask(.matchRuleType("CompileC"), .matchRuleItemBasename("Foo.hpp"))
         }
     }
@@ -7152,7 +7175,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testProject)
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
-        await tester.checkBuild { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             // Filter out some tasks we don't care about for better debugging.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("WriteAuxiliaryFile")) { _ in }
@@ -7312,7 +7335,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let testWorkspace = TestWorkspace("aWorkspace", projects: [testProject])
         let tester = try await TaskConstructionTester(getCore(), testWorkspace)
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.consumeTasksMatchingRuleTypes(["CodeSign", "CompileC", "CreateBuildDirectory", "CreateUniversalBinary", "Gate", "IntentDefinitionCompile", "Ld", "MkDir", "ProcessInfoPlistFile", "ProcessProductPackaging", "ProcessProductPackagingDER", "RegisterExecutionPolicyException", "SymLink", "Touch", "WriteAuxiliaryFile", "GenerateTAPI"])
 
             results.checkTarget("Foo") { target in
@@ -7393,7 +7416,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
 
         // Explicitly opted-out of header filtering support.
-        await tester.checkBuild(BuildParameters(action: .installHeaders, configuration: "Debug"), clientDelegate: Delegate()) { results in
+        await tester.checkBuild(BuildParameters(action: .installHeaders, configuration: "Debug"), runDestination: .macOS, clientDelegate: Delegate()) { results in
             results.consumeTasksMatchingRuleTypes(["CreateBuildDirectory","Gate", "MkDir", "SymLink", "Touch"])
             results.checkTasks(.matchRuleType("WriteAuxiliaryFile")) { _ in }
 
@@ -7404,7 +7427,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
 
         // Explicitly opted-in to header filtering support.
-        await tester.checkBuild(BuildParameters(action: .installHeaders, configuration: "Debug", overrides: ["EXPERIMENTAL_ALLOW_INSTALL_HEADERS_FILTERING":"YES"]), clientDelegate: Delegate()) { results in
+        await tester.checkBuild(BuildParameters(action: .installHeaders, configuration: "Debug", overrides: ["EXPERIMENTAL_ALLOW_INSTALL_HEADERS_FILTERING":"YES"]), runDestination: .macOS, clientDelegate: Delegate()) { results in
             results.consumeTasksMatchingRuleTypes(["CreateBuildDirectory","Gate", "MkDir", "SymLink", "Touch", "WriteAuxiliaryFile"])
 
             results.checkTarget("Foo") { target in
@@ -7418,7 +7441,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
 
         // Explicitly opted-in to header filtering support.
-        await tester.checkBuild(BuildParameters(action: .installAPI, configuration: "Debug", overrides: ["EXPERIMENTAL_ALLOW_INSTALL_HEADERS_FILTERING":"YES"]), clientDelegate: Delegate()) { results in
+        await tester.checkBuild(BuildParameters(action: .installAPI, configuration: "Debug", overrides: ["EXPERIMENTAL_ALLOW_INSTALL_HEADERS_FILTERING":"YES"]), runDestination: .macOS, clientDelegate: Delegate()) { results in
             results.consumeTasksMatchingRuleTypes(["CreateBuildDirectory","Gate", "MkDir", "SymLink", "Touch", "WriteAuxiliaryFile"])
 
             results.checkTarget("Foo") { target in
@@ -7465,7 +7488,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         let testWorkspace = TestWorkspace("aWorkspace", projects: [testProject])
         let tester = try await TaskConstructionTester(getCore(), testWorkspace)
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.consumeTasksMatchingRuleTypes(["CodeSign", "CreateBuildDirectory", "CreateUniversalBinary", "Gate", "IntentDefinitionCompile", "Ld", "MkDir", "ProcessInfoPlistFile", "ProcessProductPackaging", "ProcessProductPackagingDER", "RegisterExecutionPolicyException", "SymLink", "Touch", "WriteAuxiliaryFile", "GenerateTAPI"])
 
             results.checkTarget("Foo") { target in
@@ -7503,7 +7526,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(action: .install, configuration: "Release")) { results in
+        await tester.checkBuild(BuildParameters(action: .install, configuration: "Release"), runDestination: .macOS) { results in
             results.consumeTasksMatchingRuleTypes(["CreateBuildDirectory", "Gate", "ProcessProductPackaging", "WriteAuxiliaryFile"])
 
             results.checkNoTask()
@@ -7563,6 +7586,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                                 "IPHONEOS_DEPLOYMENT_TARGET": core.loadSDK(.iOS).defaultDeploymentTarget,
                                 "TVOS_DEPLOYMENT_TARGET": core.loadSDK(.tvOS).defaultDeploymentTarget,
                                 "WATCHOS_DEPLOYMENT_TARGET": core.loadSDK(.watchOS).defaultDeploymentTarget,
+                                "XROS_DEPLOYMENT_TARGET": core.loadSDK(.xrOS).defaultDeploymentTarget,
                                 "DRIVERKIT_DEPLOYMENT_TARGET": core.loadSDK(.driverKit).defaultDeploymentTarget,
                             ]
                         )
@@ -7576,7 +7600,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
     @Test(.requireSDKs(.macOS))
     func defaultDeploymentTargetInRange_macOS() async throws {
 
-        try await _defaultDeploymentTargetInRangeTester(runDestination: .macOS).checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .macOS)) { results in
+        try await _defaultDeploymentTargetInRangeTester(runDestination: .macOS).checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .macOS) { results in
             results.checkTask(.matchRuleType("Ld"), .matchRuleItem("/tmp/Test/aProject/build/Debug/Foo.framework/Versions/A/Foo")) { _ in }
             results.checkNoDiagnostics()
         }
@@ -7585,7 +7609,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
     @Test(.requireSDKs(.macOS, .iOS))
     func defaultDeploymentTargetInRange_macCatalyst() async throws {
 
-        try await _defaultDeploymentTargetInRangeTester(runDestination: .macCatalyst).checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .macCatalyst)) { results in
+        try await _defaultDeploymentTargetInRangeTester(runDestination: .macCatalyst).checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .macCatalyst) { results in
             results.checkTask(.matchRuleType("Ld"), .matchRuleItem("/tmp/Test/aProject/build/Debug-maccatalyst/Foo.framework/Versions/A/Foo")) { _ in }
             results.checkNoDiagnostics()
         }
@@ -7594,7 +7618,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
     @Test(.requireSDKs(.iOS))
     func defaultDeploymentTargetInRange_iOS() async throws {
 
-        try await _defaultDeploymentTargetInRangeTester(runDestination: .iOS).checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .iOS)) { results in
+        try await _defaultDeploymentTargetInRangeTester(runDestination: .iOS).checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .iOS) { results in
             results.checkTask(.matchRuleType("Ld"), .matchRuleItem("/tmp/Test/aProject/build/Debug-iphoneos/Foo.framework/Foo")) { _ in }
             results.checkNoDiagnostics()
         }
@@ -7603,7 +7627,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
     @Test(.requireSDKs(.tvOS))
     func defaultDeploymentTargetInRange_tvOS() async throws {
 
-        try await _defaultDeploymentTargetInRangeTester(runDestination: .tvOS).checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .tvOS)) { results in
+        try await _defaultDeploymentTargetInRangeTester(runDestination: .tvOS).checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .tvOS) { results in
             results.checkTask(.matchRuleType("Ld"), .matchRuleItem("/tmp/Test/aProject/build/Debug-appletvos/Foo.framework/Foo")) { _ in }
             results.checkNoDiagnostics()
         }
@@ -7612,8 +7636,17 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
     @Test(.requireSDKs(.watchOS))
     func defaultDeploymentTargetInRange_watchOS() async throws {
 
-        try await _defaultDeploymentTargetInRangeTester(runDestination: .watchOS).checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .watchOS)) { results in
+        try await _defaultDeploymentTargetInRangeTester(runDestination: .watchOS).checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .watchOS) { results in
             results.checkTask(.matchRuleType("Ld"), .matchRuleItem("/tmp/Test/aProject/build/Debug-watchos/Foo.framework/Foo")) { _ in }
+            results.checkNoDiagnostics()
+        }
+    }
+
+    @Test(.requireSDKs(.xrOS))
+    func defaultDeploymentTargetInRange_visionOS() async throws {
+
+        try await _defaultDeploymentTargetInRangeTester(runDestination: .xrOS).checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .xrOS) { results in
+            results.checkTask(.matchRuleType("Ld"), .matchRuleItem("/tmp/Test/aProject/build/Debug-xros/Foo.framework/Foo")) { _ in }
             results.checkNoDiagnostics()
         }
     }
@@ -7621,7 +7654,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
     @Test(.requireSDKs(.driverKit))
     func defaultDeploymentTargetInRange_DriverKit() async throws {
 
-        try await _defaultDeploymentTargetInRangeTester(runDestination: .driverKit).checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .driverKit)) { results in
+        try await _defaultDeploymentTargetInRangeTester(runDestination: .driverKit).checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .driverKit) { results in
             results.checkTask(.matchRuleType("Ld"), .matchRuleItem("/tmp/Test/aProject/build/Debug-driverkit/Foo.framework/Foo")) { _ in }
             results.checkNoDiagnostics()
         }
@@ -7648,6 +7681,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug", buildSettings: [
                             "GENERATE_PKGINFO_FILE": "YES",
@@ -7684,7 +7718,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         try fs.write(Path(SRCROOT).join("AppCore-Private.modulemap"), contents: "foo")
 
         // Check the debug build.
-        await tester.checkBuild(BuildParameters(configuration: "Debug"), fs: fs) { results in
+        await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
             // There shouldn't be any task construction diagnostics.
             results.checkNoDiagnostics()
 
@@ -7751,7 +7785,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             try fs.createDirectory(path, recursive: true)
             try fs.write(path.join("Strings-Info.plist"), contents: "Test")
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug"), fs: fs) { results in
+            await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
                 results.checkNoDiagnostics()
                 results.checkTask(.matchRuleType("CopyStringsFile"), .matchRuleItemBasename("Strings-InfoPlist.strings")) { task in
                     task.checkCommandLine(["builtin-copyStrings", "--validate", "--inputencoding", "utf-8", "--outputencoding", "UTF-16", "--outfilename", "InfoPlist.strings", "--outdir", "\(srcRoot.str)/build/Debug/Bundle.bundle/Contents/Resources", "--", "\(srcRoot.str)/Sources/Strings-InfoPlist.strings"])
@@ -7797,7 +7831,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             try fs.createDirectory(path, recursive: true)
             try fs.write(path.join("MyBundle-Info.plist"), contents: "Test")
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug"), fs: fs) { results in
+            await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
                 results.checkNoDiagnostics()
                 results.checkTask(.matchRuleType("CopyStringsFile"), .matchRuleItemBasename("MyBundle-InfoPlist.strings")) { task in
                     task.checkCommandLine(["builtin-copyStrings", "--validate", "--inputencoding", "utf-8", "--outputencoding", "UTF-16", "--outfilename", "InfoPlist.strings", "--outdir", "\(srcRoot.str)/build/Debug/MyBundle.bundle/Contents/Resources", "--", "\(srcRoot.str)/Sources/MyBundle-InfoPlist.strings"])
@@ -7841,7 +7875,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             try fs.createDirectory(path, recursive: true)
             try fs.write(path.join("Info-MyBundle.plist"), contents: "Test")
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug"), fs: fs) { results in
+            await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
                 results.checkNoDiagnostics()
                 results.checkTask(.matchRuleType("CopyStringsFile"), .matchRuleItemBasename("Info-MyBundle-InfoPlist.strings")) { task in
                     task.checkCommandLine(["builtin-copyStrings", "--validate", "--inputencoding", "utf-8", "--outputencoding", "UTF-16", "--outfilename", "InfoPlist.strings", "--outdir", "\(srcRoot.str)/build/Debug/MyBundle.bundle/Contents/Resources", "--", "\(srcRoot.str)/Sources/Info-MyBundle-InfoPlist.strings"])
@@ -7885,7 +7919,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             try fs.createDirectory(path, recursive: true)
             try fs.write(path.join("info.plist"), contents: "Test")
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug"), fs: fs) { results in
+            await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
                 results.checkNoDiagnostics()
                 results.checkTask(.matchRuleType("CopyStringsFile"), .matchRuleItemBasename("InfoPlist.strings")) { task in
                     task.checkCommandLine(["builtin-copyStrings", "--validate", "--inputencoding", "utf-8", "--outputencoding", "UTF-16", "--outfilename", "InfoPlist.strings", "--outdir", "\(srcRoot.str)/build/Debug/MyBundle.bundle/Contents/Resources", "--", "\(srcRoot.str)/Sources/InfoPlist.strings"])
@@ -7929,7 +7963,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             try fs.createDirectory(path, recursive: true)
             try fs.write(path.join("Mycustominfo.plist"), contents: "Test")
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug"), fs: fs) { results in
+            await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
                 results.checkNoDiagnostics()
                 results.checkTask(.matchRuleType("CopyStringsFile"), .matchRuleItemBasename("MycustominfoPlist.strings")) { task in
                     task.checkCommandLine(["builtin-copyStrings", "--validate", "--inputencoding", "utf-8", "--outputencoding", "UTF-16", "--outfilename", "InfoPlist.strings", "--outdir", "\(srcRoot.str)/build/Debug/MyBundle.bundle/Contents/Resources", "--", "\(srcRoot.str)/Sources/MycustominfoPlist.strings"])
@@ -7976,7 +8010,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         // * we don't pass the flags to swift
         // * we don't pass the flags to ld
         // * we generate a dSYM
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["CLANG_GENERATE_OPTIMIZATION_REMARKS":"YES"])) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["CLANG_GENERATE_OPTIMIZATION_REMARKS":"YES"]), runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkTask(.matchRule(["CompileC", "\(ObjectsNormal)/\(results.runDestinationTargetArchitecture)/File1.o", "/tmp/Test/ProjectName/Sources/File1.m", "normal", "\(results.runDestinationTargetArchitecture)", "objective-c", "com.apple.compilers.llvm.clang.1_0.compiler"])) { task in
                 task.checkCommandLineContains(["-fsave-optimization-record=bitstream", "-foptimization-record-file=\(ObjectsNormal)/\(results.runDestinationTargetArchitecture)/File1.opt.bitstream"])
@@ -7996,7 +8030,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         // * we pass the flags to ld
         // * we generate a dSYM
         for LTOSetting in ["YES", "YES_THIN"] {
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["CLANG_GENERATE_OPTIMIZATION_REMARKS":"YES", "LLVM_LTO":LTOSetting])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["CLANG_GENERATE_OPTIMIZATION_REMARKS":"YES", "LLVM_LTO":LTOSetting]), runDestination: .macOS) { results in
                 results.checkNoDiagnostics()
                 results.checkTask(.matchRuleType("CompileC")) { task in
                     task.checkCommandLineDoesNotContain("optimization-record")
@@ -8012,7 +8046,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
 
         // Check that we pass the filters properly.
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["CLANG_GENERATE_OPTIMIZATION_REMARKS":"YES", "CLANG_GENERATE_OPTIMIZATION_REMARKS_FILTER":"pass0|pass1|pass2"])) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["CLANG_GENERATE_OPTIMIZATION_REMARKS":"YES", "CLANG_GENERATE_OPTIMIZATION_REMARKS_FILTER":"pass0|pass1|pass2"]), runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkTask(.matchRuleType("CompileC")) { task in
                 task.checkCommandLineContains(["-fsave-optimization-record=bitstream", "-foptimization-record-file=\(ObjectsNormal)/\(results.runDestinationTargetArchitecture)/File1.opt.bitstream", "-foptimization-record-passes=pass0|pass1|pass2"])
@@ -8020,7 +8054,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
 
         // Check that no filters doesn't add an empty regex.
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["CLANG_GENERATE_OPTIMIZATION_REMARKS":"YES", "CLANG_GENERATE_OPTIMIZATION_REMARKS_FILTER":""])) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["CLANG_GENERATE_OPTIMIZATION_REMARKS":"YES", "CLANG_GENERATE_OPTIMIZATION_REMARKS_FILTER":""]), runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkTask(.matchRuleType("CompileC")) { task in
                 task.checkCommandLineContains(["-fsave-optimization-record=bitstream", "-foptimization-record-file=\(ObjectsNormal)/\(results.runDestinationTargetArchitecture)/File1.opt.bitstream"])
@@ -8029,11 +8063,11 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
 
         // Check that we get a dSYM even though we disabled debug info.
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["CLANG_GENERATE_OPTIMIZATION_REMARKS":"YES", "GCC_GENERATE_DEBUGGING_SYMBOLS":"NO"])) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["CLANG_GENERATE_OPTIMIZATION_REMARKS":"YES", "GCC_GENERATE_DEBUGGING_SYMBOLS":"NO"]), runDestination: .macOS) { results in
             results.checkTask(.matchRuleType("GenerateDSYMFile")) { _ in }
         }
         // Check that we get a dSYM even though we requested just "dwarf".
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["CLANG_GENERATE_OPTIMIZATION_REMARKS":"YES", "GCC_GENERATE_DEBUGGING_SYMBOLS":"YES", "DEBUG_INFORMATION_FORMAT":"dwarf"])) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["CLANG_GENERATE_OPTIMIZATION_REMARKS":"YES", "GCC_GENERATE_DEBUGGING_SYMBOLS":"YES", "DEBUG_INFORMATION_FORMAT":"dwarf"]), runDestination: .macOS) { results in
             results.checkTask(.matchRuleType("GenerateDSYMFile")) { _ in }
         }
 
@@ -8053,9 +8087,9 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
         }
 
         // Check that we don't pass anything if it's disabled.
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["CLANG_GENERATE_OPTIMIZATION_REMARKS":"NO"]), body: checkNoRemarks)
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["CLANG_GENERATE_OPTIMIZATION_REMARKS":"NO"]), runDestination: .macOS, body: checkNoRemarks)
         // Check that we don't pass anything if any other related flag is set.
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["CLANG_GENERATE_OPTIMIZATION_REMARKS_FILTER":"pass0"]), body: checkNoRemarks)
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["CLANG_GENERATE_OPTIMIZATION_REMARKS_FILTER":"pass0"]), runDestination: .macOS, body: checkNoRemarks)
     }
 
     @Test(.requireSDKs(.macOS, .iOS))
@@ -8142,7 +8176,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                                        buildTargets: [BuildRequest.BuildTargetInfo(parameters: parameters, target: packageTarget)],
                                        continueBuildingAfterErrors: false, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
 
-            await tester.checkBuild(buildRequest: request, fs: localFS) { results in
+            await tester.checkBuild(runDestination: .macOS, buildRequest: request, fs: localFS) { results in
                 results.checkNoDiagnostics()
 
                 // Verify that the code signing task for the framework follows copying the XCFramework.
@@ -8193,7 +8227,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             let tester = try await TaskConstructionTester(getCore(), testWorkspace)
 
             // CreateBuildDirectory tasks should be ordered such that outer directories are created before inner ones.
-            await tester.checkBuild() { results in
+            await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkTask(.matchRuleType("CreateBuildDirectory"), .matchRuleItem("\(tmpDir.str)/build/a/Debug")) { task in
                     task.checkInputs([.path("\(tmpDir.str)/build/a")])
                 }
@@ -8283,14 +8317,14 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             try fs.write(existingFile, contents: "# nothing")
 
             // Test with no GLOBAL_API_NOTES_PATH
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: [:]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: [:]), runDestination: .macOS, fs: fs) { results in
                 results.checkTask(.matchRuleType("CompileC")) { task in
                     task.checkCommandLineDoesNotContain("-iapinotes-path")
                 }
             }
 
             // Test with GLOBAL_API_NOTES_PATH pointing to missing file
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["GLOBAL_API_NOTES_PATH": missingFile.str]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["GLOBAL_API_NOTES_PATH": missingFile.str]), runDestination: .macOS, fs: fs) { results in
                 results.checkTask(.matchRuleType("CompileC")) { task in
                     task.checkCommandLineDoesNotContain("-iapinotes-path")
                     task.checkNoInputs(contain: [.path(missingFile.str)])
@@ -8299,7 +8333,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
 
             // Test with GLOBAL_API_NOTES_PATH pointing to extant file
             if clangFeatures.has(.globalAPINotesPath) {
-                await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["GLOBAL_API_NOTES_PATH": existingFile.str]), fs: fs) { results in
+                await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["GLOBAL_API_NOTES_PATH": existingFile.str]), runDestination: .macOS, fs: fs) { results in
                     results.checkTask(.matchRuleType("CompileC")) { task in
                         task.checkCommandLineContains(["-iapinotes-path", existingFile.str])
                         task.checkInputs(contain: [.path(existingFile.str)])
@@ -8326,6 +8360,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         "AppTarget",
+                        type: .application,
                         buildConfigurations: [
                             TestBuildConfiguration("Debug", buildSettings: [
                                 "GENERATE_INFOPLIST_FILE": "YES"
@@ -8384,7 +8419,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             ]
 
             for override in overrides {
-                await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: override), fs: fs) { results -> Void in
+                await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: override), runDestination: .macOS, fs: fs) { results -> Void in
                     results.checkTarget("AppTarget") { target -> Void in
                         results.checkTask(.matchTarget(target), .matchRuleType("CompileC"), body: {task in test(task: task, overrides: override)})
                     }
@@ -8410,6 +8445,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         "AppTarget",
+                        type: .application,
                         buildConfigurations: [
                             TestBuildConfiguration("Debug", buildSettings: [
                                 "GENERATE_INFOPLIST_FILE": "YES"
@@ -8442,12 +8478,14 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                     }
                 } else if let val = overrides[typedMemoryOperationsCXX] {
                     if val == "YES" {
-                        task.checkCommandLineContains(["-ftyped-cxx-new-delete"])
+                        task.checkCommandLineContains(["-ftyped-cxx-new-delete", "-ftyped-cxx-delete"])
                     } else if val == "NO" {
-                        task.checkCommandLineContains(["-fno-typed-cxx-new-delete"])
+                        task.checkCommandLineContains(["-fno-typed-cxx-new-delete", "-fno-typed-cxx-delete"])
                     } else if val == "compiler-default" {
                         task.checkCommandLineDoesNotContain("-ftyped-cxx-new-delete")
+                        task.checkCommandLineDoesNotContain("-ftyped-cxx-delete")
                         task.checkCommandLineDoesNotContain("-fno-typed-cxx-new-delete")
+                        task.checkCommandLineDoesNotContain("-fno-typed-cxx-delete")
                     }
                 }
             }
@@ -8462,9 +8500,14 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             ]
 
             for override in overrides {
-                await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: override), fs: fs) { results -> Void in
+                await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: override), runDestination: .macOS, fs: fs) { results -> Void in
                     results.checkTarget("AppTarget") { target -> Void in
                         results.checkTask(.matchTarget(target), .matchRuleType("CompileC"), body: {task in test(task: task, overrides: override)})
+                        if let val = override[typedMemoryOperationsCXX], val == "YES" {
+                            results.checkTask(.matchTarget(target), .matchRuleType("Ld"), body: {task in
+                                task.checkCommandLineContains(["-ftyped-cxx-new-delete", "-ftyped-cxx-delete"])
+                            })
+                        }
                     }
                 }
             }
@@ -8488,6 +8531,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         "AppTarget",
+                        type: .application,
                         buildConfigurations: [
                             TestBuildConfiguration("Debug", buildSettings: [
                                 "GENERATE_INFOPLIST_FILE": "YES"
@@ -8530,7 +8574,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
             ]
 
             for override in overrides {
-                await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: override), fs: fs) { results -> Void in
+                await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: override), runDestination: .macOS, fs: fs) { results -> Void in
                     results.checkTarget("AppTarget") { target -> Void in
                         results.checkTask(.matchTarget(target), .matchRuleType("CompileC"), body: {task in test(task: task, overrides: override)})
                     }
@@ -8574,7 +8618,7 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                 ])
 
             let tester = try await TaskConstructionTester(getCore(), testProject)
-            await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug")) { results in
+            await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug"), runDestination: .macOS) { results in
                 results.checkTarget("MyFramework") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("CompileC")) { task in
                         task.checkCommandLineMatches(["-w"])
@@ -8585,6 +8629,54 @@ fileprivate struct TaskConstructionTests: CoreBasedTests {
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineMatches(["-w"])
                     }
+                }
+            }
+        }
+    }
+
+    @Test(.requireSDKs(.host))
+    func deterministicBuildDirectoryInputOrdering() async throws {
+        try await withTemporaryDirectory { tmpDir in
+            let testProject = try await TestPackageProject(
+                "aProject",
+                sourceRoot: tmpDir,
+                groupTree: TestGroup(
+                    "SomeFiles",
+                    children: [
+                        TestFile("main.swift"),
+                    ]),
+                buildConfigurations: [
+                    TestBuildConfiguration("Debug", buildSettings: [
+                        "PRODUCT_NAME": "$(TARGET_NAME)",
+                        "SWIFT_EXEC": swiftCompilerPath.str,
+                        "SWIFT_VERSION": try await swiftVersion,
+                        "SUPPORTED_PLATFORMS": "$(HOST_PLATFORM)",
+                        "SDKROOT": "$(HOST_PLATFORM)",
+                        "LIBRARY_SEARCH_PATHS": "$(inherited) $(BUILT_PRODUCTS_DIR)/PackageFrameworks"
+                    ]),
+                ],
+                targets: [
+                    TestStandardTarget(
+                        "swifttool", type: .commandLineTool,
+                        buildConfigurations: [
+                            TestBuildConfiguration("Debug", buildSettings: [
+                                "PRODUCT_NAME": "$(TARGET_NAME)",
+                            ]),
+                        ],
+                        buildPhases: [
+                            TestSourcesBuildPhase(["main.swift"]),
+                        ],
+                        dependencies: []
+                    ),
+                ])
+            let tester = try await TaskConstructionTester(getCore(), testProject)
+            try await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug"), runDestination: .host) { results in
+                try results.checkTask(.matchRuleType("Ld")) { task in
+                    results.checkNoDiagnostics()
+                    let debugIndex = try #require(task.inputs.firstIndex { $0.path.basename.hasPrefix("Debug") })
+                    let packageFrameworksIndex = try #require(task.inputs.firstIndex { $0.path.basename == "PackageFrameworks" })
+                    // Ensure the build directory input order is stable
+                    #expect(debugIndex < packageFrameworksIndex)
                 }
             }
         }

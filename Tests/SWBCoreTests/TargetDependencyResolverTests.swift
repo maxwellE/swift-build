@@ -16,6 +16,7 @@ import SWBProtocol
 import SWBTestSupport
 @_spi(Testing) import SWBUtil
 import Foundation
+import SWBMacro
 
 fileprivate enum TargetPlatformSpecializationMode {
     /// The v1 support of target platform specialization that uses SDKROOT=auto and SDK_VARIANT=auto to opt-in.
@@ -52,7 +53,7 @@ fileprivate enum TargetPlatformSpecializationMode {
                                               projects: [TestProject("aProject",
                                                                      groupTree: TestGroup("SomeFiles"),
                                                                      targets: [
-                                                                        TestStandardTarget("anApp"),
+                                                                        TestStandardTarget("anApp", type: .application),
                                                                      ]
                                                                     )]
             ).load(core)
@@ -155,9 +156,9 @@ fileprivate enum TargetPlatformSpecializationMode {
                                           projects: [TestProject("aProject",
                                                                  groupTree: TestGroup("SomeFiles"),
                                                                  targets: [
-                                                                    TestStandardTarget("anApp", dependencies: ["aFramework"]),
-                                                                    TestStandardTarget("anotherApp", dependencies: ["aFramework"]),
-                                                                    TestStandardTarget("aFramework")])]).load(core)
+                                                                    TestStandardTarget("anApp", type: .application, dependencies: ["aFramework"]),
+                                                                    TestStandardTarget("anotherApp", type: .application, dependencies: ["aFramework"]),
+                                                                    TestStandardTarget("aFramework", type: .application)])]).load(core)
         let workspaceContext = WorkspaceContext(core: core, workspace: workspace, processExecutionCache: .sharedForTesting)
         let project = workspace.projects[0]
 
@@ -192,9 +193,9 @@ fileprivate enum TargetPlatformSpecializationMode {
                                           projects: [TestProject("aProject",
                                                                  groupTree: TestGroup("SomeFiles"),
                                                                  targets: [
-                                                                    TestStandardTarget("anApp", dependencies: ["aFramework"]),
-                                                                    TestStandardTarget("anotherApp", dependencies: ["aFramework"]),
-                                                                    TestStandardTarget("aFramework")])]).load(core)
+                                                                    TestStandardTarget("anApp", type: .application, dependencies: ["aFramework"]),
+                                                                    TestStandardTarget("anotherApp", type: .application, dependencies: ["aFramework"]),
+                                                                    TestStandardTarget("aFramework", type: .application)])]).load(core)
         let workspaceContext = WorkspaceContext(core: core, workspace: workspace, processExecutionCache: .sharedForTesting)
         let project = workspace.projects[0]
 
@@ -241,8 +242,8 @@ fileprivate enum TargetPlatformSpecializationMode {
                                           projects: [TestProject("aProject",
                                                                  groupTree: TestGroup("SomeFiles"),
                                                                  targets: [
-                                                                    TestStandardTarget("anApp", dependencies: ["aFramework", "Missing"]),
-                                                                    TestStandardTarget("aFramework"),
+                                                                    TestStandardTarget("anApp", type: .application, dependencies: ["aFramework", "Missing"]),
+                                                                    TestStandardTarget("aFramework", type: .application),
                                                                  ]
                                                                 )]
         ).load(core)
@@ -721,6 +722,7 @@ fileprivate enum TargetPlatformSpecializationMode {
                             targets: [
                                 TestStandardTarget(
                                     "Watchable",
+                                    type: .application,
                                     buildConfigurations: [
                                         TestBuildConfiguration(
                                             "Debug",
@@ -1572,7 +1574,7 @@ fileprivate enum TargetPlatformSpecializationMode {
         let targets = buildGraph.allTargets.filter { $0.target.name == name }
         #expect(targets.count == expectedPlatforms.count)
 
-        var unexepectedPlatforms: [String] = []
+        var unexpectedPlatforms: [String] = []
         var visitedPlatforms = Set(expectedPlatforms)
         for target in targets {
             let settings = buildRequestContext.getCachedSettings(target.parameters, target: target.target)
@@ -1581,12 +1583,12 @@ fileprivate enum TargetPlatformSpecializationMode {
                 continue
             }
             if visitedPlatforms.remove(platform.name) == nil {
-                unexepectedPlatforms.append(platform.name)
+                unexpectedPlatforms.append(platform.name)
             }
         }
 
         #expect(visitedPlatforms == [])
-        #expect(unexepectedPlatforms == [])
+        #expect(unexpectedPlatforms == [])
     }
 
     let specializationWorkspace_basic: TestWorkspace = {
@@ -2007,9 +2009,9 @@ fileprivate enum TargetPlatformSpecializationMode {
                 try checkTarget(graphType, buildRequestContext, buildGraph, name: "SinglePlatformFramework", expectedPlatform: "macosx")
                 try checkTarget(graphType, buildRequestContext, buildGraph, name: "Intermediate", expectedPlatforms: ["macosx"])
 
-                // NOTE: Due to how the aggegrate targets are specialized "transparently", this means this project configuration is actually non-deterministc
-                // as our depedency resolver can run concurrently. This test forces the order to verify the specialization is happening correctly, but the
-                // project configuration itself is non-determinstic. It's also an odd setup as the leaf framework is not used by any of the top-level targets,
+                // NOTE: Due to how the aggregate targets are specialized "transparently", this means this project configuration is actually non-deterministic
+                // as our dependency resolver can run concurrently. This test forces the order to verify the specialization is happening correctly, but the
+                // project configuration itself is non-deterministic. It's also an odd setup as the leaf framework is not used by any of the top-level targets,
                 // which would mean this target would be specialized.
                 try checkTarget(graphType, buildRequestContext, buildGraph, name: "MultiPlatformFramework", expectedPlatforms: [expectedPlatform])
 
@@ -3188,8 +3190,8 @@ fileprivate enum TargetPlatformSpecializationMode {
                                           projects: [TestProject("aProject",
                                                                  groupTree: TestGroup("SomeFiles", children: [TestFile("aFramework.framework")]),
                                                                  targets: [
-                                                                    TestStandardTarget("anApp", buildPhases: [TestFrameworksBuildPhase(["aFramework.framework"])]),
-                                                                    TestStandardTarget("aFramework", productReferenceName: "aFramework.framework"),
+                                                                    TestStandardTarget("anApp", type: .application, buildPhases: [TestFrameworksBuildPhase(["aFramework.framework"])]),
+                                                                    TestStandardTarget("aFramework", type: .application, productReferenceName: "aFramework.framework"),
                                                                  ]
                                                                 )]
         ).load(core)
@@ -3241,6 +3243,7 @@ fileprivate enum TargetPlatformSpecializationMode {
                         ]),
                         TestStandardTarget(
                             "test0",
+                            type: .application,
                             buildConfigurations: [
                                 TestBuildConfiguration(
                                     "Debug",
@@ -3253,6 +3256,7 @@ fileprivate enum TargetPlatformSpecializationMode {
                         ),
                         TestStandardTarget(
                             "test1",
+                            type: .application,
                             buildConfigurations: [
                                 TestBuildConfiguration(
                                     "Debug",
@@ -3263,6 +3267,7 @@ fileprivate enum TargetPlatformSpecializationMode {
                         ),
                         TestStandardTarget(
                             "test2",
+                            type: .application,
                             buildConfigurations: [
                                 TestBuildConfiguration(
                                     "Debug",
@@ -3273,6 +3278,7 @@ fileprivate enum TargetPlatformSpecializationMode {
                         ),
                         TestStandardTarget(
                             "test3",
+                            type: .application,
                             buildConfigurations: [
                                 TestBuildConfiguration(
                                     "Debug",
@@ -3283,6 +3289,7 @@ fileprivate enum TargetPlatformSpecializationMode {
                         ),
                         TestStandardTarget(
                             "testDisabled",
+                            type: .application,
                             buildConfigurations: [
                                 TestBuildConfiguration(
                                     "Debug",
@@ -3294,10 +3301,10 @@ fileprivate enum TargetPlatformSpecializationMode {
                         ),
 
                         // Ensure that more than one target has the same "stem" ("Dynamic"), so that we don't get an ambiguous match including the framework from a -lDynamic argument.
-                        TestStandardTarget("aFramework", productReferenceName: "aFramework.framework"),
-                        TestStandardTarget("aFramework2", productReferenceName: "Dynamic.framework"),
-                        TestStandardTarget("aDynamicLib", productReferenceName: "libDynamic.dylib"),
-                        TestStandardTarget("aStaticLib", productReferenceName: "libStatic.a"),
+                        TestStandardTarget("aFramework", type: .application, productReferenceName: "aFramework.framework"),
+                        TestStandardTarget("aFramework2", type: .application, productReferenceName: "Dynamic.framework"),
+                        TestStandardTarget("aDynamicLib", type: .application, productReferenceName: "libDynamic.dylib"),
+                        TestStandardTarget("aStaticLib", type: .application, productReferenceName: "libStatic.a"),
                     ]
                 ),
             ]
@@ -4118,7 +4125,7 @@ fileprivate enum TargetPlatformSpecializationMode {
 
     /// This is a specific regression test for part of rdar://73361908.
     @Test(.requireSDKs(.macOS, .iOS))
-    func implicitDependencyResolutionMultiPlatDepsSameProdutName() async throws {
+    func implicitDependencyResolutionMultiPlatDepsSameProductName() async throws {
         let core = try await getCore()
 
         let testProject = try await TestProject(
@@ -4733,7 +4740,7 @@ fileprivate enum TargetPlatformSpecializationMode {
         let workspaceContext = WorkspaceContext(core: core, workspace: workspace, processExecutionCache: .sharedForTesting)
         let project = workspace.projects[0]
 
-        // The key thing that's being tested here is that all of the targets are top-level targets, but since MergedFwkTarget has AUTOMATICALLY_MERGE_DEPENDENCIES set, it will imppose on its framework & dylib dependencies, and we want to make sure that none of them show up more than once, there should only be one of each, with MERGEABLE_LIBRARY enabled.
+        // The key thing that's being tested here is that all of the targets are top-level targets, but since MergedFwkTarget has AUTOMATICALLY_MERGE_DEPENDENCIES set, it will impose on its framework & dylib dependencies, and we want to make sure that none of them show up more than once, there should only be one of each, with MERGEABLE_LIBRARY enabled.
         // TaskConstructionTests.MergeableLibraryTests will also exercise this, but this is a lower-level test exercising target dependency resolution specifically.
         let parameters = BuildParameters(configuration: "Release")
         let targets = project.targets.map({ BuildRequest.BuildTargetInfo(parameters: parameters, target: $0) })

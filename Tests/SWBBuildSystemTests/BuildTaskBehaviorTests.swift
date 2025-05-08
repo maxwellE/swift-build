@@ -21,6 +21,7 @@ import SWBLibc
 
 import class SWBBuildSystem.BuildOperation
 import class SWBTaskExecution.Task
+import SWBProtocol
 
 private final class MockTaskTypeDescription: TaskTypeDescription {
     init(isUnsafeToInterrupt: Bool = false) {
@@ -87,7 +88,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
         // Execute a test build against the task set.
         let tester = try await BuildOperationTester(getCore(), [echoTask], simulated: true)
 
-        try await tester.checkBuild { results in
+        try await tester.checkBuild(runDestination: .host) { results in
             // Check that the delegate was passed build started and build ended events in the right place.
             results.checkCapstoneEvents()
             let echoTask = try #require(results.getTask(.matchRule(["echo", "hi"])))
@@ -115,7 +116,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
         let tester = try await BuildOperationTester(getCore(), [constructedFailingTask, constructedOtherTask], simulated: true, continueBuildingAfterErrors: true)
 
-        try await tester.checkBuild { results in
+        try await tester.checkBuild(runDestination: .host) { results in
             results.checkError(.prefix("Command failing failed."))
             results.checkNoDiagnostics()
             #expect(uniqueTaskNamesIncludedInEvents(results.events).sorted() == ["failing", "mock"])
@@ -133,7 +134,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
         let tester = try await BuildOperationTester(getCore(), [constructedFailingTask, constructedOtherTask], simulated: true, continueBuildingAfterErrors: false)
 
-        try await tester.checkBuild { results in
+        try await tester.checkBuild(runDestination: .host) { results in
             results.checkError(.prefix("Command failing failed."))
             results.checkNoDiagnostics()
             #expect(uniqueTaskNamesIncludedInEvents(results.events) == ["failing"])
@@ -162,7 +163,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
     func immediateCancellation() async throws {
         let (tester, _, _) = try await createBuildOperationTesterForCancellation()
 
-        try await tester.checkBuild(body: { results in
+        try await tester.checkBuild(runDestination: .host, body: { results in
             results.checkCapstoneEvents(last: .buildCancelled)
         }) { operation in
             operation.cancel()
@@ -174,7 +175,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
     func cancellationAfterStart() async throws {
         let (tester, taskWaitsForSemaphore, taskHasStartedSemaphore) = try await createBuildOperationTesterForCancellation()
 
-        try await tester.checkBuild(body: { results in
+        try await tester.checkBuild(runDestination: .host, body: { results in
             results.checkCapstoneEvents(last: .buildCancelled)
 
             let waitTask = try #require(results.getTask(.matchRule(["wait"])))
@@ -206,7 +207,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
     /// Stress concurrent access to the build system cache during rapid cancel
     /// then build scenarios.
-    @Test(.requireSDKs(.host),
+    @Test(.requireSDKs(.host), .skipHostOS(.windows, "no /usr/bin/true"), .requireThreadSafeWorkingDirectory,
           // To aid in establishing the subtle concurrent
           // timing required to trigger chaos, we disable early build operation
           // cancellation.
@@ -234,7 +235,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
                         tester.userPreferences = prefs
 
-                        try await tester.checkBuild(body: { results in
+                        try await tester.checkBuild(runDestination: .host, body: { results in
                             results.checkCapstoneEvents(last: .buildCancelled)
                         }) { operation in
                             build1Ready.signal()
@@ -262,7 +263,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
                         tester.userPreferences = prefs
 
-                        try await tester.checkBuild(body: { results in
+                        try await tester.checkBuild(runDestination: .host, body: { results in
                             #expect(results.events.first! == .buildStarted)
 
                             let waitTask = try #require(results.getTask(.matchRule(["wait"])))
@@ -306,7 +307,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
     }
 
     /// Check that we honor specs which are unsafe to interrupt.
-    @Test(.requireSDKs(.host), .skipHostOS(.windows, "no bash shell"))
+    @Test(.requireSDKs(.host), .skipHostOS(.windows, "no bash shell"), .requireThreadSafeWorkingDirectory)
     func unsafeToInterrupt() async throws {
         let fs = localFS
         let output = MakePlannedVirtualNode("<WAIT>")
@@ -346,7 +347,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
                     #expect(taskOutput.unsafeStringValue == "note: installing trap...\n")
                 }
             }
-            try await tester.checkBuild(body: checkBuildResults) { operation in
+            try await tester.checkBuild(runDestination: .host, body: checkBuildResults) { operation in
                 let task = _Concurrency.Task<Void, any Error> {
                     defer {
                         // Cancel the build
@@ -365,7 +366,13 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
                 }
 
                 try await withTaskCancellationHandler {
-                    await operation.build()
+                    switch await operation.build() {
+                    case .cancelled, .failed:
+                        // If the build already failed, cancel the task that waits for the script so the test doesn't get stuck forever.
+                        task.cancel()
+                    case .succeeded:
+                        break
+                    }
                     try await task.value
                 } onCancel: {
                     task.cancel()
@@ -375,7 +382,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
     }
 
     /// Check the behavior of gate tasks.
-    @Test(.requireSDKs(.host), .skipHostOS(.windows, "no /usr/bin/true"))
+    @Test(.requireSDKs(.host), .skipHostOS(.windows, "no /usr/bin/true"), .requireThreadSafeWorkingDirectory)
     func simulatedTasksWithGate() async throws {
         let aNode = MakePlannedVirtualNode("A")
         let bNode = MakePlannedVirtualNode("B")
@@ -387,7 +394,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
         // Execute a test build against the task set.
         let tester = try await BuildOperationTester(getCore(), [aTask, bTask, gateTask], simulated: true)
 
-        try await tester.checkBuild { results in
+        try await tester.checkBuild(runDestination: .host) { results in
             // Check that the delegate was passed build started and build ended events in the right place.
             results.checkCapstoneEvents()
 
@@ -399,7 +406,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
         }
     }
 
-    @Test(.requireSDKs(.host), .skipHostOS(.windows, "no /bin/echo"))
+    @Test(.requireSDKs(.host), .skipHostOS(.windows, "no /bin/echo"), .requireThreadSafeWorkingDirectory)
     func simulatedDiamondGraph() async throws {
         let tasksToMake = [
             ("START", inputs: ["/INPUT"]),
@@ -419,7 +426,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
         // Create the required INPUT node.
         try tester.fs.write(Path("/INPUT"), contents: [])
 
-        try await tester.checkBuild { results in
+        try await tester.checkBuild(runDestination: .host) { results in
             // Check that the delegate was passed build started and build ended events in the right place.
             results.checkCapstoneEvents()
 
@@ -435,7 +442,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
         }
     }
 
-    @Test(.requireSDKs(.host), .skipHostOS(.windows, "no /usr/bin/true"))
+    @Test(.requireSDKs(.host), .skipHostOS(.windows, "no /usr/bin/true"), .requireThreadSafeWorkingDirectory)
     func simulatedMustPrecede() async throws {
         let tasksToMake = ["A", "B", "C", "D"]
         var tasks: [any PlannedTask] = []
@@ -448,7 +455,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
         // Execute a test build against the task set.
         let tester = try await BuildOperationTester(getCore(), tasks, simulated: true)
-        try await tester.checkBuild { results in
+        try await tester.checkBuild(runDestination: .host) { results in
             // Check that the delegate was passed build started and build ended events in the right place.
             results.checkCapstoneEvents()
 
@@ -482,7 +489,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
         // Execute a test build against the task set.
         let tester = try await BuildOperationTester(getCore(), tasks, simulated: true)
-        try await tester.checkBuild(persistent: true) { results throws in
+        try await tester.checkBuild(runDestination: .host, persistent: true) { results throws in
             // Check that the delegate was passed build started and build ended events in the right place.
             results.checkCapstoneEvents()
 
@@ -499,12 +506,12 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
         }
 
         // Check that we get a null build.
-        try await tester.checkNullBuild(persistent: true)
+        try await tester.checkNullBuild(runDestination: .host, persistent: true)
 
         // Update the initial file and rebuild.
         initialTaskAction.contents = "Hello again"
         checkTaskAction.contents = "Hello again, world!"
-        try await tester.checkBuild(persistent: true) { results in
+        try await tester.checkBuild(runDestination: .host, persistent: true) { results in
             let initialTask = try #require(results.getTask(.matchRule(["INITIAL"])))
             let appendTask = try #require(results.getTask(.matchRule(["APPEND"])))
             let checkTask = try #require(results.getTask(.matchRule(["CHECK"])))
@@ -519,14 +526,14 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
         // This checks that downstream tasks of a trigger rerun properly even across separate builds.
         initialTaskAction.contents = "Hello once more"
         checkTaskAction.contents = "Hello once more, world!"
-        try await tester.checkBuild(buildCommand: .prepareForIndexing(buildOnlyTheseTargets: nil, enableIndexBuildArena: false), persistent: true) { results in
+        try await tester.checkBuild(runDestination: .host, buildCommand: .prepareForIndexing(buildOnlyTheseTargets: nil, enableIndexBuildArena: false), persistent: true) { results in
             let initialTask = try #require(results.getTask(.matchRule(["INITIAL"])))
 
             // Check that the expected tasks ran.
             let startedTasks = results.getStartedTasks()
             #expect(startedTasks == [initialTask])
         }
-        try await tester.checkBuild(persistent: true) { results in
+        try await tester.checkBuild(runDestination: .host, persistent: true) { results in
             let appendTask = try #require(results.getTask(.matchRule(["APPEND"])))
             let checkTask = try #require(results.getTask(.matchRule(["CHECK"])))
 
@@ -537,7 +544,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
         // Remove the output file and check the build.
         try tester.fs.remove(testPath)
-        try await tester.checkBuild(persistent: true) { results throws in
+        try await tester.checkBuild(runDestination: .host, persistent: true) { results throws in
             let initialTask = try #require(results.getTask(.matchRule(["INITIAL"])))
             let appendTask = try #require(results.getTask(.matchRule(["APPEND"])))
             let checkTask = try #require(results.getTask(.matchRule(["CHECK"])))
@@ -558,7 +565,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
         let testNode = MakePlannedPathNode(testPath)
         let initialVirtualNode = MakePlannedVirtualNode("<INITIAL>")
 
-        // We intentially declare these using mustPrecede to validate those edges are checked for chaining.
+        // We intentionally declare these using mustPrecede to validate those edges are checked for chaining.
         let append1VirtualNode = MakePlannedVirtualNode("<APPEND-1>")
         let append1Task = createTask(ruleInfo: ["APPEND-1"], commandLine: ["builtin-append-contents"], inputs: [testNode], outputs: [testNode, append1VirtualNode], mustPrecede: [], action: AppendingTaskAction(contents: ", world", to: testNode))
         let initialTaskAction = MockTaskAction(contents: "Hello", output: testNode)
@@ -573,7 +580,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
         // Execute a test build against the task set.
         let tester = try await BuildOperationTester(getCore(), tasks, simulated: true)
-        try await tester.checkBuild(persistent: true) { results throws in
+        try await tester.checkBuild(runDestination: .host, persistent: true) { results throws in
             // Check that the delegate was passed build started and build ended events in the right place.
             results.checkCapstoneEvents()
             let initialTask = try #require(results.getTask(.matchRule(["INITIAL"])))
@@ -590,7 +597,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
         }
 
         // Check that we get a null build.
-        try await tester.checkNullBuild(persistent: true)
+        try await tester.checkNullBuild(runDestination: .host, persistent: true)
     }
 
     /// Check the diagnostics for malformed tasks.
@@ -606,7 +613,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
         // Execute a test build against the task set.
         let tester = try await BuildOperationTester(getCore(), tasks, simulated: true)
-        try await tester.checkBuild(persistent: true) { results in
+        try await tester.checkBuild(runDestination: .host, persistent: true) { results in
             results.checkWarning(.contains("unexpected mutating task ('APPEND-1') with no relation to prior mutator ('INITIAL')"))
             results.checkWarning(.contains("unexpected mutating task ('APPEND-2') with no relation to prior mutator ('APPEND-1')"))
             results.checkError(.contains("invalid task ('APPEND-2') with mutable output but no other virtual output node"))
@@ -646,7 +653,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
         // Execute a test build against the task set.
         let tester = try await BuildOperationTester(getCore(), tasks, simulated: true)
-        try await tester.checkBuild(persistent: true) { results throws in
+        try await tester.checkBuild(runDestination: .host, persistent: true) { results throws in
             let initialATask = try #require(results.getTask(.matchRule(["INITIAL-A"])))
             let initialBTask = try #require(results.getTask(.matchRule(["INITIAL-B"])))
             let appendTask = try #require(results.getTask(.matchRule(["APPEND-MULTI"])))
@@ -666,7 +673,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
         }
 
         // Check that we get a null build.
-        try await tester.checkNullBuild(persistent: true)
+        try await tester.checkNullBuild(runDestination: .host, persistent: true)
     }
 
     /// Check that we properly sort a complex sequence of mutating tasks.
@@ -676,7 +683,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
         let testNode = MakePlannedPathNode(testPath)
         let initialVirtualNode = MakePlannedVirtualNode("<INITIAL>")
 
-        // We intentially declare these using mustPrecede to validate those edges are checked for chaining.
+        // We intentionally declare these using mustPrecede to validate those edges are checked for chaining.
         let initialTaskAction = MockTaskAction(contents: "Hello", output: testNode)
         let initialTask = createTask(ruleInfo: ["INITIAL"], commandLine: ["builtin-create-file"], inputs: [], outputs: [testNode, initialVirtualNode], mustPrecede: [], action: initialTaskAction, preparesForIndexing: true)
         let append1VirtualNode = MakePlannedVirtualNode("<APPEND-1>")
@@ -693,7 +700,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
         // Execute a test build against the task set.
         let tester = try await BuildOperationTester(getCore(), tasks, simulated: true)
-        try await tester.checkBuild(persistent: true) { results throws in
+        try await tester.checkBuild(runDestination: .host, persistent: true) { results throws in
             let initialTask = try #require(results.getTask(.matchRule(["INITIAL"])))
             let append1Task = try #require(results.getTask(.matchRule(["APPEND-1"])))
             let append2Task = try #require(results.getTask(.matchRule(["APPEND-2"])))
@@ -711,7 +718,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
         }
 
         // Check that we get a null build.
-        try await tester.checkNullBuild(persistent: true)
+        try await tester.checkNullBuild(runDestination: .host, persistent: true)
     }
 
     /// Check the stability of input ordering for a command which has multiple mutated inputs.
@@ -734,9 +741,9 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
         // Check for stability by comparing two manifests.
         let tester = try await BuildOperationTester(getCore(), tasks, simulated: true)
-        try await tester.checkBuildDescription { results in
+        try await tester.checkBuildDescription(runDestination: .host) { results in
             let manifest1Contents = try tester.fs.read(results.buildDescription.manifestPath).bytes
-            try await tester.checkBuildDescription { results in
+            try await tester.checkBuildDescription(runDestination: .host) { results in
                 let manifest2Contents = try tester.fs.read(results.buildDescription.manifestPath).bytes
                 #expect(String(decoding: manifest1Contents, as: Unicode.UTF8.self) == String(decoding: manifest2Contents, as: Unicode.UTF8.self))
             }
@@ -754,7 +761,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
         // Execute a test build against the task set.
         let tester = try await BuildOperationTester(getCore(), [task], simulated: true)
 
-        try await tester.checkBuild(persistent: true) { results throws in
+        try await tester.checkBuild(runDestination: .host, persistent: true) { results throws in
             let task = try #require(results.getTask(.matchRule(["MOCK"])))
             // Check that the delegate was passed build started and build ended events in the right place.
             results.checkCapstoneEvents()
@@ -777,11 +784,11 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
         }
 
         // Check that we get a null build.
-        try await tester.checkNullBuild(persistent: true)
+        try await tester.checkNullBuild(runDestination: .host, persistent: true)
 
         // Change the mock task internal data, and verify the build updates properly.
         action.contents = "Hello, incremental world!"
-        try await tester.checkBuild(persistent: true) { results throws in
+        try await tester.checkBuild(runDestination: .host, persistent: true) { results throws in
             // Check the data was updated.
             #expect(try results.fs.read(outputPath) == ByteString(encodingAsUTF8: "Hello, incremental world!"))
         }
@@ -807,7 +814,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
                 // Execute a test build against the task set.
                 let tester = try await BuildOperationTester(getCore(), [task], simulated: true, temporaryDirectory: tmpDir, fileSystem: fs)
-                try await tester.checkBuild(persistent: true) { results throws in
+                try await tester.checkBuild(runDestination: .host, persistent: true) { results throws in
                     // Check the task ran.
                     let task = try #require(results.getTask(.matchRule(["MOCK"])))
                     #expect(results.getStartedTasks() == [task])
@@ -822,7 +829,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
                 // Execute a test build against the task set.
                 let tester = try await BuildOperationTester(getCore(), [task], simulated: true, temporaryDirectory: tmpDir, fileSystem: fs)
-                try await tester.checkNullBuild(persistent: true)
+                try await tester.checkNullBuild(runDestination: .host, persistent: true)
             }
 
             // Perform a build with a changed task.
@@ -833,7 +840,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
                 // Execute a test build against the task set.
                 let tester = try await BuildOperationTester(getCore(), [task], simulated: true, temporaryDirectory: tmpDir, fileSystem: fs)
-                try await tester.checkBuild(persistent: true) { results throws in
+                try await tester.checkBuild(runDestination: .host, persistent: true) { results throws in
                     let task = try #require(results.getTask(.matchRule(["MOCK"])))
                     #expect(results.getStartedTasks() == [task])
                     #expect(try results.fs.read(outputPath) == ByteString(encodingAsUTF8: "Hello, alternate world!"))
@@ -859,7 +866,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
                 // Execute a test build against the task set.
                 let tester = try await BuildOperationTester(getCore(), [task], simulated: true, temporaryDirectory: tmpDir, fileSystem: fs)
-                try await tester.checkBuild(persistent: true) { results throws in
+                try await tester.checkBuild(runDestination: .host, persistent: true) { results throws in
                     // Check the task ran.
                     let task = try #require(results.getTask(.matchRule(["MOCK"])))
                     #expect(results.getStartedTasks() == [task])
@@ -887,7 +894,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
             let tester = try await BuildOperationTester(getCore(), [task], simulated: false, temporaryDirectory: tmpDir, fileSystem: fs)
 
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .host, persistent: true) { results in
                 let task = try #require(results.getTask(.matchRule(["MkDir", outputPath.str])))
                 results.check(contains: .taskHadEvent(task, event: .exit(.succeeded(metrics: nil))))
             }
@@ -895,7 +902,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
     }
 
     /// Check the handling of directory tree nodes.
-    @Test(.skipHostOS(.windows, "no /usr/bin/find"), .requireSDKs(.host))
+    @Test(.skipHostOS(.windows, "no /usr/bin/find"), .requireSDKs(.host), .requireThreadSafeWorkingDirectory)
     func directoryTreeInputs() async throws {
         try await withTemporaryDirectory { tmpDir in
             let fs = localFS
@@ -911,7 +918,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
             let tester = try await BuildOperationTester(getCore(), [task], simulated: false, temporaryDirectory: tmpDir, fileSystem: fs)
 
             // Perform the initial build.
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .host, persistent: true) { results in
                 // Check the task ran.
                 let task = try #require(results.getTask(.matchRule(["CheckDir"])))
                 #expect(results.getStartedTasks() == [task])
@@ -928,7 +935,7 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
 
             // Mutate the filesystem and rerun the test.
             try fs.write(subdirPath.join("b.txt"), contents: "b")
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .host, persistent: true) { results in
                 // Check the task ran.
                 let task = try #require(results.getTask(.matchRule(["CheckDir"])))
                 #expect(results.getStartedTasks() == [task])
@@ -946,14 +953,14 @@ fileprivate struct BuildTaskBehaviorTests: CoreBasedTests {
         }
     }
 
-    @Test(.requireSDKs(.host), .skipHostOS(.windows, "no /bin/echo"))
+    @Test(.requireSDKs(.host), .skipHostOS(.windows, "no /bin/echo"), .requireThreadSafeWorkingDirectory)
     func additionalInfoOutput() async throws {
         let echoTask = createTask(ruleInfo: ["echo", "additional-output"], commandLine: ["/bin/echo", "additional-output"], additionalOutput: ["just some extra output"], inputs: [], outputs: [MakePlannedVirtualNode("<ECHO>")], action: nil)
 
         // Execute a test build against the task set.
         let tester = try await BuildOperationTester(getCore(), [echoTask], simulated: true)
 
-        try await tester.checkBuild { results in
+        try await tester.checkBuild(runDestination: .host) { results in
             // Check that the delegate was passed build started and build ended events in the right place.
             results.checkCapstoneEvents()
 

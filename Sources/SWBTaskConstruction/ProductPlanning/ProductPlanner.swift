@@ -12,6 +12,7 @@
 
 import SWBCore
 import SWBUtil
+import SWBMacro
 
 @PluginExtensionSystemActor private func taskProducerExtensions(_ workspaceContext: WorkspaceContext) -> [any TaskProducerExtension] {
     let extensions = workspaceContext.core.pluginManager.extensions(of: TaskProducerExtensionPoint.self)
@@ -470,11 +471,13 @@ extension StandardTarget
                 taskProducers.append(factory.createTaskProducer(taskProducerContext, startPhaseNodes: [setupEndPhaseNode], endPhaseNode: endPhaseNode))
                 postprocessingTaskProducerInputNodes.append(endPhaseNode)
             }
-        }
 
-        createNewPhaseNode("AppIntentsMetadataTaskProducer")
-        taskProducers.append(AppIntentsMetadataTaskProducer(taskProducerContext, sourcesBuildPhase: self.sourcesBuildPhase, resourcesBuildPhase: self.resourcesBuildPhase, phaseStartNodes: [setupEndPhaseNode, buildPhasesEndNode], phaseEndNode: endPhaseNode))
-        postprocessingTaskProducerInputNodes.append(endPhaseNode)
+            for factory in taskProducerExtension.unorderedPostBuildPhasesTaskProducers {
+                createNewPhaseNode(factory.name)
+                taskProducers.append(factory.createTaskProducer(taskProducerContext, startPhaseNodes: [setupEndPhaseNode, buildPhasesEndNode], endPhaseNode: endPhaseNode))
+                postprocessingTaskProducerInputNodes.append(endPhaseNode)
+            }
+        }
 
         // Add postprocessing task producers.  These are ordered after all of the other task producers.
         createNewPhaseNode("ProductPostprocessingTaskProducer")

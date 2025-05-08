@@ -20,6 +20,7 @@ package import SWBUtil
 package import struct SWBProtocol.BuildDescriptionID
 package import struct SWBProtocol.BuildOperationTaskEnded
 import SWBMacro
+import Synchronization
 
 /// An enum describing from where the build description was retrieved, for testing purposes.
 package enum BuildDescriptionRetrievalSource {
@@ -57,7 +58,7 @@ package struct BuildDescriptionRetrievalInfo {
 }
 
 /// Controls the non-deterministic eviction policy of the cache. Note that this is distinct from deterministic _pruning_ (due to TTL or size limits).
-package enum BuildDescriptionMemoryCacheEvictionPolicy: Sendable {
+package enum BuildDescriptionMemoryCacheEvictionPolicy: Sendable, Hashable {
     /// Never evict due to memory pressure.
     case never
 
@@ -104,20 +105,22 @@ package final class BuildDescriptionManager: Sendable {
 
     package init(fs: any FSProxy, buildDescriptionMemoryCacheEvictionPolicy: BuildDescriptionMemoryCacheEvictionPolicy, maxCacheSize: (inMemory: Int, onDisk: Int) = (4, 4)) {
         self.fs = fs
-        self.inMemoryCachedBuildDescriptions = HeavyCache(maximumSize: maxCacheSize.inMemory, evictionPolicy: {
-            switch buildDescriptionMemoryCacheEvictionPolicy {
-            case .never:
-                .never
-            case .default(let totalCostLimit):
-                .default(totalCostLimit: totalCostLimit, willEvictCallback: { buildDescription in
-                    // Capture the path to a local variable so that the buildDescription instance isn't retained by OSLog's autoclosure message parameter.
-                    let packagePath = buildDescription.packagePath
-                    #if canImport(os)
-                    OSLog.log("Evicted cached build description at '\(packagePath.str)'")
-                    #endif
-                })
-            }
-        }())
+        self.inMemoryCachedBuildDescriptions = withHeavyCacheGlobalState(isolated: buildDescriptionMemoryCacheEvictionPolicy == .never) {
+            HeavyCache(maximumSize: maxCacheSize.inMemory, evictionPolicy: {
+                switch buildDescriptionMemoryCacheEvictionPolicy {
+                case .never:
+                    .never
+                case .default(let totalCostLimit):
+                    .default(totalCostLimit: totalCostLimit, willEvictCallback: { buildDescription in
+                        // Capture the path to a local variable so that the buildDescription instance isn't retained by OSLog's autoclosure message parameter.
+                        let packagePath = buildDescription.packagePath
+                        #if canImport(os)
+                        OSLog.log("Evicted cached build description at '\(packagePath.str)'")
+                        #endif
+                    })
+                }
+            }())
+        }
         self.maxCacheSize = maxCacheSize
     }
 
@@ -176,8 +179,11 @@ package final class BuildDescriptionManager: Sendable {
         var staleFileRemovalIdentifierPerTarget = [ConfiguredTarget?: String]()
         var settingsPerTarget = [ConfiguredTarget:Settings]()
         var rootPathsPerTarget = [ConfiguredTarget:[Path]]()
-        var moduleCachePathPerTarget = [ConfiguredTarget: Path]()
+        var moduleCachePathsPerTarget = [ConfiguredTarget: [Path]]()
+
+        var casValidationInfos: OrderedSet<BuildDescription.CASValidationInfo> = []
         let buildGraph = planRequest.buildGraph
+        let shouldValidateCAS = Settings.supportsCompilationCaching(plan.workspaceContext.core) && UserDefaults.enableCASValidation
 
         // Add the SFR identifier for target-independent tasks.
         staleFileRemovalIdentifierPerTarget[nil] = plan.staleFileRemovalTaskIdentifier(for: nil)
@@ -190,7 +196,23 @@ package final class BuildDescriptionManager: Sendable {
                 settings.globalScope.evaluate(BuiltinMacros.SYMROOT),
             ]
 
-            moduleCachePathPerTarget[target] = settings.globalScope.evaluate(BuiltinMacros.MODULE_CACHE_DIR)
+            moduleCachePathsPerTarget[target] = [
+                settings.globalScope.evaluate(BuiltinMacros.MODULE_CACHE_DIR),
+                Path(settings.globalScope.evaluate(BuiltinMacros.SWIFT_EXPLICIT_MODULES_OUTPUT_PATH)),
+                Path(settings.globalScope.evaluate(BuiltinMacros.CLANG_EXPLICIT_MODULES_OUTPUT_PATH)),
+            ]
+
+            if shouldValidateCAS, settings.globalScope.evaluate(BuiltinMacros.CLANG_ENABLE_COMPILE_CACHE) || settings.globalScope.evaluate(BuiltinMacros.SWIFT_ENABLE_COMPILE_CACHE) {
+                // FIXME: currently we only handle the compiler cache here, because the plugin configuration for the generic CAS is not configured by build settings.
+                for purpose in [CASOptions.Purpose.compiler(.c)] {
+                    if let casOpts = try? CASOptions.create(settings.globalScope, purpose) {
+                        let execName = settings.globalScope.evaluate(BuiltinMacros.VALIDATE_CAS_EXEC).nilIfEmpty ?? "llvm-cas"
+                        if let execPath = settings.executableSearchPaths.lookup(Path(execName)) {
+                            casValidationInfos.append(.init(options: casOpts, llvmCasExec: execPath))
+                        }
+                    }
+                }
+            }
 
             staleFileRemovalIdentifierPerTarget[target] = plan.staleFileRemovalTaskIdentifier(for: target)
             settingsPerTarget[target] = settings
@@ -224,7 +246,7 @@ package final class BuildDescriptionManager: Sendable {
         }
 
         // Create the build description.
-        return try await BuildDescription.construct(workspace: buildGraph.workspaceContext.workspace, tasks: plan.tasks, path: path, signature: signature, buildCommand: planRequest.buildRequest.buildCommand, diagnostics: planningDiagnostics, indexingInfo: [], fs: fs, bypassActualTasks: bypassActualTasks, targetsBuildInParallel: buildGraph.targetsBuildInParallel, moduleSessionFilePath: planRequest.workspaceContext.getModuleSessionFilePath(planRequest.buildRequest.parameters), invalidationPaths: plan.invalidationPaths, recursiveSearchPathResults: plan.recursiveSearchPathResults, copiedPathMap: plan.copiedPathMap, rootPathsPerTarget: rootPathsPerTarget, moduleCachePathPerTarget: moduleCachePathPerTarget, staleFileRemovalIdentifierPerTarget: staleFileRemovalIdentifierPerTarget, settingsPerTarget: settingsPerTarget, delegate: delegate, targetDependencies: buildGraph.targetDependenciesByGuid, definingTargetsByModuleName: definingTargetsByModuleName, capturedBuildInfo: capturedBuildInfo, userPreferences: buildGraph.workspaceContext.userPreferences)
+        return try await BuildDescription.construct(workspace: buildGraph.workspaceContext.workspace, tasks: plan.tasks, path: path, signature: signature, buildCommand: planRequest.buildRequest.buildCommand, diagnostics: planningDiagnostics, indexingInfo: [], fs: fs, bypassActualTasks: bypassActualTasks, targetsBuildInParallel: buildGraph.targetsBuildInParallel, emitFrontendCommandLines: plan.emitFrontendCommandLines, moduleSessionFilePath: planRequest.workspaceContext.getModuleSessionFilePath(planRequest.buildRequest.parameters), invalidationPaths: plan.invalidationPaths, recursiveSearchPathResults: plan.recursiveSearchPathResults, copiedPathMap: plan.copiedPathMap, rootPathsPerTarget: rootPathsPerTarget, moduleCachePathsPerTarget: moduleCachePathsPerTarget, casValidationInfos: casValidationInfos.elements, staleFileRemovalIdentifierPerTarget: staleFileRemovalIdentifierPerTarget, settingsPerTarget: settingsPerTarget, delegate: delegate, targetDependencies: buildGraph.targetDependenciesByGuid, definingTargetsByModuleName: definingTargetsByModuleName, capturedBuildInfo: capturedBuildInfo, userPreferences: buildGraph.workspaceContext.userPreferences)
     }
 
     /// Encapsulates the two ways `getNewOrCachedBuildDescription` can be called, whether we want to retrieve or create a build description based on a plan or whether we have an explicit build description ID that we want to retrieve and we don't need to create a new one.
@@ -278,7 +300,7 @@ package final class BuildDescriptionManager: Sendable {
         }
 
         var isIndexWorkspaceDescription: Bool {
-            return isForIndex && buildRequest.parameters.activeRunDestination == nil
+            return buildRequest.buildsIndexWorkspaceDescription
         }
 
         func signature(cacheDir: Path) throws -> BuildDescriptionSignature {
@@ -445,11 +467,12 @@ package final class BuildDescriptionManager: Sendable {
 
 
         if messageShortening != .full || userPreferences.enableDebugActivityLogs {
-            constructionDelegate.updateProgress(statusMessage: "Attemping to load build description from disk", showInLog: request.workspaceContext.userPreferences.enableDebugActivityLogs)
+            constructionDelegate.updateProgress(statusMessage: "Attempting to load build description from disk", showInLog: request.workspaceContext.userPreferences.enableDebugActivityLogs)
         }
 
+        let taskActionRegistry = try await TaskActionRegistry(pluginManager: request.workspaceContext.core.pluginManager)
         do {
-            let onDiskDesc = try loadSerializedBuildDescription(onDiskPath, workspaceContext: request.workspaceContext, signature: signature)
+            let onDiskDesc = try loadSerializedBuildDescription(onDiskPath, workspaceContext: request.workspaceContext, signature: signature, taskActionRegistry: taskActionRegistry)
             if onDiskDesc.isValidFor(request: request, managerFS: fs) {
                 constructionDelegate.updateProgress(statusMessage: messageShortening == .full ? "Using on-disk description" : "Using build description from disk", showInLog: request.workspaceContext.userPreferences.enableDebugActivityLogs)
                 BuildDescriptionManager.descriptionsLoaded.increment()
@@ -505,14 +528,14 @@ package final class BuildDescriptionManager: Sendable {
         // For performance measurement purposes, we have a user default to force serializing the build description synchronously. We also use synchronous build description serialization if explicitly asked, or if build debugging is enabled, so the build description is written out in time for us to save it to the copy-aside directory just after the build is started (see `BuildOperation.build()`).
         if useSynchronousBuildDescriptionSerialization || UserDefaults.useSynchronousBuildDescriptionSerialization || request.workspaceContext.userPreferences.enableBuildDebugging {
             await onDiskCacheAccessQueue.sync {
-                self.serializeBuildDescription(newDesc, request: request)
+                self.serializeBuildDescription(newDesc, request: request, taskActionRegistry: taskActionRegistry)
                 self.purgeOld(currentBuildDescriptionPath: newDesc.packagePath)
             }
         } else {
             onDiskCacheAccessQueue.async(qos: .background) { [weak newDesc] in
                 // Weak-capture newDesc so we don't potentially deinit a BuildDescription on a background (lowest!) QoS queue if it happens to be the last reference when this block is deallocated, since this block is run in the background out of band. This could result in elevated memory usage as slow build description deallocations pile up.
                 guard let newDesc else { return }
-                self.serializeBuildDescription(newDesc, request: request)
+                self.serializeBuildDescription(newDesc, request: request, taskActionRegistry: taskActionRegistry)
                 self.purgeOld(currentBuildDescriptionPath: newDesc.packagePath)
             }
         }
@@ -523,13 +546,17 @@ package final class BuildDescriptionManager: Sendable {
         return (buildDescription: newDesc, source: .new)
     }
 
-    private func serializeBuildDescription(_ buildDescription: BuildDescription, request: BuildPlanRequest) {
+    private func serializeBuildDescription(_ buildDescription: BuildDescription, request: BuildPlanRequest, taskActionRegistry: TaskActionRegistry) {
         // Serialize the build description.
-        let delegate = BuildDescriptionSerializerDelegate()
+        let delegate = BuildDescriptionSerializerDelegate(taskActionRegistry: taskActionRegistry)
         let taskStoreSerializer = MsgPackSerializer(delegate: delegate)
-        taskStoreSerializer.serialize(buildDescription.taskStore)
+        delegate.taskActionRegistry.withSerializationContext {
+            taskStoreSerializer.serialize(buildDescription.taskStore)
+        }
         let serializer = MsgPackSerializer(delegate: delegate)
-        serializer.serialize(buildDescription)
+        delegate.taskActionRegistry.withSerializationContext {
+            serializer.serialize(buildDescription)
+        }
 
         // Also get the target build graph's display representation.  In the future we would like to emit structured data (e.g. JSON) here instead, although perhaps with the display string embedded in it for human readability.
         let buildGraphString = request.buildGraph.dependencyGraphDiagnostic.formatLocalizedDescription(.debugWithoutBehaviorAndLocation)
@@ -555,15 +582,19 @@ package final class BuildDescriptionManager: Sendable {
     }
 
     /// Loads and returns a build description at the given path for a particular workspace. Throws a `DeserializerError` if it could not be read/deserialized.
-    private func loadSerializedBuildDescription(_ path: Path, workspaceContext: WorkspaceContext, signature: BuildDescriptionSignature) throws -> BuildDescription {
-        let delegate = BuildDescriptionDeserializerDelegate(workspace: workspaceContext.workspace, platformRegistry: workspaceContext.core.platformRegistry, sdkRegistry: workspaceContext.core.sdkRegistry, specRegistry: workspaceContext.core.specRegistry)
+    private func loadSerializedBuildDescription(_ path: Path, workspaceContext: WorkspaceContext, signature: BuildDescriptionSignature, taskActionRegistry: TaskActionRegistry) throws -> BuildDescription {
+        let delegate = BuildDescriptionDeserializerDelegate(workspace: workspaceContext.workspace, platformRegistry: workspaceContext.core.platformRegistry, sdkRegistry: workspaceContext.core.sdkRegistry, specRegistry: workspaceContext.core.specRegistry, taskActionRegistry: taskActionRegistry)
         let taskStoreContents = try fs.read(path.join("task-store.msgpack"))
         let taskStoreDeserializer = MsgPackDeserializer(taskStoreContents, delegate: delegate)
-        let taskStore: FrozenTaskStore = try taskStoreDeserializer.deserialize()
+        let taskStore: FrozenTaskStore = try delegate.taskActionRegistry.withSerializationContext {
+            try taskStoreDeserializer.deserialize()
+        }
         delegate.taskStore = taskStore
         let byteString = try fs.read(path.join("description.msgpack"))
         let deserializer = MsgPackDeserializer(byteString, delegate: delegate)
-        let buildDescription: BuildDescription = try deserializer.deserialize()
+        let buildDescription: BuildDescription = try delegate.taskActionRegistry.withSerializationContext {
+            try deserializer.deserialize()
+        }
 
         // Correctness check: If the signature of the description we deserialized is different from the one we expected, then something has gone wrong.
         guard buildDescription.signature == signature else {
@@ -715,7 +746,7 @@ private final class BuildSystemTaskPlanningDelegate: TaskPlanningDelegate {
     }
 
     package func recordAttachment(contents: SWBUtil.ByteString) -> SWBUtil.Path {
-        let digester = MD5Context()
+        let digester = InsecureHashContext()
         digester.add(bytes: contents)
         let path = descriptionPath.join("attachments").join(digester.signature.asString)
         do {

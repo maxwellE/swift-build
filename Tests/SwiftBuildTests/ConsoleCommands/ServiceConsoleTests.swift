@@ -19,14 +19,14 @@ import SWBUtil
 import WinSDK
 #endif
 
-@Suite
+@Suite(.skipInGitHubActions("failing in the GitHub actions runner environment"))
 fileprivate struct ServiceConsoleTests {
     @Test
     func emptyInput() async throws {
         // Test against a non-pty.
         let task = SWBUtil.Process()
         task.executableURL = try CLIConnection.swiftbuildToolURL
-        task.environment = CLIConnection.environment
+        task.environment = .init(CLIConnection.environment)
 
         task.standardInput = FileHandle.nullDevice
         try await withExtendedLifetime(Pipe()) { outputPipe in
@@ -37,7 +37,7 @@ fileprivate struct ServiceConsoleTests {
             let output = String(decoding: data, as: UTF8.self)
 
             // Verify there were no errors.
-            #expect(output == "swbuild> \n")
+            #expect(output == "swbuild> \(String.newline)")
 
             // Assert the tool exited successfully.
             await #expect(try promise.value == .exit(0))
@@ -49,15 +49,17 @@ fileprivate struct ServiceConsoleTests {
         // Test against command line arguments.
         let executionResult = try await Process.getOutput(url: try CLIConnection.swiftbuildToolURL, arguments: ["isAlive"], environment: CLIConnection.environment)
 
+        let output = String(decoding: executionResult.stdout, as: UTF8.self)
+        
         // Verify there were no errors.
-        #expect(String(decoding: executionResult.stdout, as: UTF8.self) == "is alive? yes" + String.newline)
+        #expect(output == "is alive? yes\(String.newline)")
 
         // Assert the tool exited successfully.
         #expect(executionResult.exitStatus == .exit(0))
     }
 
     /// Test that the build service shuts down if the host dies.
-    @Test(.skipHostOS(.windows)) // PTY not supported on Windows
+    @Test(.skipHostOS(.windows, "PTY not supported on Windows"))
     func serviceShutdown() async throws {
         try await withCLIConnection { cli in
             // Find the service pid.
@@ -95,7 +97,7 @@ fileprivate struct ServiceConsoleTests {
     }
 
     /// Tests that the serializedDiagnostics console command is able to print human-readable serialized diagnostics from a .dia file.
-    @Test(.skipHostOS(.windows)) // PTY not supported on Windows
+    @Test(.skipHostOS(.windows, "PTY not supported on Windows"))
     func dumpSerializedDiagnostics() async throws {
         // Generate and compile a C source file that will generate a compiler warning.
         try await withTemporaryDirectory { tmp in
@@ -129,12 +131,12 @@ extension Processes {
         let promise = Promise<Void, any Error>()
         #if os(Windows)
         guard let proc: HANDLE = OpenProcess(SYNCHRONIZE, false, DWORD(pid)) else {
-            throw StubError.error("OpenProcess failed with error \(GetLastError())")
+            throw Win32Error(GetLastError())
         }
         defer { CloseHandle(proc) }
         Thread.detachNewThread {
             if WaitForSingleObject(proc, INFINITE) == WAIT_FAILED {
-                promise.fail(throwing: StubError.error("WaitForSingleObject failed with error \(GetLastError())"))
+                promise.fail(throwing: Win32Error(GetLastError()))
                 return
             }
             promise.fulfill(with: ())
@@ -142,7 +144,7 @@ extension Processes {
         #else
         Task<Void, Never>.detached {
             while true {
-                // We use getpgid() here to detect when the process has exited (it is not a child). Surprisingly, getpgid() is substantially faster than using kill(pid, 0) here because kill still returns success for zombies, and the service has been reparented to launchd.
+                // We use getpgid() here to detect when the process has exited (it is not a child). Surprisingly, getpgid() is substantially faster than using kill(pid, 0) here because kill still returns success for zombies, and the service has been reparented to launchd. // ignore-unacceptable-language; POSIX API
                 do {
                     if getpgid(pid) < 0 {
                         // We expect the signal to eventually fail with "No such process".

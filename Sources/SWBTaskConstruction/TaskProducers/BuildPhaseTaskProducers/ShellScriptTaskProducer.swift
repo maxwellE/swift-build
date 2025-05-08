@@ -13,12 +13,13 @@
 import SWBUtil
 import SWBCore
 import SWBMacro
+import SWBProtocol
 
 final class ShellScriptTaskProducer: PhasedTaskProducer, TaskProducer, ShellBasedTaskProducer {
     /// The shell script build phase this task producer is working with.
-    unowned let shellScriptBuildPhase: ShellScriptBuildPhase
+    unowned let shellScriptBuildPhase: SWBCore.ShellScriptBuildPhase
 
-    init(_ context: TargetTaskProducerContext, shellScriptBuildPhase: ShellScriptBuildPhase, phaseStartNodes: [any PlannedNode], phaseEndNode: any PlannedNode, phaseEndTask: any PlannedTask) {
+    init(_ context: TargetTaskProducerContext, shellScriptBuildPhase: SWBCore.ShellScriptBuildPhase, phaseStartNodes: [any PlannedNode], phaseEndNode: any PlannedNode, phaseEndTask: any PlannedTask) {
         self.shellScriptBuildPhase = shellScriptBuildPhase
         super.init(context, phaseStartNodes: phaseStartNodes, phaseEndNode: phaseEndNode, phaseEndTask: phaseEndTask)
     }
@@ -66,7 +67,7 @@ final class ShellScriptTaskProducer: PhasedTaskProducer, TaskProducer, ShellBase
         // This is to provide a fallback to prevent any unexpected side-effects this close to shipping...
         guard scope.evaluate(BuiltinMacros.ENABLE_ADDITIONAL_CODESIGN_INPUT_TRACKING) else { return }
 
-        // Due to the free-form nature of how script outputs can be formed, it can be problematic to blanketly add these as doing so can trigger cycles from downstream targets.
+        // Due to the free-form nature of how script outputs can be formed, it can be problematic to blanket add these as doing so can trigger cycles from downstream targets.
         guard scope.evaluate(BuiltinMacros.ENABLE_ADDITIONAL_CODESIGN_INPUT_TRACKING_FOR_SCRIPT_OUTPUTS) else { return }
 
         // There is no reason to process any files if we're not building into a wrapper.
@@ -307,7 +308,7 @@ final class ShellScriptTaskProducer: PhasedTaskProducer, TaskProducer, ShellBase
     /// Construct the tasks for an individual shell-script build rule.
     ///
     /// NOTE: External targets are basically shell scripts. It lives here because the behavior shares some significant logical pieces with the behavior of shell script build phases.
-    static func constructTasksForExternalTarget(_ target: ExternalTarget, _ context: TaskProducerContext, cbc: CommandBuildContext, delegate: any TaskGenerationDelegate) {
+    static func constructTasksForExternalTarget(_ target: SWBCore.ExternalTarget, _ context: TaskProducerContext, cbc: CommandBuildContext, delegate: any TaskGenerationDelegate) {
         let action = cbc.scope.evaluate(BuiltinMacros.ACTION)
 
         let (executable, arguments, workingDirectory, environment) = constructCommandLine(for: target, action: action, settings: context.settings, workspaceContext: context.workspaceContext, scope: cbc.scope)

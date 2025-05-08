@@ -21,7 +21,7 @@ import SWBMacro
     var specDataCaches = Registry<Spec, any SpecDataCache>()
 
     class TestDataDelegate : SpecParserDelegate {
-        class MockSpecRegistryDelegate : SpecRegistryDelegate {
+        final class MockSpecRegistryDelegate: SpecRegistryDelegate, Sendable {
             private let _diagnosticsEngine: DiagnosticsEngine
 
             init(_ diagnosticsEngine: DiagnosticsEngine) {
@@ -107,7 +107,7 @@ import SWBMacro
         let superSpec = core.specRegistry.getSpec("sourcecode.c")!
         #expect(spec.basedOnSpec === superSpec)
 
-        // Validate that we loaded specs from IDE pugins.
+        // Validate that we loaded specs from IDE plugins.
         #expect(core.specRegistry.getSpec("com.apple.product-type.bundle", domain: "embedded") != nil)
 
         // Validate use of default proxy as fallback for based on references.
@@ -187,6 +187,11 @@ import SWBMacro
     @Test(.requireSDKs(.watchOS))
     func productTypeSpecLoadingClassAssociations_watchOS() async throws {
         try await testProductTypeSpecLoadingClassAssociations(domain: "watchos")
+    }
+
+    @Test(.requireSDKs(.xrOS))
+    func productTypeSpecLoadingClassAssociations_visionOS() async throws {
+        try await testProductTypeSpecLoadingClassAssociations(domain: "xros")
     }
 
     @Test
@@ -916,7 +921,7 @@ import SWBMacro
         let clangSpec = try core.specRegistry.getSpec("com.apple.compilers.llvm.clang.1_0") as CompilerSpec
         #expect(clangSpec.execDescription == clangCompilerSpec.execDescription)
 
-        // Validate overriden class loading.
+        // Validate overridden class loading.
         let codesignSpec = core.specRegistry.getSpec("com.apple.build-tools.codesign")
         #expect(codesignSpec is CodesignToolSpec)
 

@@ -20,6 +20,8 @@ public import SWBMacro
 /// Delegate protocol used to access external information (such as specifications) and to report diagnostics.
 @_spi(Testing) public protocol PlatformRegistryDelegate: DiagnosticProducingDelegate, SpecRegistryProvider {
     var pluginManager: PluginManager { get }
+
+    var developerPath: Core.DeveloperPath { get }
 }
 
 public final class Platform: Sendable {
@@ -180,9 +182,11 @@ public final class Platform: Sendable {
     @_spi(Testing) public var sdks: [SDK] = []
 
     /// The list of executable search paths in the platform.
-    @_spi(Testing) public var executableSearchPaths: [Path]
+    @_spi(Testing) public var executableSearchPaths: StackedSearchPath
 
-    init(_ name: String, _ displayName: String, _ familyName: String, _ familyDisplayName: String?, _ identifier: String, _ devicePlatformName: String?, _ simulatorPlatformName: String?, _ path: Path, _ version: String?, _ productBuildVersion: String?, _ defaultSettings: [String: PropertyListItem], _ additionalInfoPlistEntries: [String: PropertyListItem], _ isDeploymentPlatform: Bool, _ specRegistryProvider: any SpecRegistryProvider, preferredArchValue: String?, executableSearchPaths: [Path]) {
+    var sdkSearchPaths: [Path]
+
+    init(_ name: String, _ displayName: String, _ familyName: String, _ familyDisplayName: String?, _ identifier: String, _ devicePlatformName: String?, _ simulatorPlatformName: String?, _ path: Path, _ version: String?, _ productBuildVersion: String?, _ defaultSettings: [String: PropertyListItem], _ additionalInfoPlistEntries: [String: PropertyListItem], _ isDeploymentPlatform: Bool, _ specRegistryProvider: any SpecRegistryProvider, preferredArchValue: String?, executableSearchPaths: [Path], sdkSearchPaths: [Path], fs: any FSProxy) {
         self.name = name
         self.displayName = displayName
         self.familyName = familyName
@@ -198,7 +202,8 @@ public final class Platform: Sendable {
         self.isDeploymentPlatform = isDeploymentPlatform
         self.specRegistryProvider = specRegistryProvider
         self.preferredArch = preferredArchValue
-        self.executableSearchPaths = executableSearchPaths
+        self.executableSearchPaths = StackedSearchPath(paths: executableSearchPaths, fs: fs)
+        self.sdkSearchPaths = sdkSearchPaths
         self.sdkCanonicalName = name
     }
 
@@ -298,7 +303,7 @@ public final class PlatformRegistry {
     /// The list of all registered platforms, ordered by identifier.
     public private(set) var platforms = Array<Platform>()
 
-    /// The map of platforms by identifer.
+    /// The map of platforms by identifier.
     @_spi(Testing) public private(set) var platformsByIdentifier = Dictionary<String, Platform>()
 
     /// The map of platforms by name.
@@ -319,46 +324,33 @@ public final class PlatformRegistry {
             })
     }
 
-    @_spi(Testing) public init(delegate: any PlatformRegistryDelegate, searchPaths: [Path], hostOperatingSystem: OperatingSystem) {
+    @_spi(Testing) public init(delegate: any PlatformRegistryDelegate, searchPaths: [Path], hostOperatingSystem: OperatingSystem, fs: any FSProxy) async {
         self.delegate = delegate
 
         for path in searchPaths {
-            registerPlatformsInDirectory(path)
+            await registerPlatformsInDirectory(path, fs)
         }
 
-        do {
-            if hostOperatingSystem.createFallbackSystemToolchain {
-                try registerFallbackSystemPlatform(operatingSystem: hostOperatingSystem)
+        @preconcurrency @PluginExtensionSystemActor func platformInfoExtensions() async -> [any PlatformInfoExtensionPoint.ExtensionProtocol] {
+            return delegate.pluginManager.extensions(of: PlatformInfoExtensionPoint.self)
+        }
+
+        struct Context: PlatformInfoExtensionAdditionalPlatformsContext {
+            var hostOperatingSystem: OperatingSystem
+            var developerPath: Core.DeveloperPath
+            var fs: any FSProxy
+        }
+
+        for platformExtension in await platformInfoExtensions() {
+            do {
+                for (path, data) in try platformExtension.additionalPlatforms(context: Context(hostOperatingSystem: hostOperatingSystem, developerPath: delegate.developerPath, fs: fs)) {
+                    await registerPlatform(path, .plDict(data), fs)
+                }
+            } catch {
+                delegate.error(error)
+
             }
-        } catch {
-            delegate.error(error)
         }
-
-        @preconcurrency @PluginExtensionSystemActor func platformInfoExtensions() -> [any PlatformInfoExtensionPoint.ExtensionProtocol] {
-            delegate.pluginManager.extensions(of: PlatformInfoExtensionPoint.self)
-        }
-
-        for platformExtension in platformInfoExtensions() {
-            for (path, data) in platformExtension.additionalPlatforms() {
-                registerPlatform(path, .plDict(data))
-            }
-        }
-    }
-
-    private func registerFallbackSystemPlatform(operatingSystem: OperatingSystem) throws {
-        try registerPlatform(Path("/"), .plDict(fallbackSystemPlatformSettings(operatingSystem: operatingSystem)))
-    }
-
-    private func fallbackSystemPlatformSettings(operatingSystem: OperatingSystem) throws -> [String: PropertyListItem] {
-        try [
-            "Type": .plString("Platform"),
-            "Name": .plString(operatingSystem.xcodePlatformName),
-            "Identifier": .plString(operatingSystem.xcodePlatformName),
-            "Description": .plString(operatingSystem.xcodePlatformName),
-            "FamilyName": .plString(operatingSystem.xcodePlatformName.capitalized),
-            "FamilyIdentifier": .plString(operatingSystem.xcodePlatformName),
-            "IsDeploymentPlatform": .plString("YES"),
-        ]
     }
 
     private func loadDeploymentTargetMacroNames() {
@@ -377,19 +369,8 @@ public final class PlatformRegistry {
                 platformsByDeploymentTarget[macroName, default: Set<String>()].insert(platform.correspondingDevicePlatform?.name ?? platform.name)
             }
         }
-        // Now add in all deployment targets we know about.  This is because clang also knows about these deployment targets intrinsically when they are passed as environment variables, so we sometimes need to work with them even if the platform which defines them is not installed.
-        for macroName in [
-            "MACOSX_DEPLOYMENT_TARGET",
-            "IPHONEOS_DEPLOYMENT_TARGET",
-            "TVOS_DEPLOYMENT_TARGET",
-            "WATCHOS_DEPLOYMENT_TARGET",
-            "DRIVERKIT_DEPLOYMENT_TARGET",
-            "XROS_DEPLOYMENT_TARGET",
-        ] {
-            allDeploymentTargetMacroNames.insert(macroName)
-            platformsByDeploymentTarget[macroName] = nil
-        }
 
+        // Now add in all deployment targets we know about.  This is because clang also knows about these deployment targets intrinsically when they are passed as environment variables, so we sometimes need to work with them even if the platform which defines them is not installed.
         @preconcurrency @PluginExtensionSystemActor func platformInfoExtensions() -> [any PlatformInfoExtensionPoint.ExtensionProtocol] {
             delegate.pluginManager.extensions(of: PlatformInfoExtensionPoint.self)
         }
@@ -413,7 +394,7 @@ public final class PlatformRegistry {
     }
 
     /// Register all platforms in the given directory.
-    private func registerPlatformsInDirectory(_ path: Path) {
+    private func registerPlatformsInDirectory(_ path: Path, _ fs: any FSProxy) async {
         for item in (try? localFS.listdir(path))?.sorted(by: <) ?? [] {
             let itemPath = path.join(item)
 
@@ -431,30 +412,18 @@ public final class PlatformRegistry {
                     // Silently skip loading the platform if it does not have an Info.plist at all.  (We will still error below if it has an Info.plist which is malformed.)
                     continue
                 }
-
-                registerPlatform(itemPath, infoPlist)
+                await registerPlatform(itemPath, infoPlist, fs)
             } catch let err {
                 delegate.error(itemPath, "unable to load platform: 'Info.plist' was malformed: \(err)")
             }
         }
     }
 
-    private func registerPlatform(_ path: Path, _ data: PropertyListItem) {
+    private func registerPlatform(_ path: Path, _ data: PropertyListItem, _ fs: any FSProxy) async {
         // The data should always be a dictionary.
-        guard case .plDict(var items) = data else {
+        guard case .plDict(let items) = data else {
             delegate.error(path, "unexpected platform data")
             return
-        }
-
-        if path.basenameWithoutSuffix == "Windows" {
-            do {
-                try items.merge(fallbackSystemPlatformSettings(operatingSystem: .windows)) { old, new in
-                    new
-                }
-            } catch {
-                delegate.error(path, "\(error)")
-                return
-            }
         }
 
         // Check that type is correct.
@@ -597,35 +566,31 @@ public final class PlatformRegistry {
             }
         }
 
-        var preferredArchValue: String? = {
-            // FIXME: rdar://65011964 (Remove PLATFORM_PREFERRED_ARCH)
-            // Don't add values for any new platforms
-            switch name {
-            case "macosx", "iphonesimulator", "appletvsimulator", "watchsimulator":
-                return "x86_64"
-            case "iphoneos", "appletvos", "watchos":
-                return "arm64"
-            default:
-                return nil
+        let preferredArchValue: String? = await {
+            let values = await Set(platformInfoExtensions().asyncMap { $0.preferredArchValue(for: name) }).compactMap { $0 }
+            if values.count > 1 {
+                delegate.error(path, "platform '\(identifier)' has conflicting preferred arch values: \(values.sorted().joined(separator: ", "))")
             }
+            return values.only
         }()
 
         @preconcurrency @PluginExtensionSystemActor func platformInfoExtensions() -> [any PlatformInfoExtensionPoint.ExtensionProtocol] {
             delegate.pluginManager.extensions(of: PlatformInfoExtensionPoint.self)
         }
 
-        for platformExtension in platformInfoExtensions() {
-            if let value = platformExtension.preferredArchValue(for: name) {
-                preferredArchValue = value
-            }
-        }
-
         var executableSearchPaths: [Path] = [
             path.join("usr").join("bin"),
         ]
 
-        for platformExtension in platformInfoExtensions() {
-            executableSearchPaths.append(contentsOf: platformExtension.additionalPlatformExecutableSearchPaths(platformName: name, platformPath: path))
+        var sdkSearchPaths: [Path] = [
+            path.join("Developer").join("SDKs")
+        ]
+
+        for platformExtension in await platformInfoExtensions() {
+            await executableSearchPaths.append(contentsOf: platformExtension.additionalPlatformExecutableSearchPaths(platformName: name, platformPath: path, fs: localFS))
+
+            platformExtension.adjustPlatformSDKSearchPaths(platformName: name, platformPath: path, sdkSearchPaths: &sdkSearchPaths)
+
         }
 
         executableSearchPaths.append(contentsOf: [
@@ -635,7 +600,7 @@ public final class PlatformRegistry {
         ])
 
         // FIXME: Need to parse other fields. It would also be nice to diagnose unused keys like we do for Spec data (and we might want to just use the spec parser here).
-        let platform = Platform(name, displayName, familyName, familyDisplayName, identifier, devicePlatformName, simulatorPlatformName, path, version, productBuildVersion, defaultSettings, additionalInfoPlistEntries, isDeploymentPlatform, delegate, preferredArchValue: preferredArchValue, executableSearchPaths: executableSearchPaths)
+        let platform = Platform(name, displayName, familyName, familyDisplayName, identifier, devicePlatformName, simulatorPlatformName, path, version, productBuildVersion, defaultSettings, additionalInfoPlistEntries, isDeploymentPlatform, delegate, preferredArchValue: preferredArchValue, executableSearchPaths: executableSearchPaths, sdkSearchPaths: sdkSearchPaths, fs: fs)
         if let duplicatePlatform = platformsByIdentifier[identifier] {
             delegate.error(path, "platform '\(identifier)' already registered from \(duplicatePlatform.path.str)")
             return

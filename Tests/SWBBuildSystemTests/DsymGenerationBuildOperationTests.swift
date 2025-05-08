@@ -15,6 +15,8 @@ import Testing
 import SWBCore
 import SWBTestSupport
 import SWBUtil
+import SWBMacro
+import SWBProtocol
 
 @Suite
 fileprivate struct DsymGenerationBuildOperationTests: CoreBasedTests {
@@ -58,10 +60,10 @@ fileprivate struct DsymGenerationBuildOperationTests: CoreBasedTests {
             let debug = BuildParameters(configuration: "Debug")
 
             // Check the initial build.
-            try await tester.checkBuild(parameters: debug, persistent: true) { _ in }
+            try await tester.checkBuild(parameters: debug, runDestination: .macOS, persistent: true) { _ in }
 
             // Check that the next build is null.
-            try await tester.checkBuild(parameters: debug, persistent: true) { results in
+            try await tester.checkBuild(parameters: debug, runDestination: .macOS, persistent: true) { results in
                 results.checkTasks(.matchRuleType("ClangStatCache")) { _ in }
                 results.checkNoTask()
             }
@@ -71,21 +73,22 @@ fileprivate struct DsymGenerationBuildOperationTests: CoreBasedTests {
                 stream <<< "int a = 6;"
             }
 
-            try await tester.checkBuild(parameters: debug, persistent: true) { results in
+            try await tester.checkBuild(parameters: debug, runDestination: .macOS, persistent: true) { results in
                 results.consumeTasksMatchingRuleTypes()
                 results.checkTask(.matchRuleType("CompileC")) { _ in }
                 results.checkTask(.matchRuleType("Ld")) { _ in }
                 results.checkTask(.matchRuleType("GenerateTAPI")) { _ in }
                 results.checkTask(.matchRuleType("GenerateDSYMFile")) { _ in }
                 results.checkTask(.matchRuleType("Strip")) { _ in }
-                if try await supportsSDKImports {
+                let sdkImportsEnabled = results.buildRequestContext.getCachedSettings(debug, target: try #require(tester.workspace.projects.first?.targets.first)).globalScope.evaluate(BuiltinMacros.ENABLE_SDK_IMPORTS)
+                if try await supportsSDKImports, sdkImportsEnabled {
                     results.checkTask(.matchRuleType("ProcessSDKImports")) { _ in }
                 }
                 results.checkNoTask()
             }
 
             // Check that the next build is null.
-            try await tester.checkBuild(parameters: debug, persistent: true) { results in
+            try await tester.checkBuild(parameters: debug, runDestination: .macOS, persistent: true) { results in
                 results.checkTasks(.matchRuleType("ClangStatCache")) { _ in }
                 results.checkNoTask()
             }
@@ -136,7 +139,7 @@ fileprivate struct DsymGenerationBuildOperationTests: CoreBasedTests {
 
             // Perform an initial build and check that tasks we expected to run did.
             let debug = BuildParameters(action: .install, configuration: "Debug")
-            try await tester.checkBuild(parameters: debug, persistent: true) { results in
+            try await tester.checkBuild(parameters: debug, runDestination: .macOS, persistent: true) { results in
                 results.consumeTasksMatchingRuleTypes()
 
                 results.checkTask(.matchRuleType("GenerateDSYMFile")) { _ in }
@@ -150,7 +153,7 @@ fileprivate struct DsymGenerationBuildOperationTests: CoreBasedTests {
                 stream <<< "int a = 6;"
             }
 
-            try await tester.checkBuild(parameters: debug, persistent: true) { results in
+            try await tester.checkBuild(parameters: debug, runDestination: .macOS, persistent: true) { results in
                 results.consumeTasksMatchingRuleTypes()
 
                 results.checkTask(.matchRuleType("GenerateDSYMFile")) { _ in }
@@ -160,7 +163,7 @@ fileprivate struct DsymGenerationBuildOperationTests: CoreBasedTests {
             }
 
             // Finally perform a build with no changes and check that no tasks were run (null build).
-            try await tester.checkNullBuild(parameters: debug, persistent: true)
+            try await tester.checkNullBuild(parameters: debug, runDestination: .macOS, persistent: true)
         }
     }
 
@@ -210,7 +213,7 @@ fileprivate struct DsymGenerationBuildOperationTests: CoreBasedTests {
             }
 
             let debug = BuildParameters(action: .install, configuration: "Debug")
-            try await tester.checkBuild(parameters: debug, persistent: true) { results in
+            try await tester.checkBuild(parameters: debug, runDestination: .macOS, persistent: true) { results in
                 results.consumeTasksMatchingRuleTypes()
 
                 try results.checkTask(.matchRuleType("GenerateDSYMFile")) { generateDSYMTask in

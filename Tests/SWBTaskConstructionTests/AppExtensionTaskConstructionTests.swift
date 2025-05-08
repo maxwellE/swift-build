@@ -15,6 +15,7 @@ import SWBTestSupport
 
 import SWBCore
 import SWBUtil
+import SWBProtocol
 
 @Suite
 fileprivate struct AppExtensionTaskConstructionTests: CoreBasedTests {
@@ -39,6 +40,7 @@ fileprivate struct AppExtensionTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "Foo",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug", buildSettings: [:])
                     ],
@@ -71,13 +73,13 @@ fileprivate struct AppExtensionTaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .macOS)) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkTask(.matchTargetName("Foo"), .matchRule(["Copy", "/tmp/Test/aProject/build/Debug/Foo.app/Contents/Extensions/Modern.appex", "/tmp/Test/aProject/build/Debug/Modern.appex"])) { task in }
             results.checkTask(.matchTargetName("Foo"), .matchRule(["Copy", "/tmp/Test/aProject/build/Debug/Foo.app/Contents/PlugIns/Legacy.appex", "/tmp/Test/aProject/build/Debug/Legacy.appex"])) { task in }
         }
 
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .iOS)) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .iOS) { results in
             results.checkNoDiagnostics()
             results.checkTask(.matchTargetName("Foo"), .matchRule(["Copy", "/tmp/Test/aProject/build/Debug-iphoneos/Foo.app/Extensions/Modern.appex", "/tmp/Test/aProject/build/Debug-iphoneos/Modern.appex"])) { task in }
             results.checkTask(.matchTargetName("Foo"), .matchRule(["Copy", "/tmp/Test/aProject/build/Debug-iphoneos/Foo.app/PlugIns/Legacy.appex", "/tmp/Test/aProject/build/Debug-iphoneos/Legacy.appex"])) { task in }

@@ -89,7 +89,7 @@ fileprivate struct PackageBuildOperationTests: CoreBasedTests {
                     """
             }
 
-            try await tester.checkBuild() { results in
+            try await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkWarning(.contains("annotation implies no releases, but consumes self"), failIfNotFound: false)
                 results.checkWarning(.contains("annotation implies no releases, but consumes self"), failIfNotFound: false)
                 results.checkWarning(.contains("annotation implies no releases, but consumes self"), failIfNotFound: false)
@@ -167,14 +167,14 @@ fileprivate struct PackageBuildOperationTests: CoreBasedTests {
                     """
             }
 
-            try await tester.checkBuild() { results in
+            try await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkNoDiagnostics()
             }
         }
     }
 
     /// Check that an .rkassets bundle gets an incremental build.
-    @Test(.requireSDKs(.xrOS), .disabled(if: !ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0)), "rdar://129991610"))
+    @Test(.requireSDKs(.xrOS), .disabled(if: !ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0)), "rdar://129991610"), .disabled(if: getEnvironmentVariable("CI")?.isEmpty == false))
     func RKAssetsIncrementalRebuild() async throws {
         // FIXME: We should be able to test this in simulation. For that, we need BuildDescription support for knowing which tasks are safe to run in simulation.
         let core = try await getCore()
@@ -247,7 +247,7 @@ fileprivate struct PackageBuildOperationTests: CoreBasedTests {
 
                 try results.checkTask(.matchRuleType("RealityAssetsCompile")) { task in
                     task.checkCommandLineContainsUninterrupted([
-                        core.developerPath.join("usr/bin/realitytool").str, "compile", "--platform", "xros", "--deployment-target", results.runDestinationSDK.defaultDeploymentTarget,
+                        core.developerPath.path.join("usr/bin/realitytool").str, "compile", "--platform", "xros", "--deployment-target", results.runDestinationSDK.defaultDeploymentTarget,
                         "-o", "\(workspace.sourceRoot.str)/aProject/build/Debug-xros/PackageLib.bundle/test.reality",
                         "\(packageRKAssetsFile.str)",
                         "--schema-file",
@@ -275,7 +275,7 @@ fileprivate struct PackageBuildOperationTests: CoreBasedTests {
 
                 try results.checkTask(.matchRuleType("RealityAssetsCompile")) { task in
                     task.checkCommandLineContainsUninterrupted([
-                        core.developerPath.join("usr/bin/realitytool").str, "compile", "--platform", "xros", "--deployment-target", results.runDestinationSDK.defaultDeploymentTarget,
+                        core.developerPath.path.join("usr/bin/realitytool").str, "compile", "--platform", "xros", "--deployment-target", results.runDestinationSDK.defaultDeploymentTarget,
                         "-o", "\(workspace.sourceRoot.str)/aProject/build/Debug-xros/PackageLib.bundle/test.reality",
                         "\(packageRKAssetsFile.str)",
                         "--schema-file",
@@ -437,7 +437,7 @@ fileprivate struct PackageBuildOperationTests: CoreBasedTests {
             }
 
             let buildParams = BuildParameters(configuration: configurationToBuild)
-            try await tester.checkBuild(parameters: buildParams, persistent: true) { results in
+            try await tester.checkBuild(parameters: buildParams, runDestination: .macOS, persistent: true) { results in
                 results.checkTasks(.matchRuleType("SwiftCompile")) { tasks in
                     for task in tasks {
                         let targetName = task.forTarget?.target.name ?? ""
@@ -529,7 +529,7 @@ fileprivate struct PackageBuildOperationTests: CoreBasedTests {
             }
 
             let buildParams = BuildParameters(configuration: configurationToBuild)
-            try await tester.checkBuild(parameters: buildParams, persistent: true) { results in
+            try await tester.checkBuild(parameters: buildParams, runDestination: .macOS, persistent: true) { results in
                 results.checkTasks(.matchRuleType("SwiftCompile")) { tasks in
                     for task in tasks {
                         let targetName = task.forTarget?.target.name ?? ""
@@ -574,7 +574,7 @@ fileprivate struct PackageBuildOperationTests: CoreBasedTests {
             let configurationToBuild = "BestDevelopment"
             let tester = try await testerForBasicPackageProject(tmpDirPath: tmpDirPath, configurationToBuild: configurationToBuild)
             let good = BuildParameters(configuration: configurationToBuild)
-            try await tester.checkBuild(parameters: good, persistent: true) { results in
+            try await tester.checkBuild(parameters: good, runDestination: .macOS, persistent: true) { results in
                 results.checkNoErrors()
             }
         }
@@ -601,7 +601,7 @@ fileprivate struct PackageBuildOperationTests: CoreBasedTests {
 
             let tester = try await testerForBasicPackageProject(tmpDirPath: tmpDirPath, configurationToBuild: configurationToBuild)
             let good = BuildParameters(configuration: configurationToBuild)
-            try await tester.checkBuild(parameters: good, persistent: true) { results in
+            try await tester.checkBuild(parameters: good, runDestination: .macOS, persistent: true) { results in
                 results.checkNoErrors()
 
                 // Check that there is a `CreateBuildDirectory` for each expected build directory.

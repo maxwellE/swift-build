@@ -172,7 +172,7 @@ public struct TargetBuildGraph: TargetGraph, Sendable {
         } else {
             let behavior: Diagnostic.Behavior
             let suffix: String
-            let isError = allTargets.contains(where: { buildRequestContext.getCachedSettings($0.parameters, target: $0.target).globalScope.evaluate(BuiltinMacros._OBSELETE_MANUAL_BUILD_ORDER) })
+            let isError = allTargets.contains(where: { buildRequestContext.getCachedSettings($0.parameters, target: $0.target).globalScope.evaluate(BuiltinMacros._OBSOLETE_MANUAL_BUILD_ORDER) })
             if isError {
                 behavior = .error
                 suffix = "prohibited"
@@ -316,12 +316,10 @@ fileprivate extension TargetDependencyResolver {
     ///
     /// The result closure guarantees that all targets a target depends on appear in the returned array before that target.  Any detected dependency cycles will be broken.
     fileprivate func computeGraph() async -> (allTargets: OrderedSet<ConfiguredTarget>, targetDependencies: [ConfiguredTarget: [ResolvedTargetDependency]], targetsToLinkedReferencesToProducingTargets: [ConfiguredTarget: [BuildFile.BuildableItem: ResolvedTargetDependency]], dynamicallyBuildingTargets: Set<Target>) {
-        // For generating assembly or preprocessor output, we limit the build to a single target.
+        // For generating assembly or preprocessor output, we limit the build to the requested targets.
         switch buildRequest.buildCommand {
         case .generateAssemblyCode, .generatePreprocessedFile:
-            precondition(buildRequest.buildTargets.count == 1, "`\(buildRequest.buildCommand)` only supports exactly one target")
-            let info = buildRequest.buildTargets.first!
-            return await (OrderedSet<ConfiguredTarget>([resolver.lookupConfiguredTarget(info.target, parameters: info.parameters, imposedParameters: resolver.defaultImposedParameters)]), [:], [:], [])
+            return await (OrderedSet<ConfiguredTarget>(buildRequest.buildTargets.asyncMap { info in await resolver.lookupConfiguredTarget(info.target, parameters: info.parameters, imposedParameters: resolver.defaultImposedParameters) }), [:], [:], [])
         default:
             break
         }
@@ -813,18 +811,8 @@ fileprivate extension TargetDependencyResolver {
             if let asPackageProduct = dependency as? PackageProductTarget {
                 packageProductDependencies.append(asPackageProduct)
             } else {
-                if buildRequest.enableIndexBuildArena && !resolver.isTargetSuitableForPlatform(dependency, parameters: configuredTarget.parameters, imposedParameters: imposedParameters) {
-                    // The index build is all about source code, being able to produce source dependencies products for compilation purposes, it doesn't produce binaries.
-                    // If a dependency is not supported for the platform of the dependent, presumably the dependent will not be able to use its products for compilation purposes, since the source products will be put in a different platform directory and/or they will not be usable by the dependent (e.g. the module will not be importable from a different platform).
-                    // If the dependency was intended to be usable from that platform for compilation purposes, it would be a supported platform.
-                    // There is one exception - host tools which are required by compilation, and therefore must be registered as dependencies.
-                    func isHostBuildTool(_ target: Target) -> Bool {
-                        guard let standardTarget = target as? StandardTarget else { return false }
-                        return ProductTypeIdentifier(standardTarget.productTypeIdentifier).isHostBuildTool
-                    }
-                    guard isHostBuildTool(dependency) || dependencyPath?.contains(where: { isHostBuildTool($0.target) }) == true else {
-                        continue
-                    }
+                if !resolver.isTargetSuitableForPlatformForIndex(dependency, parameters: configuredTarget.parameters, imposedParameters: imposedParameters, dependencies: dependencyPath) {
+                    continue
                 }
 
                 // If we have an existing, compatible configured target, use its build parameters.

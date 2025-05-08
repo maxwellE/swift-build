@@ -12,6 +12,7 @@
 
 package import SWBCore
 import SWBTaskExecution
+package import SWBProtocol
 package import SWBUtil
 
 package import class Foundation.FileManager
@@ -21,6 +22,7 @@ package import var Foundation.NSLocalizedDescriptionKey
 package import class Foundation.NSError
 package import struct Foundation.URL
 package import struct Foundation.UUID
+import SWBMacro
 
 package final class CleanOperation: BuildSystemOperation, TargetDependencyResolverDelegate {
     package var diagnosticContext: DiagnosticContextData {
@@ -61,7 +63,7 @@ package final class CleanOperation: BuildSystemOperation, TargetDependencyResolv
         return try BuildDescriptionManager.cacheDirectory(buildRequest, buildRequestContext: buildRequestContext, workspaceContext: workspaceContext).join("XCBuildData")
     }
 
-    package func build() async {
+    package func build() async -> BuildOperationEnded.Status {
         let buildOutputDelegate = delegate.buildStarted(self)
 
         if workspaceContext.userPreferences.enableDebugActivityLogs {
@@ -103,7 +105,7 @@ package final class CleanOperation: BuildSystemOperation, TargetDependencyResolv
 
         cleanBuildFolders(buildFolders: Set(buildFolders), buildOutputDelegate: buildOutputDelegate)
 
-        delegate.buildComplete(self, status: nil, delegate: buildOutputDelegate, metrics: nil)
+        return delegate.buildComplete(self, status: nil, delegate: buildOutputDelegate, metrics: nil)
     }
 
     package func cancel() {
@@ -205,7 +207,7 @@ package final class CleanOperation: BuildSystemOperation, TargetDependencyResolv
         delegate.targetPreparationStarted(self, configuredTarget: configuredTarget)
         delegate.targetStarted(self, configuredTarget: configuredTarget)
 
-        let (executable, arguments, workingDirectory, environment) = constructCommandLine(for: configuredTarget.target as! ExternalTarget, action: "clean", settings: settings, workspaceContext: workspaceContext, scope: settings.globalScope)
+        let (executable, arguments, workingDirectory, environment) = constructCommandLine(for: configuredTarget.target as! SWBCore.ExternalTarget, action: "clean", settings: settings, workspaceContext: workspaceContext, scope: settings.globalScope)
         let commandLine = [executable] + arguments
 
         let specLookupContext = SpecLookupCtxt(specRegistry: workspaceContext.core.specRegistry, platform: settings.platform)
@@ -214,10 +216,10 @@ package final class CleanOperation: BuildSystemOperation, TargetDependencyResolv
         let taskIdentifier = task.identifier
         let taskOutputDelegate = delegate.taskStarted(self, taskIdentifier: taskIdentifier, task: task, dependencyInfo: nil)
 
-        let resolvedExecutable = StackedSearchPath(environment: environment, fs: workspaceContext.fs).lookup(Path(executable)) ?? Path(executable)
+        let resolvedExecutable = StackedSearchPath(environment: .init(environment), fs: workspaceContext.fs).lookup(Path(executable)) ?? Path(executable)
 
         do {
-            let result = try await Process.getMergedOutput(url: URL(fileURLWithPath: resolvedExecutable.str), arguments: arguments, currentDirectoryURL: URL(fileURLWithPath: workingDirectory.str), environment: environment)
+            let result = try await Process.getMergedOutput(url: URL(fileURLWithPath: resolvedExecutable.str), arguments: arguments, currentDirectoryURL: URL(fileURLWithPath: workingDirectory.str), environment: .init(environment))
 
             if !result.exitStatus.isSuccess {
                 taskOutputDelegate.emitError("Failed to clean target '\(configuredTarget.target.name)': \(String(decoding: result.output, as: UTF8.self))")

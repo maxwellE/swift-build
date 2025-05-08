@@ -194,6 +194,11 @@ public final class SWBBuildService: Sendable {
         await createSession(name: name, developerPath: developerPath, cachePath: cachePath, inferiorProductsPath: inferiorProductsPath, environment: nil)
     }
 
+    // ABI compatibility
+    public func createSession(name: String, developerPath: String? = nil, cachePath: String?, inferiorProductsPath: String?, environment: [String:String]?) async -> (Result<SWBBuildServiceSession, any Error>, [SwiftBuildMessage.DiagnosticInfo]) {
+        await createSession(name: name, developerPath: developerPath, resourceSearchPaths: [], cachePath: cachePath, inferiorProductsPath: inferiorProductsPath, environment: environment)
+    }
+
     /// Create a new service session.
     ///
     /// - Parameters:
@@ -202,9 +207,23 @@ public final class SWBBuildService: Sendable {
     ///   - inferiorProductsPath: If provided, the path to where inferior Xcode build data is located.
     ///   - environment: If provided, a set of environment variables that are relevant to the build session's context
     /// - returns: The new session.
-    public func createSession(name: String, developerPath: String? = nil, cachePath: String?, inferiorProductsPath: String?, environment: [String:String]?) async -> (Result<SWBBuildServiceSession, any Error>, [SwiftBuildMessage.DiagnosticInfo]) {
+    public func createSession(name: String, developerPath: String? = nil, resourceSearchPaths: [String], cachePath: String?, inferiorProductsPath: String?, environment: [String:String]?) async -> (Result<SWBBuildServiceSession, any Error>, [SwiftBuildMessage.DiagnosticInfo]) {
         do {
-            let response = try await send(request: CreateSessionRequest(name: name, developerPath: developerPath.map(Path.init), cachePath: cachePath.map(Path.init), inferiorProductsPath: inferiorProductsPath.map(Path.init), environment: environment))
+            let response = try await send(request: CreateSessionRequest(name: name, developerPath: developerPath.map(Path.init), resourceSearchPaths: resourceSearchPaths.map(Path.init), cachePath: cachePath.map(Path.init), inferiorProductsPath: inferiorProductsPath.map(Path.init), environment: environment))
+            let diagnostics = response.diagnostics.map { SwiftBuildMessage.DiagnosticInfo(.init($0, .global)) }
+            if let sessionID = response.sessionID {
+                return (.success(SWBBuildServiceSession(name: name, uid: sessionID, service: self)), diagnostics)
+            } else {
+                return (.failure(SwiftBuildError.requestError(description: "Could not initialize build system")), diagnostics)
+            }
+        } catch {
+            return (.failure(error), [])
+        }
+    }
+
+    public func createSession(name: String, swiftToolchainPath: String, resourceSearchPaths: [String], cachePath: String?, inferiorProductsPath: String?, environment: [String:String]?) async -> (Result<SWBBuildServiceSession, any Error>, [SwiftBuildMessage.DiagnosticInfo]) {
+        do {
+            let response = try await send(request: CreateSessionRequest(name: name, developerPath: .swiftToolchain(Path(swiftToolchainPath)), resourceSearchPaths: resourceSearchPaths.map(Path.init), cachePath: cachePath.map(Path.init), inferiorProductsPath: inferiorProductsPath.map(Path.init), environment: environment))
             let diagnostics = response.diagnostics.map { SwiftBuildMessage.DiagnosticInfo(.init($0, .global)) }
             if let sessionID = response.sessionID {
                 return (.success(SWBBuildServiceSession(name: name, uid: sessionID, service: self)), diagnostics)
@@ -282,6 +301,7 @@ public final class SWBBuildService: Sendable {
         }
     }
 
+    @available(*, deprecated, message: "Do not use.")
     public func appleSystemFrameworkNames(developerPath: String?) async throws -> Set<String> {
         try await Set(send(request: AppleSystemFrameworkNamesRequest(developerPath: developerPath.map(Path.init))).value)
     }

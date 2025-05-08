@@ -12,7 +12,7 @@
 
 import Foundation
 import SWBTestSupport
-import SWBUtil
+@_spi(Testing) import SWBUtil
 import SWBCore
 import SWBLibc
 import SwiftBuild
@@ -80,21 +80,21 @@ final class CLIConnection {
         }
     }
 
-    static var environment: [String: String] {
-        var env = ProcessInfo.processInfo.environment.filter(keys: [
+    static var environment: Environment {
+        var env = Environment.current.filter(keys: [
             "PATH", // important to allow swift to be looked up in PATH on Windows/Linux
             "DEVELOPER_DIR",
             "DYLD_FRAMEWORK_PATH",
             "DYLD_LIBRARY_PATH",
             "LLVM_PROFILE_FILE",
             "MallocNanoZone"
-        ]).addingContents(of: [
+        ]).addingContents(of: Environment([
             // Prevent locally-enabled MSL from failing several tests because MSL prints messages to standard output streams.
             "EnableMallocStackLoggingLiteOnStart": "0"
-        ])
+        ]))
         // For Windows when running in an IDE like VS Code
-        if env["PATH"] == nil, let swiftRuntimePath = try? swiftRuntimePath() {
-            env["PATH"] = swiftRuntimePath.str
+        if env[.path] == nil, let swiftRuntimePath = try? swiftRuntimePath() {
+            env[.path] = swiftRuntimePath.str
         }
         // Required to be set for Process.run to function
         if env["SystemRoot"] == nil, let systemRoot = try? systemRoot() {
@@ -128,7 +128,7 @@ final class CLIConnection {
         task.standardInput = sessionHandle
         task.standardOutput = sessionHandle
         task.standardError = sessionHandle
-        task.environment = Self.environment
+        task.environment = .init(Self.environment)
         do {
             exitPromise = try task.launch()
         } catch {
@@ -151,6 +151,10 @@ final class CLIConnection {
             _ = try? await exitStatus
         }
 
+        // Consume the rest of the output before closing the handle to ensure the dispatch IO is closed
+        while let _ = try? await outputStreamIterator.next() {
+        }
+
         try? monitorHandle.close()
     }
 
@@ -161,15 +165,15 @@ final class CLIConnection {
     static func terminate(processIdentifier: Int32) throws {
         #if os(Windows)
         guard let proc = OpenProcess(DWORD(PROCESS_TERMINATE), false, DWORD(processIdentifier)) else {
-            throw StubError.error("OpenProcess failed with error \(GetLastError())")
+            throw Win32Error(GetLastError())
         }
         defer { CloseHandle(proc) }
         if !TerminateProcess(proc, UINT(0xC0000000 | DWORD(9))) {
-            throw StubError.error("TerminateProcess returned \(GetLastError())")
+            throw Win32Error(GetLastError())
         }
         #else
-        if SWBLibc.kill(processIdentifier, SIGKILL) != 0 {
-            throw POSIXError(errno, context: "kill", String(processIdentifier), String(SIGKILL))
+        if SWBLibc.kill(processIdentifier, SIGKILL) != 0 { // ignore-unacceptable-language; POSIX API
+            throw POSIXError(errno, context: "kill", String(processIdentifier), String(SIGKILL)) // ignore-unacceptable-language; POSIX API
         }
         #endif
     }
@@ -247,7 +251,7 @@ public struct AsyncCLIConnectionResponseSequence<Base: AsyncSequence>: AsyncSequ
                     } catch let error as SWBUtil.POSIXError {
                         // The result of a read operation when pty session is closed is platform-dependent.
                         // BSDs send EOF, Linux raises EIO...
-                        #if os(Linux)
+                        #if os(Linux) || os(Android)
                         if error.code == EIO {
                             break
                         }
@@ -276,7 +280,7 @@ public struct AsyncCLIConnectionResponseSequence<Base: AsyncSequence>: AsyncSequ
                 } catch let error as SWBUtil.POSIXError {
                     // The result of a read operation when pty session is closed is platform-dependent.
                     // BSDs send EOF, Linux raises EIO...
-                    #if os(Linux)
+                    #if os(Linux) || os(Android)
                     if error.code == EIO {
                         break
                     }
@@ -313,27 +317,9 @@ fileprivate func swiftRuntimePath() throws -> Path? {
     let name = "swiftCore.dll"
     return try name.withCString(encodedAs: CInterop.PlatformUnicodeEncoding.self) { wName in
         guard let handle = GetModuleHandleW(wName) else {
-            throw POSIXError(errno, context: "GetModuleHandleW", name)
+            throw Win32Error(GetLastError())
         }
-
-        var capacity = MAX_PATH
-        var path = ""
-        while path.isEmpty {
-            try withUnsafeTemporaryAllocation(of: WCHAR.self, capacity: Int(capacity)) {
-                let dwLength = GetModuleFileNameW(handle, $0.baseAddress!, DWORD($0.count))
-                switch dwLength {
-                case 0:
-                    throw POSIXError(errno, context: "GetModuleFileNameW", String(dwLength))
-                default:
-                    if GetLastError() == ERROR_INSUFFICIENT_BUFFER {
-                        capacity *= 2
-                    } else {
-                        path = String(decodingCString: $0.baseAddress!, as: CInterop.PlatformUnicodeEncoding.self)
-                    }
-                }
-            }
-        }
-        return Path(path).dirname
+        return try Path(SWB_GetModuleFileNameW(handle)).dirname
     }
     #else
     return nil
@@ -342,18 +328,7 @@ fileprivate func swiftRuntimePath() throws -> Path? {
 
 fileprivate func systemRoot() throws -> Path? {
     #if os(Windows)
-    let dwLength: DWORD = GetWindowsDirectoryW(nil, 0)
-    if dwLength == 0 {
-        throw POSIXError(errno, context: "GetWindowsDirectoryW")
-    }
-    return try withUnsafeTemporaryAllocation(of: WCHAR.self, capacity: Int(dwLength)) {
-        switch GetWindowsDirectoryW($0.baseAddress!, DWORD($0.count)) {
-        case 0:
-            throw POSIXError(errno, context: "GetWindowsDirectoryW", String($0.count))
-        default:
-            return Path(String(decodingCString: $0.baseAddress!, as: CInterop.PlatformUnicodeEncoding.self))
-        }
-    }
+    return try Path(SWB_GetWindowsDirectoryW())
     #else
     return nil
     #endif

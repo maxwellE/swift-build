@@ -30,13 +30,7 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
     func fullManifest(fileSystem: String) -> String {
         let tmp = Path.root.join("tmp").strWithPosixSlashes
         let deps = Path.root.join("tmp").join("foo.d")
-        let signature: String
-        #if os(Windows)
-        // non-constant on Windows because Path.root may evaluate to any drive letter
-        signature = BuildDescriptionBuilder.computeShellToolSignature(args: ["true"], environment: EnvironmentBindings(), dependencyData: .makefile(deps), isUnsafeToInterrupt: false, additionalSignatureData: "").unsafeStringValue
-        #else
-        signature = "aca37e3650838b65a98c26816eed1031"
-        #endif
+        let signature = BuildDescriptionBuilder.computeShellToolSignature(args: ["true"], environment: EnvironmentBindings(), dependencyData: .makefile(deps), isUnsafeToInterrupt: false, additionalSignatureData: "").unsafeStringValue
         return """
             {"client":{"name":"basic","version":0,"file-system":"\(fileSystem)","perform-ownership-analysis":"\(SWBFeatureFlag.performOwnershipAnalysis.value ? "yes" : "no")"},"targets":{"":["<all>"]},"nodes":{"\(tmp)/filtered/":{"content-exclusion-patterns":["_CodeSignature","*.gitignore"]}},"commands":{"<all>":{"tool":"phony","inputs":[],"outputs":["<all>"]},"P0:::Foo":{"tool":"shell","description":"Foo","inputs":["\(tmp)/all/","\(tmp)/filtered/"],"outputs":[],"args":["true"],"env":{},"working-directory":"\(Path.pathSeparatorString.escapedForJSON)","deps":["\(deps.str.escapedForJSON)"],"deps-style":"makefile","signature":"\(signature)"}}}
             """
@@ -70,6 +64,7 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
     @Test(.skipHostOS(.windows, "taking up to 30 minutes on Windows"))
     func determinism() async throws {
         try await withTemporaryDirectory { tmpDirPath in
+            let core = try await getCore()
             let testWorkspace = TestWorkspace(
                 "Test",
                 sourceRoot: tmpDirPath,
@@ -104,13 +99,15 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
                                 dependencies: [TestTargetDependency("Foo")]),
                         ])
                 ])
-            let workspace1 = try await testWorkspace.load(getCore())
+            let workspace1 = try testWorkspace.load(core)
+
+            let taskActionRegistry = try await TaskActionRegistry(pluginManager: core.pluginManager)
 
             let fs1 = PseudoFS()
-            let (description1, _) = try await buildDescription(for: workspace1, fs: fs1)
+            let (description1, _) = try await buildDescription(for: workspace1, activeRunDestination: .macOS, fs: fs1)
             let manifest1Contents = try fs1.read(description1.manifestPath).bytes
             let serialized1 = { () -> ByteString in
-                let serializer = MsgPackSerializer(delegate: BuildDescriptionSerializerDelegate())
+                let serializer = MsgPackSerializer(delegate: BuildDescriptionSerializerDelegate(taskActionRegistry: taskActionRegistry))
                 description1.serialize(to: serializer)
                 return serializer.byteString
             }()
@@ -119,7 +116,7 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
             for _ in 0 ..< 10 {
                 let workspace2 = try await testWorkspace.load(getCore())
                 let fs2 = PseudoFS()
-                let (description2, _) = try await buildDescription(for: workspace2, fs: fs2)
+                let (description2, _) = try await buildDescription(for: workspace2, activeRunDestination: .macOS, fs: fs2)
 
                 #expect(description1.targetDependencies == description2.targetDependencies)
 
@@ -130,7 +127,7 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
 
                 // Check the contents of the serialized description.
                 let serialized2 = { () -> ByteString in
-                    let serializer = MsgPackSerializer(delegate: BuildDescriptionSerializerDelegate())
+                    let serializer = MsgPackSerializer(delegate: BuildDescriptionSerializerDelegate(taskActionRegistry: taskActionRegistry))
                     description2.serialize(to: serializer)
                     return serializer.byteString
                 }()
@@ -197,7 +194,7 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
             let workspace1 = try await testWorkspace.load(getCore())
 
             let fs1 = PseudoFS()
-            let (results, _) = try await buildDescription(for: workspace1, fs: fs1) as (BuildDescriptionDiagnosticResults, WorkspaceContext)
+            let (results, _) = try await buildDescription(for: workspace1, activeRunDestination: .macOS, fs: fs1) as (BuildDescriptionDiagnosticResults, WorkspaceContext)
 
             let interestingDiagnostics = results.errors.filter({ message -> Bool in
                 message.hasPrefix("Multiple commands produce")
@@ -316,7 +313,7 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
             let tester = try await TaskConstructionTester(getCore(), project)
             let fs1 = PseudoFS()
             let (results, _) =
-            try await buildDescription(for: tester.workspace, overrides: ["PACKAGE_BUILD_DYNAMICALLY": "YES"], fs: fs1)
+            try await buildDescription(for: tester.workspace, activeRunDestination: .macOS, overrides: ["PACKAGE_BUILD_DYNAMICALLY": "YES"], fs: fs1)
             as (BuildDescriptionDiagnosticResults, WorkspaceContext)
             let interestingDiagnostics = results.errors.filter({ message -> Bool in
                 message.hasPrefix("Multiple commands produce")
@@ -327,7 +324,7 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
     }
 
     /// Check that build descriptions recompute based on recursive search path changes.
-    @Test(.skipHostOS(.windows, "Path handling needs work for windows"))
+    @Test(.requireSDKs(.host))
     func recursiveSearchPathValidation() async throws {
         try await withTemporaryDirectory { tmpDirPath in
             try await withAsyncDeferrable { deferrable in
@@ -345,7 +342,7 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
                                     buildSettings: [
                                         "USE_HEADERMAP": "NO",
                                         "ALWAYS_SEARCH_USER_PATHS": "NO",
-                                        "USER_HEADER_SEARCH_PATHS": "/User/**",
+                                        "USER_HEADER_SEARCH_PATHS": Path.root.join("User/**").strWithPosixSlashes,
                                         "CLANG_USE_RESPONSE_FILE": "NO"])],
                             targets: [
                                 TestStandardTarget(
@@ -362,7 +359,7 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
                 await deferrable.addBlock { await manager.waitForBuildDescriptionSerialization() }
 
                 func check(fs: any FSProxy, expected: [String], expectedSource: BuildDescriptionRetrievalSource) async throws {
-                    let planRequest = try await self.planRequest(for: workspace, fs: fs, includingTargets: { _ in true })
+                    let planRequest = try await self.planRequest(for: workspace, activeRunDestination: .macOS, fs: fs, includingTargets: { _ in true })
                     let info = try await manager.getNewOrCachedBuildDescription(planRequest, clientDelegate: MockTestTaskPlanningClientDelegate())!
                     #expect(info.source == expectedSource)
 
@@ -387,16 +384,16 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
                 do {
                     let fs = PseudoFS()
                     try fs.createDirectory(Path.root.join("User/Foo"), recursive: true)
-                    try await check(fs: fs, expected: ["/User", "/User/Foo"], expectedSource: .new)
-                    try await check(fs: fs, expected: ["/User", "/User/Foo"], expectedSource: .inMemoryCache)
+                    try await check(fs: fs, expected: [Path.root.join("User").str, Path.root.join("User/Foo").str], expectedSource: .new)
+                    try await check(fs: fs, expected: [Path.root.join("User").str, Path.root.join("User/Foo").str], expectedSource: .inMemoryCache)
                 }
 
                 // Check after adding a path.
                 do {
                     let fs = PseudoFS()
                     try fs.createDirectory(Path.root.join("User/Foo/Bar"), recursive: true)
-                    try await check(fs: fs, expected: ["/User", "/User/Foo", "/User/Foo/Bar"], expectedSource: .new)
-                    try await check(fs: fs, expected: ["/User", "/User/Foo", "/User/Foo/Bar"], expectedSource: .inMemoryCache)
+                    try await check(fs: fs, expected: [Path.root.join("User").str, Path.root.join("User/Foo").str, Path.root.join("User/Foo/Bar").str], expectedSource: .new)
+                    try await check(fs: fs, expected: [Path.root.join("User").str, Path.root.join("User/Foo").str, Path.root.join("User/Foo/Bar").str], expectedSource: .inMemoryCache)
                 }
             }
         }
@@ -431,7 +428,7 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
             let testWorkspace = TestWorkspace("aWorkspace", sourceRoot: tmpDirPath, projects: [testProject])
             let workspace = try await testWorkspace.load(getCore())
 
-            let (results, _) = try await buildDescription(for: workspace) as (BuildDescriptionDiagnosticResults, WorkspaceContext)
+            let (results, _) = try await buildDescription(for: workspace, activeRunDestination: .macOS) as (BuildDescriptionDiagnosticResults, WorkspaceContext)
             results.checkNoDiagnostics()
         }
     }
@@ -469,7 +466,7 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
             let testWorkspace = TestWorkspace("aWorkspace", sourceRoot: tmpDirPath, projects: [testProject])
             let workspace = try await testWorkspace.load(getCore())
 
-            let (results, _) = try await buildDescription(for: workspace) as (BuildDescriptionDiagnosticResults, WorkspaceContext)
+            let (results, _) = try await buildDescription(for: workspace, activeRunDestination: .macOS) as (BuildDescriptionDiagnosticResults, WorkspaceContext)
             results.checkNoDiagnostics()
         }
     }
@@ -507,7 +504,7 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
             let testWorkspace = TestWorkspace("aWorkspace", sourceRoot: tmpDirPath, projects: [testProject])
             let workspace = try await testWorkspace.load(getCore())
 
-            let (results, _) = try await buildDescription(for: workspace) as (BuildDescriptionDiagnosticResults, WorkspaceContext)
+            let (results, _) = try await buildDescription(for: workspace, activeRunDestination: .macOS) as (BuildDescriptionDiagnosticResults, WorkspaceContext)
             #expect(results.errors.isEmpty, "Unexpected errors in build description: \(results.errors)")
             #expect(results.warnings == ["None of the architectures in ARCHS (foo) are valid. Consider setting ARCHS to $(ARCHS_STANDARD) or updating it to include at least one value from VALID_ARCHS (bar). (in target \'NoArchs\' from project 'aProject')"])
         }
@@ -544,7 +541,7 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
             let testWorkspace = TestWorkspace("aWorkspace", sourceRoot: tmpDirPath, projects: [testProject])
             let workspace = try await testWorkspace.load(getCore())
 
-            let (results, _) = try await buildDescription(for: workspace) as (BuildDescriptionDiagnosticResults, WorkspaceContext)
+            let (results, _) = try await buildDescription(for: workspace, activeRunDestination: .macOS) as (BuildDescriptionDiagnosticResults, WorkspaceContext)
             #expect(results.errors.isEmpty, "Unexpected errors in build description: \(results.errors)")
             #expect(results.warnings == ["None of the architectures in ARCHS (foo) are valid. Consider setting ARCHS to $(ARCHS_STANDARD) or updating it to include at least one value from VALID_ARCHS (bar). (in target \'NoArchs\' from project 'aProject')"])
         }
@@ -582,7 +579,7 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
             let testWorkspace = TestWorkspace("aWorkspace", sourceRoot: tmpDirPath, projects: [testProject])
             let workspace = try await testWorkspace.load(getCore())
 
-            let (results, _) = try await buildDescription(for: workspace) as (BuildDescriptionDiagnosticResults, WorkspaceContext)
+            let (results, _) = try await buildDescription(for: workspace, activeRunDestination: .macOS) as (BuildDescriptionDiagnosticResults, WorkspaceContext)
             #expect(results.errors.isEmpty, "Unexpected errors in build description: \(results.errors)")
             #expect(results.warnings == ["The active architecture (foo) is not valid - it is the only architecture considered because ONLY_ACTIVE_ARCH is enabled. Consider setting ARCHS to $(ARCHS_STANDARD) or updating it to include at least one value from VALID_ARCHS (bar). (in target \'NoArchs\' from project 'aProject')"])
         }
@@ -618,7 +615,7 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
             let testWorkspace = TestWorkspace("aWorkspace", sourceRoot: tmpDirPath, projects: [testProject])
             let workspace = try await testWorkspace.load(getCore())
 
-            let (results, _) = try await buildDescription(for: workspace) as (BuildDescriptionDiagnosticResults, WorkspaceContext)
+            let (results, _) = try await buildDescription(for: workspace, activeRunDestination: .macOS) as (BuildDescriptionDiagnosticResults, WorkspaceContext)
             #expect(results.errors.isEmpty, "Unexpected errors in build description: \(results.errors)")
             #expect(results.warnings == ["There are no architectures to compile for because the VALID_ARCHS build setting is an empty list. (in target \'NoArchs\' from project 'aProject')"])
         }
@@ -654,7 +651,7 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
             let testWorkspace = TestWorkspace("aWorkspace", sourceRoot: tmpDirPath, projects: [testProject])
             let workspace = try await testWorkspace.load(getCore())
 
-            let (results, _) = try await buildDescription(for: workspace) as (BuildDescriptionDiagnosticResults, WorkspaceContext)
+            let (results, _) = try await buildDescription(for: workspace, activeRunDestination: .macOS) as (BuildDescriptionDiagnosticResults, WorkspaceContext)
             #expect(results.errors.isEmpty, "Unexpected errors in build description: \(results.errors)")
             #expect(results.warnings == ["There are no architectures to compile for because the ARCHS build setting is an empty list. Consider setting ARCHS to $(ARCHS_STANDARD) or updating it to include at least one value from VALID_ARCHS (bar). (in target \'NoArchs\' from project 'aProject')"])
         }
@@ -743,8 +740,9 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
     @Test(.requireHostOS(.macOS))
     func serializable() async throws {
         try await withTemporaryDirectory { tmpDirPath -> Void in
-            let testWorkspace = try await TestWorkspace("SomeName", sourceRoot: tmpDirPath, projects: [.init("Project1", groupTree: TestGroup.init("Empty"), targets: [TestStandardTarget("Target1")])]).load(getCore())
-            let workspaceContext = try await WorkspaceContext(core: getCore(), workspace: testWorkspace, processExecutionCache: .sharedForTesting)
+            let core = try await getCore()
+            let testWorkspace = try TestWorkspace("SomeName", sourceRoot: tmpDirPath, projects: [.init("Project1", groupTree: TestGroup.init("Empty"), targets: [TestStandardTarget("Target1", type: .application)])]).load(core)
+            let workspaceContext = WorkspaceContext(core: core, workspace: testWorkspace, processExecutionCache: .sharedForTesting)
 
             let diagnostics: [ConfiguredTarget?: [Diagnostic]] = [
                 nil: [
@@ -756,7 +754,8 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
                 return
             }
 
-            let delegate = BuildDescriptionSerializerDelegate()
+            let taskActionRegistry = try await TaskActionRegistry(pluginManager: core.pluginManager)
+            let delegate = BuildDescriptionSerializerDelegate(taskActionRegistry: taskActionRegistry)
             let taskStoreSerializer = MsgPackSerializer(delegate: delegate)
             taskStoreSerializer.serialize(description.taskStore)
             let serializer = MsgPackSerializer(delegate: delegate)
@@ -764,7 +763,7 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
             let serializedTaskStore = taskStoreSerializer.byteString
             let serializedBuildDescription = serializer.byteString
 
-            let deserializerDelegate = BuildDescriptionDeserializerDelegate(workspace: workspaceContext.workspace, platformRegistry: workspaceContext.core.platformRegistry, sdkRegistry: workspaceContext.core.sdkRegistry, specRegistry: workspaceContext.core.specRegistry)
+            let deserializerDelegate = BuildDescriptionDeserializerDelegate(workspace: workspaceContext.workspace, platformRegistry: workspaceContext.core.platformRegistry, sdkRegistry: workspaceContext.core.sdkRegistry, specRegistry: workspaceContext.core.specRegistry, taskActionRegistry: taskActionRegistry)
             let taskStoreDeserializer = MsgPackDeserializer(serializedTaskStore, delegate: deserializerDelegate)
             let taskStore: FrozenTaskStore = try taskStoreDeserializer.deserialize()
             deserializerDelegate.taskStore = taskStore
@@ -811,8 +810,8 @@ fileprivate struct BuildDescriptionTests: CoreBasedTests {
 }
 
 private extension BuildDescription {
-    static func construct(workspace: Workspace, tasks: [any PlannedTask], path: Path, signature: BuildDescriptionSignature, buildCommand: BuildCommand? = nil, diagnostics: [ConfiguredTarget?: [Diagnostic]] = [:], indexingInfo: [(forTarget: ConfiguredTarget?, path: Path, indexingInfo: any SourceFileIndexingInfo)] = [], fs: any FSProxy = localFS, bypassActualTasks: Bool = false, moduleSessionFilePath: Path? = nil, invalidationPaths: [Path] = [], recursiveSearchPathResults: [RecursiveSearchPathResolver.CachedResult] = [], copiedPathMap: [String: String] = [:], rootPathsPerTarget: [ConfiguredTarget:[Path]] = [:], moduleCachePathPerTarget: [ConfiguredTarget: Path] = [:], staleFileRemovalIdentifierPerTarget: [ConfiguredTarget: String] = [:], settingsPerTarget: [ConfiguredTarget: Settings] = [:], targetDependencies: [TargetDependencyRelationship] = [], definingTargetsByModuleName: [String: OrderedSet<ConfiguredTarget>] = [:]) async throws -> BuildDescriptionDiagnosticResults? {
-        let buildDescription = try await construct(workspace: workspace, tasks: tasks, path: path, signature: signature, buildCommand: buildCommand ?? .build(style: .buildOnly, skipDependencies: false), diagnostics: diagnostics, indexingInfo: indexingInfo, fs: fs, bypassActualTasks: bypassActualTasks, moduleSessionFilePath: moduleSessionFilePath, invalidationPaths: invalidationPaths, recursiveSearchPathResults: recursiveSearchPathResults, copiedPathMap: copiedPathMap, rootPathsPerTarget: rootPathsPerTarget, moduleCachePathPerTarget: moduleCachePathPerTarget, staleFileRemovalIdentifierPerTarget: staleFileRemovalIdentifierPerTarget, settingsPerTarget: settingsPerTarget, delegate: MockTestBuildDescriptionConstructionDelegate(), targetDependencies: targetDependencies, definingTargetsByModuleName: definingTargetsByModuleName, capturedBuildInfo: nil, userPreferences: .defaultForTesting)
+    static func construct(workspace: Workspace, tasks: [any PlannedTask], path: Path, signature: BuildDescriptionSignature, buildCommand: BuildCommand? = nil, diagnostics: [ConfiguredTarget?: [Diagnostic]] = [:], indexingInfo: [(forTarget: ConfiguredTarget?, path: Path, indexingInfo: any SourceFileIndexingInfo)] = [], fs: any FSProxy = localFS, bypassActualTasks: Bool = false, moduleSessionFilePath: Path? = nil, invalidationPaths: [Path] = [], recursiveSearchPathResults: [RecursiveSearchPathResolver.CachedResult] = [], copiedPathMap: [String: String] = [:], rootPathsPerTarget: [ConfiguredTarget:[Path]] = [:], moduleCachePathsPerTarget: [ConfiguredTarget: [Path]] = [:], staleFileRemovalIdentifierPerTarget: [ConfiguredTarget: String] = [:], settingsPerTarget: [ConfiguredTarget: Settings] = [:], targetDependencies: [TargetDependencyRelationship] = [], definingTargetsByModuleName: [String: OrderedSet<ConfiguredTarget>] = [:]) async throws -> BuildDescriptionDiagnosticResults? {
+        let buildDescription = try await construct(workspace: workspace, tasks: tasks, path: path, signature: signature, buildCommand: buildCommand ?? .build(style: .buildOnly, skipDependencies: false), diagnostics: diagnostics, indexingInfo: indexingInfo, fs: fs, bypassActualTasks: bypassActualTasks, moduleSessionFilePath: moduleSessionFilePath, invalidationPaths: invalidationPaths, recursiveSearchPathResults: recursiveSearchPathResults, copiedPathMap: copiedPathMap, rootPathsPerTarget: rootPathsPerTarget, moduleCachePathsPerTarget: moduleCachePathsPerTarget, staleFileRemovalIdentifierPerTarget: staleFileRemovalIdentifierPerTarget, settingsPerTarget: settingsPerTarget, delegate: MockTestBuildDescriptionConstructionDelegate(), targetDependencies: targetDependencies, definingTargetsByModuleName: definingTargetsByModuleName, capturedBuildInfo: nil, userPreferences: .defaultForTesting)
         return buildDescription.map { BuildDescriptionDiagnosticResults(buildDescription: $0, workspace: workspace) } ?? nil
     }
 }

@@ -22,13 +22,17 @@ import Foundation
 }
 
 struct WebAssemblyPlatformSpecsExtension: SpecificationsExtension {
-    func specificationFiles() -> Bundle? {
-        .module
+    func specificationFiles(resourceSearchPaths: [Path]) -> Bundle? {
+        findResourceBundle(nameWhenInstalledInToolchain: "SwiftBuild_SWBWebAssemblyPlatform", resourceSearchPaths: resourceSearchPaths, defaultBundle: Bundle.module)
+    }
+
+    func specificationDomains() -> [String: [String]] {
+        ["webassembly": ["generic-unix"]]
     }
 }
 
 struct WebAssemblyPlatformExtension: PlatformInfoExtension {
-    func additionalPlatforms() -> [(path: Path, data: [String: PropertyListItem])] {
+    func additionalPlatforms(context: any PlatformInfoExtensionAdditionalPlatformsContext) throws -> [(path: Path, data: [String: PropertyListItem])] {
         [
             (.root, [
                 "Type": .plString("Platform"),
@@ -49,20 +53,14 @@ struct WebAssemblyPlatformExtension: PlatformInfoExtension {
 // us from doing this today but we should revisit this later and consider
 // renaming this plugin to something like `SWBSwiftSDKPlatform`.
 struct WebAssemblySDKRegistryExtension: SDKRegistryExtension {
-    func additionalSDKs(platformRegistry: PlatformRegistry) async -> [(path: Path, platform: SWBCore.Platform?, data: [String: PropertyListItem])] {
-        guard let host = try? ProcessInfo.processInfo.hostOperatingSystem() else {
-            return []
-        }
-
-        guard let wasmPlatform = platformRegistry.lookup(name: "webassembly") else {
+    func additionalSDKs(context: any SDKRegistryExtensionAdditionalSDKsContext) async throws -> [(path: Path, platform: SWBCore.Platform?, data: [String: PropertyListItem])] {
+        let host = context.hostOperatingSystem
+        guard let wasmPlatform = context.platformRegistry.lookup(name: "webassembly") else {
             return []
         }
 
         let defaultProperties: [String: PropertyListItem] = [
             "SDK_STAT_CACHE_ENABLE": "NO",
-
-            // Workaround to avoid `-add_ast_path` on WebAssembly, apparently this needs to perform some "swift modulewrap" step instead.
-            "GCC_GENERATE_DEBUGGING_SYMBOLS": .plString("NO"),
 
             "GENERATE_TEXT_BASED_STUBS": "NO",
             "GENERATE_INTERMEDIATE_TEXT_BASED_STUBS": "NO",
@@ -82,7 +80,8 @@ struct WebAssemblySDKRegistryExtension: SDKRegistryExtension {
 
         let wasmSwiftSDKs = (try? SwiftSDK.findSDKs(
             targetTriples: Array(supportedTriples.keys),
-            fs: localFS
+            fs: context.fs,
+            hostOperatingSystem: context.hostOperatingSystem
         )) ?? []
 
         var wasmSDKs: [(path: Path, platform: SWBCore.Platform?, data: [String: PropertyListItem])] = []
@@ -100,6 +99,7 @@ struct WebAssemblySDKRegistryExtension: SDKRegistryExtension {
                     "Type": .plString("SDK"),
                     "Version": .plString("1.0.0"),
                     "CanonicalName": .plString(wasmSDK.identifier),
+                    "Aliases": ["webassembly", "wasi"],
                     "IsBaseSDK": .plBool(true),
                     "DefaultProperties": .plDict([
                         "PLATFORM_NAME": .plString("webassembly"),

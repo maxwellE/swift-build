@@ -281,25 +281,6 @@
                 DefaultValue = NO;
             },
             {
-                Name = "ENABLE_BITCODE";
-                Type = bool;
-                DefaultValue = NO;
-            },
-            {
-                Name = "HIDE_BITCODE_SYMBOLS";
-                Type = bool;
-                DefaultValue = YES;
-            },
-            {
-                Name = "BITCODE_GENERATION_MODE";
-                Type = enum;
-                Values = (
-                    "marker",
-                    "bitcode",
-                );
-                DefaultValue = marker;
-            },
-            {
                 Name = "STRIP_BITCODE_FROM_COPIED_FILES";
                 Type = bool;
                 DefaultValue = NO;
@@ -461,9 +442,9 @@
                 };
             },
             {
-                Name = "GENERATE_MASTER_OBJECT_FILE";
+                Name = "GENERATE_PRELINK_OBJECT_FILE";
                 Type = bool;
-                DefaultValue = NO;
+                DefaultValue = "$(GENERATE_MASTER_OBJECT_FILE:default=NO)"; // ignore-unacceptable-language; kept for compatibility
             },
             {
                 Name = "PRELINK_LIBS";
@@ -1149,6 +1130,11 @@ When `GENERATE_INFOPLIST_FILE` is enabled, sets the value of the [CFBundleIdenti
                 Category = "Linking - Warnings";
             },
             {
+                Name = "_LD_MULTIARCH";
+                Type = Boolean;
+                DefaultValue = YES;
+            },
+            {
                 Name = "LIBRARY_SEARCH_PATHS";
                 Type = PathList;
                 Category = "Search Paths";
@@ -1333,29 +1319,6 @@ When `GENERATE_INFOPLIST_FILE` is enabled, sets the value of the [CFBundleIdenti
                 Type = Boolean;
                 Category = BuildOptions;
                 DefaultValue = NO;
-            },
-            {
-                Name = "ENABLE_BITCODE";
-                Type = Boolean;
-                DefaultValue = NO;
-            },
-            {
-                Name = "BITCODE_GENERATION_MODE";
-                Type = Enumeration;
-                Values = (
-                    {
-                        Value = "marker";
-                    },
-                    {
-                        Value = "bitcode";
-                    },
-                );
-                DefaultValue = marker;
-            },
-            {
-                Name = "HIDE_BITCODE_SYMBOLS";
-                Type = Boolean;
-                DefaultValue = YES;
             },
             {
                 Name = "STRIP_BITCODE_FROM_COPIED_FILES";
@@ -1635,10 +1598,10 @@ When `GENERATE_INFOPLIST_FILE` is enabled, sets the value of the [CFBundleIdenti
                 );
             },
             {
-                Name = "GENERATE_MASTER_OBJECT_FILE";
+                Name = "GENERATE_PRELINK_OBJECT_FILE";
                 Type = Boolean;
                 Category = "Linking - General";
-                DefaultValue = NO;
+                DefaultValue = "$(GENERATE_MASTER_OBJECT_FILE:default=NO)"; // ignore-unacceptable-language; kept for compatibility
                 ConditionFlavors = (
                     arch,
                     sdk,
@@ -1757,7 +1720,7 @@ When `GENERATE_INFOPLIST_FILE` is enabled, sets the value of the [CFBundleIdenti
 * When set to Automatic, this target's immediate dependencies which build dynamic libraries or frameworks and are in its Link Binaries With Libraries will automatically be built as mergeable libraries and merged into this target's binary during release builds, or reexported during debug builds.
 * When set to Manual, only immediate dependencies which have Build Mergeable Library explicitly enabled will be merged or reexported.
 
-For more information on mergable libraries, see [Configuring your project to use mergeable libraries](https://developer.apple.com/documentation/xcode/configuring-your-project-to-use-mergeable-libraries).";
+For more information on mergeable libraries, see [Configuring your project to use mergeable libraries](https://developer.apple.com/documentation/xcode/configuring-your-project-to-use-mergeable-libraries).";
             },
             {
                 Name = "AUTOMATICALLY_MERGE_DEPENDENCIES";
@@ -1777,12 +1740,28 @@ For more information on mergable libraries, see [Configuring your project to use
                 DisplayName = "Build Mergeable Library";
                 Description = "For dynamic libraries and frameworks, links this target's binary as a mergeable library which can be merged into the product of a target which depends on it if that target is configured to do so. This target will be linked as a mergeable library in release builds so it can be merged, but will instead be linked as a normal dynamic library to be reexported in debug builds. For other binary types, this setting has no effect.
 
-For more information on mergable libraries, see [Configuring your project to use mergeable libraries](https://developer.apple.com/documentation/xcode/configuring-your-project-to-use-mergeable-libraries).";
+For more information on mergeable libraries, see [Configuring your project to use mergeable libraries](https://developer.apple.com/documentation/xcode/configuring-your-project-to-use-mergeable-libraries).";
             },
             {
                 Name = "MAKE_MERGEABLE";
                 Type = Boolean;
                 DefaultValue = NO;
+            },
+
+            {
+                Name = "COMPILATION_CACHE_ENABLE_CACHING";
+                Type = Boolean;
+                Category = "Compilation Caching";
+                DefaultValue = "$(COMPILATION_CACHE_ENABLE_CACHING_DEFAULT)";
+                DisplayName = "Enable Compilation Caching";
+                Description = "Caches the results of compilations for a particular set of inputs.";
+            },
+            {
+                Name = "COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS";
+                Type = Boolean;
+                Category = "Compilation Caching";
+                DisplayName = "Compilation Caching Diagnostic Info";
+                Description = "Emits diagnostic information for cached compilation tasks.";
             },
 
             // FIXME: The TAPI settings should not need to be here in order to have them appear in the project editor UI.
@@ -1925,7 +1904,7 @@ For more information on mergable libraries, see [Configuring your project to use
         );
         DefaultValue = "compiler-default";
         DisplayName = "Text-Based InstallAPI Language Dialect";
-        Description = "Selects the langauge dialect when building `Text-Based InstallAPI`.";
+        Description = "Selects the language dialect when building `Text-Based InstallAPI`.";
         ConditionFlavors = (
           arch,
           sdk,
@@ -2156,7 +2135,7 @@ For more information on mergable libraries, see [Configuring your project to use
                 Name = "ENABLE_APP_SANDBOX";
                 Type = Boolean;
                 DefaultValue = NO;
-                Category = "App Sandbox";
+                Category = "App Sandbox & Hardened Runtime";
                 ConditionFlavors = (
                     sdk,
                 );
@@ -2164,8 +2143,64 @@ For more information on mergable libraries, see [Configuring your project to use
             {   Name = "ENABLE_HARDENED_RUNTIME";
                 Type = Boolean;
                 DefaultValue = NO;
-                Category = "Code Signing";
+                Category = "App Sandbox & Hardened Runtime";
                 Description = "Enable hardened runtime restrictions.";
+                ConditionFlavors = (
+                    sdk,
+                );
+            },
+            {   Name = "AUTOMATION_APPLE_EVENTS";
+                Type = Boolean;
+                DefaultValue = NO;
+                Category = "App Sandbox & Hardened Runtime";
+                ConditionFlavors = (
+                    sdk,
+                );
+            },
+            {   Name = "RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES";
+                Type = Boolean;
+                DefaultValue = NO;
+                Category = "App Sandbox & Hardened Runtime";
+                ConditionFlavors = (
+                    sdk,
+                );
+            },
+            {   Name = "RUNTIME_EXCEPTION_ALLOW_JIT";
+                Type = Boolean;
+                DefaultValue = NO;
+                Category = "App Sandbox & Hardened Runtime";
+                ConditionFlavors = (
+                    sdk,
+                );
+            },
+            {   Name = "RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY";
+                Type = Boolean;
+                DefaultValue = NO;
+                Category = "App Sandbox & Hardened Runtime";
+                ConditionFlavors = (
+                    sdk,
+                );
+            },
+            {   Name = "RUNTIME_EXCEPTION_DEBUGGING_TOOL";
+                Type = Boolean;
+                DefaultValue = NO;
+                Category = "App Sandbox & Hardened Runtime";
+                ConditionFlavors = (
+                    sdk,
+                );
+            },
+            {   Name = "RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION";
+                Type = Boolean;
+                DefaultValue = NO;
+                Category = "App Sandbox & Hardened Runtime";
+                ConditionFlavors = (
+                    sdk,
+                );
+            },
+            {   Name = "RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION";
+                Type = Boolean;
+                DefaultValue = NO;
+                Category = "App Sandbox & Hardened Runtime";
                 ConditionFlavors = (
                     sdk,
                 );
@@ -2179,7 +2214,7 @@ For more information on mergable libraries, see [Configuring your project to use
                     "readwrite",
                 );
                 DefaultValue = "";
-                Category = "App Sandbox";
+                Category = "App Sandbox & Hardened Runtime";
                 ConditionFlavors = (
                     sdk,
                 );
@@ -2193,7 +2228,7 @@ For more information on mergable libraries, see [Configuring your project to use
                     "readwrite",
                 );
                 DefaultValue = "";
-                Category = "App Sandbox";
+                Category = "App Sandbox & Hardened Runtime";
                 ConditionFlavors = (
                     sdk,
                 );
@@ -2207,7 +2242,7 @@ For more information on mergable libraries, see [Configuring your project to use
                     "readwrite",
                 );
                 DefaultValue = "";
-                Category = "App Sandbox";
+                Category = "App Sandbox & Hardened Runtime";
                 ConditionFlavors = (
                     sdk,
                 );
@@ -2221,7 +2256,7 @@ For more information on mergable libraries, see [Configuring your project to use
                     "readwrite",
                 );
                 DefaultValue = "";
-                Category = "App Sandbox";
+                Category = "App Sandbox & Hardened Runtime";
                 ConditionFlavors = (
                     sdk,
                 );
@@ -2235,7 +2270,7 @@ For more information on mergable libraries, see [Configuring your project to use
                     "readwrite",
                 );
                 DefaultValue = "";
-                Category = "App Sandbox";
+                Category = "App Sandbox & Hardened Runtime";
                 ConditionFlavors = (
                     sdk,
                 );
@@ -2243,7 +2278,7 @@ For more information on mergable libraries, see [Configuring your project to use
             {   Name = "ENABLE_INCOMING_NETWORK_CONNECTIONS";
                 Type = Boolean;
                 DefaultValue = NO;
-                Category = "App Sandbox";
+                Category = "App Sandbox & Hardened Runtime";
                 ConditionFlavors = (
                     sdk,
                 );
@@ -2251,7 +2286,7 @@ For more information on mergable libraries, see [Configuring your project to use
             {   Name = "ENABLE_OUTGOING_NETWORK_CONNECTIONS";
                 Type = Boolean;
                 DefaultValue = NO;
-                Category = "App Sandbox";
+                Category = "App Sandbox & Hardened Runtime";
                 ConditionFlavors = (
                     sdk,
                 );
@@ -2259,7 +2294,7 @@ For more information on mergable libraries, see [Configuring your project to use
             {   Name = "ENABLE_RESOURCE_ACCESS_CAMERA";
                 Type = Boolean;
                 DefaultValue = NO;
-                Category = "App Sandbox";
+                Category = "App Sandbox & Hardened Runtime";
                 ConditionFlavors = (
                     sdk,
                 );
@@ -2267,7 +2302,7 @@ For more information on mergable libraries, see [Configuring your project to use
             {   Name = "ENABLE_RESOURCE_ACCESS_AUDIO_INPUT";
                 Type = Boolean;
                 DefaultValue = NO;
-                Category = "App Sandbox";
+                Category = "App Sandbox & Hardened Runtime";
                 ConditionFlavors = (
                     sdk,
                 );
@@ -2275,7 +2310,15 @@ For more information on mergable libraries, see [Configuring your project to use
             {   Name = "ENABLE_RESOURCE_ACCESS_USB";
                 Type = Boolean;
                 DefaultValue = NO;
-                Category = "App Sandbox";
+                Category = "App Sandbox & Hardened Runtime";
+                ConditionFlavors = (
+                    sdk,
+                );
+            },
+            {   Name = "ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY";
+                Type = Boolean;
+                DefaultValue = NO;
+                Category = "App Sandbox & Hardened Runtime";
                 ConditionFlavors = (
                     sdk,
                 );
@@ -2283,7 +2326,7 @@ For more information on mergable libraries, see [Configuring your project to use
             {   Name = "ENABLE_RESOURCE_ACCESS_PRINTING";
                 Type = Boolean;
                 DefaultValue = NO;
-                Category = "App Sandbox";
+                Category = "App Sandbox & Hardened Runtime";
                 ConditionFlavors = (
                     sdk,
                 );
@@ -2291,7 +2334,7 @@ For more information on mergable libraries, see [Configuring your project to use
             {   Name = "ENABLE_RESOURCE_ACCESS_BLUETOOTH";
                 Type = Boolean;
                 DefaultValue = NO;
-                Category = "App Sandbox";
+                Category = "App Sandbox & Hardened Runtime";
                 ConditionFlavors = (
                     sdk,
                 );
@@ -2299,7 +2342,7 @@ For more information on mergable libraries, see [Configuring your project to use
             {   Name = "ENABLE_RESOURCE_ACCESS_CONTACTS";
                 Type = Boolean;
                 DefaultValue = NO;
-                Category = "App Sandbox";
+                Category = "App Sandbox & Hardened Runtime";
                 ConditionFlavors = (
                     sdk,
                 );
@@ -2307,7 +2350,7 @@ For more information on mergable libraries, see [Configuring your project to use
             {   Name = "ENABLE_RESOURCE_ACCESS_LOCATION";
                 Type = Boolean;
                 DefaultValue = NO;
-                Category = "App Sandbox";
+                Category = "App Sandbox & Hardened Runtime";
                 ConditionFlavors = (
                     sdk,
                 );
@@ -2315,7 +2358,7 @@ For more information on mergable libraries, see [Configuring your project to use
             {   Name = "ENABLE_RESOURCE_ACCESS_CALENDARS";
                 Type = Boolean;
                 DefaultValue = NO;
-                Category = "App Sandbox";
+                Category = "App Sandbox & Hardened Runtime";
                 ConditionFlavors = (
                     sdk,
                 );
@@ -3659,6 +3702,26 @@ When this setting is enabled:
                 Description = "When `GENERATE_INFOPLIST_FILE` is enabled, sets the value of the [CFBundleDisplayName](https://developer.apple.com/documentation/bundleresources/information_property_list/cfbundledisplayname) key in the `Info.plist` file to the value of this build setting.";
             },
             {
+                Name = INFOPLIST_KEY_ITSAppUsesNonExemptEncryption;
+                Type = Boolean;
+                Category = "Info.plist Values";
+                ConditionFlavors = (
+                    sdk,
+                );
+                DisplayName = "App Uses Non-Exempt Encryption";
+                Description = "When `GENERATE_INFOPLIST_FILE` is enabled, sets the value of the [ITSAppUsesNonExemptEncryption](https://developer.apple.com/documentation/bundleresources/information_property_list/itsappusesnonexemptencryption) key in the `Info.plist` file to the value of this build setting.";
+            },
+            {
+                Name = INFOPLIST_KEY_ITSEncryptionExportComplianceCode;
+                Type = String;
+                Category = "Info.plist Values";
+                ConditionFlavors = (
+                    sdk,
+                );
+                DisplayName = "App Encryption Export Compliance Code";
+                Description = "When `GENERATE_INFOPLIST_FILE` is enabled, sets the value of the [ITSEncryptionExportComplianceCode](https://developer.apple.com/documentation/bundleresources/information_property_list/itsencryptionexportcompliancecode) key in the `Info.plist` file to the value of this build setting.";
+            },
+            {
                 Name = INFOPLIST_KEY_LSApplicationCategoryType;
                 Type = Enumeration;
                 Values = (
@@ -4467,7 +4530,7 @@ When this setting is enabled:
             {
                 Name = "ENABLE_SDK_IMPORTS";
                 Type = Boolean;
-                DefaultValue = "$(ASSETCATALOG_COMPILER_SKIP_APP_STORE_DEPLOYMENT:not)";
+                DefaultValue = "NO";
             },
         );
     },

@@ -10,13 +10,15 @@
 //
 //===----------------------------------------------------------------------===//
 
+import Foundation
+
 extension Int {
     // FIXME: Figure out what the best API for this is. Having a more explicit (non-format string based) API is easier to make efficient, but it ends up taking so many arguments just to get the same flexibility.
     public func toString(format: String = "%d") -> String {
         return String(format: format, self)
     }
 
-    /// Returns a string form of the receiver as an adjective, e.g. 1st, 2nd, 3rd, 4th, <n>th.  This only makes grammatical sense for positive integers, but is supported for nonpositive integers for ease of use.
+    /// Returns a string form of the receiver as an adjective, e.g. 1st, 2nd, 3rd, 4th, <n>th.  This only makes grammatical sense for positive integers, but is supported for non-positive integers for ease of use.
     public var asOrdinal: String {
         let tensDigit = self / 10 % 10
         switch self % 10 {
@@ -38,7 +40,7 @@ extension UInt {
         return String(format: format, self)
     }
 
-    /// Returns a string form of the receiver as an adjective, e.g. 1st, 2nd, 3rd, 4th, <n>th.  This only makes grammatical sense for positive integers, but is supported for nonpositive integers for ease of use.
+    /// Returns a string form of the receiver as an adjective, e.g. 1st, 2nd, 3rd, 4th, <n>th.  This only makes grammatical sense for positive integers, but is supported for non-positive integers for ease of use.
     public var asOrdinal: String {
         let tensDigit = self / 10 % 10
         switch self % 10 {

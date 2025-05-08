@@ -963,7 +963,7 @@ public enum PIF {
         public var GCC_OPTIMIZATION_LEVEL: String?
         public var GCC_PREPROCESSOR_DEFINITIONS: [String]?
         public var GENERATE_EMBED_IN_CODE_ACCESSORS: String?
-        public var GENERATE_MASTER_OBJECT_FILE: String?
+        public var GENERATE_PRELINK_OBJECT_FILE: String?
         public var GENERATE_RESOURCE_ACCESSORS: String?
         public var HEADER_SEARCH_PATHS: [String]?
         public var INFOPLIST_FILE: String?
@@ -980,7 +980,9 @@ public enum PIF {
         public var IS_ZIPPERED: String?
         public var KEEP_PRIVATE_EXTERNS: String?
         public var LD_RUNPATH_SEARCH_PATHS: [String]?
+        public var LD_WARN_DUPLICATE_LIBRARIES: String?
         public var LIBRARY_SEARCH_PATHS: [String]?
+        public var LINKER_DRIVER: String?
         public var CLANG_COVERAGE_MAPPING_LINKER_ARGS: String?
         public var CURRENT_PROJECT_VERSION: String?
         public var MACH_O_TYPE: String?
@@ -1043,6 +1045,9 @@ public enum PIF {
         public var USE_HEADERMAP: String?
         public var USES_SWIFTPM_UNSAFE_FLAGS: String?
         public var WATCHOS_DEPLOYMENT_TARGET: String?
+
+        @available(*, deprecated, renamed: "GENERATE_PRELINK_OBJECT_FILE")
+        public var GENERATE_MASTER_OBJECT_FILE: String? // ignore-unacceptable-language
     }
 }
 

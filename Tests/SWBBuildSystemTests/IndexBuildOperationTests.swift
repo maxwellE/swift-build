@@ -22,6 +22,7 @@ import class SWBTaskConstruction.ProductPlan
 import SWBTestSupport
 import SWBTaskExecution
 import SWBUtil
+import SWBMacro
 
 @Suite
 fileprivate struct IndexBuildOperationTests: CoreBasedTests {
@@ -52,6 +53,7 @@ fileprivate struct IndexBuildOperationTests: CoreBasedTests {
                         targets: [
                             TestStandardTarget(
                                 "AppTarget",
+                                type: .application,
                                 buildConfigurations: [
                                     TestBuildConfiguration("Debug"),
                                 ],
@@ -95,7 +97,7 @@ fileprivate struct IndexBuildOperationTests: CoreBasedTests {
             let parameters = BuildParameters(action: .build, configuration: "Debug")
             let buildTargets = tester.workspace.allTargets.map{ BuildRequest.BuildTargetInfo(parameters: parameters, target: $0) }
             let request = BuildRequest(parameters: parameters, buildTargets: buildTargets, continueBuildingAfterErrors: true, useParallelTargets: true, useImplicitDependencies: false, useDryRun: false, buildCommand: .prepareForIndexing(buildOnlyTheseTargets: nil, enableIndexBuildArena: false))
-            try await tester.checkBuild(parameters: parameters, buildRequest: request, persistent: true) { results in
+            try await tester.checkBuild(parameters: parameters, runDestination: .macOS, buildRequest: request, persistent: true) { results in
                 results.consumeTasksMatchingRuleTypes(Self.excludedStartTaskTypes)
 
                 // Swift modules and core data code generation
@@ -164,7 +166,8 @@ fileprivate struct IndexBuildOperationTests: CoreBasedTests {
                 results.checkTask(.matchRule(["WriteAuxiliaryFile", "\(tmpDirPath.str)/Test/aProject/build/aProject.build/Debug/AppTarget.build/AppTarget.DependencyStaticMetadataFileList"])) { _ in }
                 results.checkTask(.matchRule(["WriteAuxiliaryFile", "\(tmpDirPath.str)/Test/aProject/build/aProject.build/Debug/FwkTarget.build/FwkTarget.DependencyStaticMetadataFileList"])) { _ in }
 
-                if try await supportsSDKImports {
+                let sdkImportsEnabled = results.buildRequestContext.getCachedSettings(parameters, target: try #require(buildTargets.first).target).globalScope.evaluate(BuiltinMacros.ENABLE_SDK_IMPORTS)
+                if try await supportsSDKImports, sdkImportsEnabled {
                     // SDK imports create a resource file, but since we don't actually link here, we're not producing it.
                     results.checkTask(.matchRule(["MkDir", "\(tmpDirPath.str)/Test/aProject/build/Debug/FwkTarget.framework/Versions/A/Resources"])) { _ in }
                     results.checkTask(.matchRule(["SymLink", "\(tmpDirPath.str)/Test/aProject/build/Debug/FwkTarget.framework/Resources", "Versions/Current/Resources"])) { _ in }
@@ -252,7 +255,7 @@ fileprivate struct IndexBuildOperationTests: CoreBasedTests {
             let parameters = BuildParameters(action: .build, configuration: "Debug")
             let buildTargets = tester.workspace.allTargets.map{ BuildRequest.BuildTargetInfo(parameters: parameters, target: $0) }
             let request = BuildRequest(parameters: parameters, buildTargets: buildTargets, continueBuildingAfterErrors: false, useParallelTargets: true, useImplicitDependencies: false, useDryRun: false, buildCommand: .prepareForIndexing(buildOnlyTheseTargets: nil, enableIndexBuildArena: false))
-            try await tester.checkBuild(parameters: parameters, buildRequest: request, persistent: true) { results in
+            try await tester.checkBuild(parameters: parameters, runDestination: .macOS, buildRequest: request, persistent: true) { results in
                 results.check(contains: .buildCompleted)
             }
         }
@@ -263,6 +266,7 @@ fileprivate struct IndexBuildOperationTests: CoreBasedTests {
         try await withTemporaryDirectory { tmpDirPath in
             let appTarget = TestStandardTarget(
                 "AppTarget",
+                type: .application,
                 buildConfigurations: [
                     TestBuildConfiguration("Debug"),
                 ],
@@ -460,6 +464,7 @@ fileprivate struct IndexBuildOperationTests: CoreBasedTests {
         try await withTemporaryDirectory { tmpDirPath in
             let appTarget = TestStandardTarget(
                 "AppTarget",
+                type: .application,
                 buildConfigurations: [
                     TestBuildConfiguration("Debug", buildSettings: [
                         "SDKROOT": "iphonesimulator",
@@ -543,6 +548,7 @@ fileprivate struct IndexBuildOperationTests: CoreBasedTests {
         try await withTemporaryDirectory { tmpDirPath in
             let appTarget = TestStandardTarget(
                 "AppTarget",
+                type: .application,
                 buildConfigurations: [
                     TestBuildConfiguration("Debug")
                 ],
@@ -640,6 +646,7 @@ fileprivate struct IndexBuildOperationTests: CoreBasedTests {
 
             let macAppTarget = TestStandardTarget(
                 "macAppTarget",
+                type: .application,
                 buildConfigurations: [
                     TestBuildConfiguration("Debug", buildSettings: [
                         "SDKROOT": "macosx",
@@ -658,6 +665,7 @@ fileprivate struct IndexBuildOperationTests: CoreBasedTests {
 
             let iosAppTarget = TestStandardTarget(
                 "iOSAppTarget",
+                type: .application,
                 buildConfigurations: [
                     TestBuildConfiguration("Debug", buildSettings: [
                         "SDKROOT": "iphonesimulator",
@@ -760,6 +768,7 @@ fileprivate struct IndexBuildOperationTests: CoreBasedTests {
         try await withTemporaryDirectory { tmpDirPath async throws -> Void in
             let appTarget1 = TestStandardTarget(
                 "AppTarget1",
+                type: .application,
                 buildConfigurations: [
                     TestBuildConfiguration("Debug", buildSettings: [
                         "SDKROOT": "macosx",
@@ -781,6 +790,7 @@ fileprivate struct IndexBuildOperationTests: CoreBasedTests {
 
             let appTarget2 = TestStandardTarget(
                 "AppTarget2",
+                type: .application,
                 buildConfigurations: [
                     TestBuildConfiguration("Debug", buildSettings: [
                         "SDKROOT": "macosx",
@@ -1168,6 +1178,7 @@ fileprivate struct IndexBuildOperationTests: CoreBasedTests {
         try await withTemporaryDirectory { tmpDirPath async throws -> Void in
             let conflictTarget1 = TestStandardTarget(
                 "conflictApp",
+                type: .application,
                 buildConfigurations: [
                     TestBuildConfiguration("Debug", buildSettings: [
                         "SDKROOT": "macosx",
@@ -1183,6 +1194,7 @@ fileprivate struct IndexBuildOperationTests: CoreBasedTests {
 
             let conflictTarget2 = TestStandardTarget(
                 "conflictApp",
+                type: .application,
                 buildConfigurations: [
                     TestBuildConfiguration("Debug", buildSettings: [
                         "SDKROOT": "macosx",
@@ -1480,7 +1492,7 @@ fileprivate struct IndexBuildOperationTests: CoreBasedTests {
 
             try await checkBuild(macosFramework, .macOS, discriminator: "macos", matchingTarget: macosFramework)
             try await checkBuild(iosFramework, .iOS, discriminator: "iphoneos", matchingTarget: iosFramework)
-            // No run destination match, macos because it's lexographically-first
+            // No run destination match, macos because it's lexicographically-first
             try await checkBuild(macosFramework, .watchOS, discriminator: "macos", matchingTarget: macosFramework)
             try await checkBuild(iosFramework, .watchOS, discriminator: "macos", matchingTarget: macosFramework)
         }
@@ -1686,7 +1698,7 @@ fileprivate struct IndexBuildOperationTests: CoreBasedTests {
 
             let buildRequest = BuildRequest(parameters: BuildParameters(action: .indexBuild, configuration: nil, arena: arena), buildTargets: [], continueBuildingAfterErrors: true, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false, buildCommand: .cleanBuildFolder(style: .regular))
 
-            try await tester.checkBuild(buildRequest: buildRequest, persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, buildRequest: buildRequest, persistent: true) { results in
                 #expect(!tester.fs.exists(arena.buildProductsPath))
             }
         }

@@ -80,7 +80,7 @@ fileprivate func xSecCodePathIsSigned(_ path: Path) throws -> Bool {
 
 // FIXME: Move this fully to Swift Concurrency and execute the process via llbuild after PbxCp is fully converted to Swift
 /// Spawns a process and waits for it to finish, closing stdin and redirecting stdout and stderr to fdout. Failure to launch, non-zero exit code, or exit with a signal will throw an error.
-fileprivate func spawnTaskAndWait(_ launchPath: Path, _ arguments: [String]?, _ environment: [String: String]?, _ workingDirPath: String?, _ dryRun: Bool, _ stream: OutputByteStream) async throws {
+fileprivate func spawnTaskAndWait(_ launchPath: Path, _ arguments: [String]?, _ environment: Environment?, _ workingDirPath: String?, _ dryRun: Bool, _ stream: OutputByteStream) async throws {
     stream <<< launchPath.str
     for arg in arguments ?? [] {
         stream <<< " \(arg)"
@@ -97,7 +97,7 @@ fileprivate func spawnTaskAndWait(_ launchPath: Path, _ arguments: [String]?, _ 
     stream <<< "\(String(decoding: output, as: UTF8.self))"
 
     if !exitStatus.isSuccess {
-        throw RunProcessNonZeroExitError(args: [launchPath.str] + (arguments ?? []), workingDirectory: workingDirPath, environment: environment ?? [:], status: exitStatus, mergedOutput: ByteString(output))
+        throw RunProcessNonZeroExitError(args: [launchPath.str] + (arguments ?? []), workingDirectory: workingDirPath, environment: environment ?? .init(), status: exitStatus, mergedOutput: ByteString(output))
     }
 }
 
@@ -315,7 +315,7 @@ func _copyFile(_ srcPath: Path, _ dstPath: Path) throws {
                     }
                     var bwritten: Int = 0
                     repeat {
-                        let rebased = UnsafeRawBufferPointer(rebasing: tmpBuffer[bwritten ..< (bread - bwritten)])
+                        let rebased = UnsafeRawBufferPointer(rebasing: tmpBuffer[bwritten..<bread])
                         bwritten += try dstFd.write(rebased)
                     } while (bread > bwritten)
                 }
@@ -440,7 +440,7 @@ fileprivate func copyTree(_ srcPath: Path, _ dstPath: Path, options: CopyOptions
         }
         do {
             _dstPath = try localFS.realpath(dstPath)
-         } catch let error as POSIXError {
+        } catch let error as POSIXError {
             outStream <<< "error: \(dstPath.str): \(String(cString: strerror(error.code)))\n"
             return false
         } catch {
@@ -569,9 +569,8 @@ public func pbxcp(_ argv: [String], cwd: Path) async -> (success: Bool, output: 
     }
 
     if let bitcodeStripFlag = options.bitcodeStripFlag {
-        if bitcodeStripFlag == "replace-with-marker" {
-            options.bitcodeStripFlag = "-m"
-        } else if bitcodeStripFlag == "all" {
+        // Always strip all bitcode if we were passed a valid option.
+        if bitcodeStripFlag == "replace-with-marker" || bitcodeStripFlag == "all" {
             options.bitcodeStripFlag = "-r"
         } else {
             return (false, CopyOptions.helpMessage())
@@ -613,7 +612,7 @@ public func pbxcp(_ argv: [String], cwd: Path) async -> (success: Bool, output: 
             }
         }
 
-        // Do some sanity-checking.
+        // Do some correctness-checking.
         if srcPath.isRoot {
             outStream <<< "error: Invalid source path: '\(srcPath.str)'\n"
             return (false, outStream.bytes.asString)

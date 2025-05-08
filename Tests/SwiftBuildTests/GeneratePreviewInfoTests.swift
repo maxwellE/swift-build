@@ -50,6 +50,10 @@ fileprivate struct GeneratePreviewInfoTests: CoreBasedTests {
                                 "CLANG_ENABLE_MODULES": "YES",
                                 "SWIFT_OPTIMIZATION_LEVEL": "-Onone",
                                 "SDK_STAT_CACHE_ENABLE": "NO",
+                                "SWIFT_ENABLE_EXPLICIT_MODULES": "NO",
+                                "_EXPERIMENTAL_SWIFT_EXPLICIT_MODULES": "NO",
+                                // Test that we strip the flag
+                                "SWIFT_EMIT_LOC_STRINGS": "YES",
                                 "SWIFT_VALIDATE_CLANG_MODULES_ONCE_PER_BUILD_SESSION": "NO",
                             ].merging(overrides, uniquingKeysWith: { _, new in new }))
                     ],
@@ -160,8 +164,6 @@ fileprivate struct GeneratePreviewInfoTests: CoreBasedTests {
                         .anySequence,
                         "-Onone",
                         .anySequence,
-                        "-disable-modules-validate-system-headers",
-                        .anySequence,
                         "-module-name", "App",
                         "-target-sdk-version", "\(deploymentTarget)",
                         "-target-sdk-name", "iphoneos\(deploymentTarget)",
@@ -177,6 +179,8 @@ fileprivate struct GeneratePreviewInfoTests: CoreBasedTests {
                         "-emit-dependencies",
                         "-emit-module",
                         "-emit-objc-header",
+                        "-emit-localized-strings",
+                        "-emit-localized-strings-path",
                         "-explicit-module-build",
                         "-output-file-map",
                         "-index-store-path",
@@ -196,7 +200,7 @@ fileprivate struct GeneratePreviewInfoTests: CoreBasedTests {
                     })
 
                     let info = try await testSession.session.generatePreviewTargetDependencyInfo(for: request, targetIDs: [appTarget.guid], delegate: delegate)
-                    #expect(try await info == [
+                    #expect(info == [
                         SWBPreviewTargetDependencyInfo(
                             sdkRoot: "iphoneos\(sdkVersion)",
                             sdkVariant: "iphoneos",
@@ -247,17 +251,10 @@ fileprivate struct GeneratePreviewInfoTests: CoreBasedTests {
                                 "_main",
                                 "-Xlinker",
                                 "___debug_main_executable_dylib_entry_point",
-                            ] + (supportsSDKImports ? [
-                                "-Xlinker",
-                                "-sdk_imports",
-                                "-Xlinker",
-                                "\(tmpDir.str)/Test/build/Test.build/Debug-iphoneos/App.build/Objects-normal/\(activeRunDestination.targetArchitecture)/App_normal_\(activeRunDestination.targetArchitecture)_sdk_imports.json",
-                                "-Xlinker",
-                                "-sdk_imports_each_object",
-                            ] : []) + [
                                 "-o",
                                 "\(tmpDir.str)/Test/build/Debug-iphoneos/App.app/App.debug.dylib"
                             ],
+                            linkerWorkingDirectory: "\(tmpDir.str)/Test",
                             swiftEnableOpaqueTypeErasure: false,
                             swiftUseIntegratedDriver: true,
                             enableJITPreviews: true,
@@ -402,6 +399,7 @@ fileprivate struct GeneratePreviewInfoTests: CoreBasedTests {
                                 "-o",
                                 "\(tmpDir.str)/Test/build/Debug-iphoneos/libStaticLib.a"
                             ],
+                            linkerWorkingDirectory: "\(tmpDir.str)/Test",
                             swiftEnableOpaqueTypeErasure: false,
                             swiftUseIntegratedDriver: true,
                             enableJITPreviews: true,
@@ -524,17 +522,10 @@ fileprivate struct GeneratePreviewInfoTests: CoreBasedTests {
                                 "-Xlinker", "-object_path_lto", "-Xlinker", "\(tmpDir.str)/Test/build/Test.build/Debug-iphoneos/CApplication.build/Objects-normal/arm64/CApplication_lto.o",
                                 "-Xlinker", "-dependency_info",
                                 "-Xlinker", "\(tmpDir.str)/Test/build/Test.build/Debug-iphoneos/CApplication.build/Objects-normal/arm64/CApplication_dependency_info.dat",
-                            ] + (supportsSDKImports ? [
-                                "-Xlinker",
-                                "-sdk_imports",
-                                "-Xlinker",
-                                "\(tmpDir.str)/Test/build/Test.build/Debug-iphoneos/CApplication.build/Objects-normal/\(activeRunDestination.targetArchitecture)/CApplication_normal_\(activeRunDestination.targetArchitecture)_sdk_imports.json",
-                                "-Xlinker",
-                                "-sdk_imports_each_object",
-                            ] : []) + [
                                 "-o",
                                 "\(tmpDir.str)/Test/build/Debug-iphoneos/CApplication.app/CApplication"
                             ],
+                            linkerWorkingDirectory: "\(tmpDir.str)/Test",
                             swiftEnableOpaqueTypeErasure: false,
                             swiftUseIntegratedDriver: true,
                             enableJITPreviews: false,

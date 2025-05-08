@@ -47,6 +47,7 @@ fileprivate struct BuildPhaseFusionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         "AppTarget",
+                        type: .application,
                         buildPhases: [
                             TestSourcesBuildPhase(["SourceFile.swift"]),
                             TestShellScriptBuildPhase(name: "Scripty McScriptface", originalObjectID: "", outputs: ["/foo/foo.txt"]),
@@ -56,7 +57,7 @@ fileprivate struct BuildPhaseFusionTests: CoreBasedTests {
                 ])
             let tester = try await TaskConstructionTester(getCore(), testProject)
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug")) { results -> Void in
+            await tester.checkBuild(runDestination: .macOS) { results -> Void in
                 results.checkNoDiagnostics()
                 results.checkTarget("AppTarget") { target -> Void in
                     results.checkTask(.matchRuleType("SwiftDriver Compilation")) { task in
@@ -100,6 +101,7 @@ fileprivate struct BuildPhaseFusionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         "AppTarget",
+                        type: .application,
                         buildPhases: [
                             TestSourcesBuildPhase(["SourceFile.c"]),
                             TestResourcesBuildPhase(["Image.png"]),
@@ -108,7 +110,7 @@ fileprivate struct BuildPhaseFusionTests: CoreBasedTests {
                 ])
             let tester = try await TaskConstructionTester(getCore(), testProject)
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug")) { results -> Void in
+            await tester.checkBuild(runDestination: .macOS) { results -> Void in
                 results.checkNoDiagnostics()
                 results.checkTarget("AppTarget") { target -> Void in
                     // The compile and copy tasks shouldn't be ordered with respect to each other.
@@ -154,6 +156,7 @@ fileprivate struct BuildPhaseFusionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         "AppTarget",
+                        type: .application,
                         buildPhases: [
                             TestSourcesBuildPhase(["SourceFile.c"]),
                             TestShellScriptBuildPhase(name: "Bad Script", originalObjectID: "A", contents: "", inputs: [], outputs: [], alwaysOutOfDate: true),
@@ -163,7 +166,7 @@ fileprivate struct BuildPhaseFusionTests: CoreBasedTests {
                 ])
             let tester = try await TaskConstructionTester(getCore(), testProject)
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug")) { results -> Void in
+            await tester.checkBuild(runDestination: .macOS) { results -> Void in
                 results.checkNoDiagnostics()
                 results.checkTarget("AppTarget") { target -> Void in
                     results.checkTask(.matchRuleType("PhaseScriptExecution")) { task in
@@ -209,6 +212,7 @@ fileprivate struct BuildPhaseFusionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         "AppTarget",
+                        type: .application,
                         buildPhases: [
                             TestSourcesBuildPhase(["SourceFile.c"]),
                             TestShellScriptBuildPhase(name: "S1", originalObjectID: "S1", contents: "", inputs: [], outputs: ["foo"], alwaysOutOfDate: false),
@@ -224,7 +228,7 @@ fileprivate struct BuildPhaseFusionTests: CoreBasedTests {
                 ])
             let tester = try await TaskConstructionTester(getCore(), testProject)
 
-            await tester.checkBuild(BuildParameters(configuration: "Enabled")) { results -> Void in
+            await tester.checkBuild(BuildParameters(configuration: "Enabled"), runDestination: .macOS) { results -> Void in
                 results.checkWarning("Run script build phase 'S7' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking \"Based on dependency analysis\" in the script phase. (in target 'AppTarget' from project 'aProject')")
                 results.checkNoDiagnostics()
                 results.checkTarget("AppTarget") { target -> Void in
@@ -259,7 +263,7 @@ fileprivate struct BuildPhaseFusionTests: CoreBasedTests {
                 }
             }
 
-            await tester.checkBuild(BuildParameters(configuration: "Disabled")) { results -> Void in
+            await tester.checkBuild(BuildParameters(configuration: "Disabled"), runDestination: .macOS) { results -> Void in
                 results.checkWarning("Run script build phase 'S7' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking \"Based on dependency analysis\" in the script phase. (in target 'AppTarget' from project 'aProject')")
                 results.checkNoDiagnostics()
                 results.checkTarget("AppTarget") { target -> Void in
@@ -320,6 +324,7 @@ fileprivate struct BuildPhaseFusionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         "AppTarget",
+                        type: .application,
                         buildPhases: [
                             TestSourcesBuildPhase(["SourceFile.c"]),
                             TestCopyFilesBuildPhase(["f1.txt"], destinationSubfolder: .resources, onlyForDeployment: false),
@@ -332,7 +337,7 @@ fileprivate struct BuildPhaseFusionTests: CoreBasedTests {
                 ])
             let tester = try await TaskConstructionTester(getCore(), testProject)
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug")) { results -> Void in
+            await tester.checkBuild(runDestination: .macOS) { results -> Void in
                 results.checkNoDiagnostics()
                 results.checkTarget("AppTarget") { target -> Void in
                     results.checkTask(.matchRuleType("Copy"), .matchRuleItemBasename("f1.txt")) { task in
@@ -382,6 +387,7 @@ fileprivate struct BuildPhaseFusionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         "AppTarget",
+                        type: .application,
                         buildPhases: [
                             TestSourcesBuildPhase(["SourceFile.c"]),
                             TestResourcesBuildPhase(["Image.png"]),
@@ -390,7 +396,7 @@ fileprivate struct BuildPhaseFusionTests: CoreBasedTests {
                 ])
             let tester = try await TaskConstructionTester(getCore(), testProject)
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug")) { results -> Void in
+            await tester.checkBuild(runDestination: .macOS) { results -> Void in
                 results.checkNoDiagnostics()
                 results.checkTarget("AppTarget") { target -> Void in
                     results.checkTask(.matchRuleType("CopyPNGFile")) { task in
@@ -433,7 +439,7 @@ fileprivate struct BuildPhaseFusionTests: CoreBasedTests {
                 ])
 
             // The header copy should be moved before compile, and should not depend on target-entry.
-            try await TaskConstructionTester(getCore(), testWorkspace).checkBuild() { results in
+            try await TaskConstructionTester(getCore(), testWorkspace).checkBuild(runDestination: .macOS) { results in
                 results.checkNoDiagnostics()
                 results.checkTask(.matchTargetName("CoreFoo"), .matchRuleType("CpHeader")) { headerTask in
                     headerTask.checkInputs([
@@ -482,7 +488,7 @@ fileprivate struct BuildPhaseFusionTests: CoreBasedTests {
                 ])
 
             // The header copy should not be relocated.
-            try await TaskConstructionTester(getCore(), testWorkspace).checkBuild() { results in
+            try await TaskConstructionTester(getCore(), testWorkspace).checkBuild(runDestination: .macOS) { results in
                 results.checkNoDiagnostics()
                 results.checkTask(.matchTargetName("CoreFoo"), .matchRuleType("CpHeader"), .matchRulePattern([.contains("CoreBar.h")])) { headerTask in
                     results.checkTaskFollows(headerTask, .matchTargetName("CoreFoo"), .matchRuleType("CompileC"))
@@ -527,7 +533,7 @@ fileprivate struct BuildPhaseFusionTests: CoreBasedTests {
                 ])
 
             // The header copy should be moved before compile, and should not depend on target-entry.
-            try await TaskConstructionTester(getCore(), testWorkspace).checkBuild() { results in
+            try await TaskConstructionTester(getCore(), testWorkspace).checkBuild(runDestination: .macOS) { results in
                 results.checkNoDiagnostics()
                 results.checkTask(.matchTargetName("CoreFoo"), .matchRuleType("CpHeader"), .matchRulePattern([.contains("CoreFoo.h")])) { headerTask in
                     headerTask.checkInputs([
@@ -576,7 +582,7 @@ fileprivate struct BuildPhaseFusionTests: CoreBasedTests {
                 ])
 
             // The header copy should not be relocated.
-            try await TaskConstructionTester(getCore(), testWorkspace).checkBuild() { results in
+            try await TaskConstructionTester(getCore(), testWorkspace).checkBuild(runDestination: .macOS) { results in
                 results.checkWarning("tasks in 'Copy Headers' are delayed by unsandboxed script phases; set ENABLE_USER_SCRIPT_SANDBOXING=YES to enable sandboxing (in target 'CoreFoo' from project 'aProject')")
                 results.checkNoDiagnostics()
                 results.checkTask(.matchTargetName("CoreFoo"), .matchRuleType("CpHeader"), .matchRulePattern([.contains("CoreBar.h")])) { headerTask in

@@ -159,6 +159,14 @@ extension CoreBasedTests {
         }
     }
 
+    /// The path to llvm-cas in the default toolchain.
+    package var llvmCasToolPath: Path {
+        get async throws {
+            let (core, defaultToolchain) = try await coreAndToolchain()
+            return try #require(defaultToolchain.executableSearchPaths.findExecutable(operatingSystem: core.hostOperatingSystem, basename: "llvm-cas"), "couldn't find llvm-cas in default toolchain")
+        }
+    }
+
     /// The path to the TAPI tool in the default toolchain.
     package var tapiToolPath: Path {
         get async throws {
@@ -183,13 +191,13 @@ extension CoreBasedTests {
 
     package var actoolPath: Path {
         get async throws {
-            try await getCore().developerPath.join("usr/bin/actool")
+            try await getCore().developerPath.path.join("usr/bin/actool")
         }
     }
 
     package var ibtoolPath: Path {
         get async throws {
-            try await getCore().developerPath.join("usr/bin/ibtool")
+            try await getCore().developerPath.path.join("usr/bin/ibtool")
         }
     }
 
@@ -220,7 +228,9 @@ extension CoreBasedTests {
         get async throws {
             let (core, defaultToolchain) = try await coreAndToolchain()
             let fallbacklibtool = Path("/usr/bin/libtool")
-            return try #require(defaultToolchain.executableSearchPaths.findExecutable(operatingSystem: core.hostOperatingSystem, basename: "libtool") ?? (localFS.exists(fallbacklibtool) ? fallbacklibtool : nil), "couldn't find libtool in default toolchain")
+            return try #require(defaultToolchain.executableSearchPaths.findExecutable(operatingSystem: core.hostOperatingSystem, basename: "libtool")
+                                ?? defaultToolchain.executableSearchPaths.findExecutable(operatingSystem: core.hostOperatingSystem, basename: "llvm-ar")
+                                ?? (localFS.exists(fallbacklibtool) ? fallbacklibtool : nil), "couldn't find libtool in default toolchain")
         }
     }
 
@@ -253,6 +263,72 @@ extension CoreBasedTests {
             return false
             #endif
         }
+    }
+
+    // Linkers
+    package var ldPath: Path? {
+        get async throws {
+            let (core, defaultToolchain) = try await coreAndToolchain()
+            if let executable = defaultToolchain.executableSearchPaths.findExecutable(operatingSystem: core.hostOperatingSystem, basename: "ld") {
+                return executable
+            }
+            for platform in core.platformRegistry.platforms {
+                if let executable = platform.executableSearchPaths.findExecutable(operatingSystem: core.hostOperatingSystem, basename: "ld") {
+                    return executable
+                }
+            }
+            return nil
+        }
+    }
+    package var lldPath: Path? {
+        get async throws {
+            let (core, defaultToolchain) = try await coreAndToolchain()
+            if let executable = defaultToolchain.executableSearchPaths.findExecutable(operatingSystem: core.hostOperatingSystem, basename: "ld.lld") {
+                return executable
+            }
+            for platform in core.platformRegistry.platforms {
+                if let executable = platform.executableSearchPaths.findExecutable(operatingSystem: core.hostOperatingSystem, basename: "ld.lld") {
+                    return executable
+                }
+            }
+            return nil
+        }
+    }
+    package var goldPath: Path? {
+        get async throws {
+            let (core, defaultToolchain) = try await coreAndToolchain()
+            if let executable = defaultToolchain.executableSearchPaths.findExecutable(operatingSystem: core.hostOperatingSystem, basename: "ld.gold") {
+                return executable
+            }
+            for platform in core.platformRegistry.platforms {
+                if let executable = platform.executableSearchPaths.findExecutable(operatingSystem: core.hostOperatingSystem, basename: "ld.gold") {
+                    return executable
+                }
+            }
+            return nil
+        }
+    }
+    package func linkPath(_ targetArchitecture: String) async throws -> Path? {
+        let (core, defaultToolchain) = try await self.coreAndToolchain()
+        let prefixMapping =  ["aarch64" : "arm64", "arm64ec" : "arm64", "armv7" : "arm", "x86_64": "x64", "i686": "x86"]
+
+        guard let prefix = prefixMapping[targetArchitecture] else {
+            return nil
+        }
+        let linkerPath = Path(prefix).join("link").str
+        if core.hostOperatingSystem != .windows {
+            // Most unixes have a link executable, but that is not a linker
+            return nil
+        }
+        if let executable = defaultToolchain.executableSearchPaths.findExecutable(operatingSystem: core.hostOperatingSystem, basename: linkerPath) {
+            return executable
+        }
+        for platform in core.platformRegistry.platforms {
+            if let executable = platform.executableSearchPaths.findExecutable(operatingSystem: core.hostOperatingSystem, basename: linkerPath) {
+                return executable
+            }
+        }
+        return nil
     }
 }
 

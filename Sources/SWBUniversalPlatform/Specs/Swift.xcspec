@@ -426,8 +426,16 @@
                 Type = PathList;
                 "FlattenRecursiveSearchPathsInValue" = Yes;
                 Category = "Search Paths";
-                DisplayName = "Import Paths";
+                DisplayName = "Module Import Paths";
                 Description = "A list of paths to be searched by the Swift compiler for additional Swift modules.";
+            },
+            {
+                Name = "SWIFT_SYSTEM_INCLUDE_PATHS";
+                Type = PathList;
+                "FlattenRecursiveSearchPathsInValue" = Yes;
+                Category = "Search Paths";
+                DisplayName = "System Module Import Paths";
+                Description = "A list of paths to be searched by the Swift compiler for additional system Swift modules. Warnings found in system modules will not be emitted.";
             },
             {
                 Name = "FRAMEWORK_SEARCH_PATHS";
@@ -560,6 +568,34 @@
                 DisplayName = "Strict Concurrency Checking";
                 Category = "Upcoming Features";
                 Description = "Enables strict concurrency checking to produce warnings for possible data races. This is always 'complete' when in the Swift 6 language mode and produces errors instead of warnings.";
+            },
+            {
+                Name = "SWIFT_DEFAULT_ACTOR_ISOLATION";
+                Type = Enumeration;
+                Values = (
+                    nonisolated,
+                    MainActor
+                );
+                DefaultValue = "nonisolated";
+                CommandLineArgs = {
+                    nonisolated = ();
+                    MainActor = ( "-default-isolation=MainActor" );
+                };
+                DisplayName = "Default Actor Isolation";
+                Category = "Language";
+                Description = "Controls default actor isolation for unannotated code. When set to 'MainActor', `@MainActor` isolation will be inferred by default to mitigate false-positive data-race safety errors in sequential code.";
+            },
+            {
+                Name = "SWIFT_STRICT_MEMORY_SAFETY";
+                Type = Boolean;
+                DefaultValue = "NO";
+                CommandLineArgs = {
+                    YES = ( "-strict-memory-safety" );
+                    NO = ();
+                };
+                DisplayName = "Strict Memory Safety";
+                Category = "Language";
+                Description = "Enable strict memory safety checking. This will produce warnings for each use of an unsafe language construct or API that isn't acknowledged with `unsafe` or `@unsafe`.";
             },
 
             {
@@ -759,15 +795,53 @@
 
             {
                 Name = "SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY";
-                Type = Boolean;
-                DefaultValue = NO;
+                Type = Enumeration;
+                Values = (
+                    Yes,
+                    Migrate,
+                    No,
+                );
+                DefaultValue = No;
                 CommandLineArgs = {
-                    YES = ( "-enable-upcoming-feature", "ExistentialAny" );
-                    NO  = ();
+                    Yes = ( "-enable-upcoming-feature", "ExistentialAny" );
+                    Migrate = ( "-enable-upcoming-feature", "ExistentialAny:migrate" );
+                    No  = ();
                 };
                 DisplayName = "Require Existential any";
                 Category = "Upcoming Features";
                 Description = "Changes existential types to require explicit annotation with the `any` keyword.";
+            },
+
+            {
+                Name = "SWIFT_UPCOMING_FEATURE_INFER_ISOLATED_CONFORMANCES";
+                Type = Boolean;
+                DefaultValue = NO;
+                CommandLineArgs = {
+                    YES = ( "-enable-upcoming-feature", "InferIsolatedConformances" );
+                    NO  = ();
+                };
+                DisplayName = "Infer Isolated Conformances";
+                Category = "Upcoming Features";
+                Description = "Infer conformances of global-actor isolated types as isolated to the same actor unless isolation is explicitly specified as `nonisolated`.";
+            },
+
+            {
+                Name = "SWIFT_UPCOMING_FEATURE_NONISOLATED_NONSENDING_BY_DEFAULT";
+                Type = Enumeration;
+                Values = (
+                    Yes,
+                    Migrate,
+                    No,
+                );
+                DefaultValue = No;
+                CommandLineArgs = {
+                    Yes = ( "-enable-upcoming-feature", "NonisolatedNonsendingByDefault" );
+                    Migrate = ( "-enable-upcoming-feature", "NonisolatedNonsendingByDefault:migrate" );
+                    No  = ();
+                };
+                DisplayName = "nonisolated(nonsending) By Default";
+                Category = "Upcoming Features";
+                Description = "Runs nonisolated async functions on the caller's actor by default unless the function is explicitly marked `@concurrent`.";
             },
 
             // Experimental features
@@ -899,7 +973,7 @@
                 DefaultValue = YES;
             },
             {
-                Name = "_EXPERIMENTAL_SWIFT_EXPLICIT_MODULES";
+                Name = "SWIFT_ENABLE_EXPLICIT_MODULES";
                 Type = Enumeration;
                 Values = (
                     YES,
@@ -908,6 +982,11 @@
                 DisplayName = "Explicitly Built Modules";
                 Category = "General";
                 Description = "Coordinates the build of the main module's modular dependencies via explicit tasks scheduled by the build system.";
+            },
+            {
+                Name = "SWIFT_ENABLE_COMPILE_CACHE";
+                Type = Boolean;
+                DefaultValue = "$(COMPILATION_CACHE_ENABLE_CACHING)";
             },
             {
                 Name = "SWIFT_GENERATE_ADDITIONAL_LINKER_ARGS";
@@ -954,7 +1033,7 @@
                 // that the ObjC runtime must be linked in (with possible
                 // backwards compatibility libraries linked in).
                 AdditionalLinkerArgs = {
-                    YES = ( "-fobjc-link-runtime" );
+                    YES = ( "$(LD_OBJC_RUNTIME_ARGS)" );
                     NO = ();
                 };
             },
@@ -1008,28 +1087,6 @@
                 };
                 Category = "General";
                 DisplayName = "Reflection Metadata Level";
-            },
-
-            // Generate bitcode options
-            {
-                Name = "SWIFT_BITCODE_GENERATION_MODE";
-                Type = Enumeration;
-                Values = (
-                    marker,
-                    bitcode,
-                );
-                DefaultValue = "$(BITCODE_GENERATION_MODE)";
-                Architectures = ( arm64, arm64e, armv7, armv7s, armv7k, arm64_32 );
-                Condition = "$(ENABLE_BITCODE)";
-                CommandLineArgs = {
-                    marker = (
-                        "-embed-bitcode-marker",
-                    );
-                    bitcode = (
-                        "-embed-bitcode",
-                    );
-                };
-                // Not visible in the build settings editor
             },
 
             // Fuzzer option.

@@ -18,6 +18,7 @@ import SWBCore
 import SWBTestSupport
 import SWBTaskExecution
 import SWBUtil
+import SWBProtocol
 
 @Suite
 fileprivate struct XCFrameworkBuildOperationTests: CoreBasedTests {
@@ -296,20 +297,20 @@ fileprivate struct XCFrameworkBuildOperationTests: CoreBasedTests {
             }
 
             // Check a normal build.
-            try await tester.checkBuild(parameters: parameters, persistent: true, signableTargets: signableTargets, signableTargetInputs: signableTargetInputs) { results in
+            try await tester.checkBuild(parameters: parameters, runDestination: .macOS, persistent: true, signableTargets: signableTargets, signableTargetInputs: signableTargetInputs) { results in
                 try validateBuild(results)
             }
 
             // Clean out the build folder.
-            try await tester.checkBuild(parameters: parameters, buildCommand: .cleanBuildFolder(style: .regular)) { _ in }
+            try await tester.checkBuild(parameters: parameters, runDestination: .macOS, buildCommand: .cleanBuildFolder(style: .regular)) { _ in }
 
             // Check a test build.
-            try await tester.checkBuild(parameters: parameters, schemeCommand: .test, persistent: true, signableTargets: signableTargets, signableTargetInputs: signableTargetInputs) { results in
+            try await tester.checkBuild(parameters: parameters, runDestination: .macOS, schemeCommand: .test, persistent: true, signableTargets: signableTargets, signableTargetInputs: signableTargetInputs) { results in
                 try validateBuild(results)
             }
 
             // Clean out the build folder.
-            try await tester.checkBuild(parameters: parameters, buildCommand: .cleanBuildFolder(style: .regular)) { _ in }
+            try await tester.checkBuild(parameters: parameters, runDestination: .macOS, buildCommand: .cleanBuildFolder(style: .regular)) { _ in }
 
             // Check building a package.
             let relevantTargets = tester.workspace.allTargets.filter { ["F4", "F5", "F6", "F7", "F8"].contains($0.name) }
@@ -317,7 +318,7 @@ fileprivate struct XCFrameworkBuildOperationTests: CoreBasedTests {
                                        buildTargets: relevantTargets.map { BuildRequest.BuildTargetInfo(parameters: parameters, target: $0) },
                                        continueBuildingAfterErrors: false, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
 
-            try await tester.checkBuild(parameters: parameters, buildRequest: request, persistent: true, signableTargets: signableTargets, signableTargetInputs: signableTargetInputs) { results in
+            try await tester.checkBuild(parameters: parameters, runDestination: .macOS, buildRequest: request, persistent: true, signableTargets: signableTargets, signableTargetInputs: signableTargetInputs) { results in
                 let basePath = Path(pkgBuildDirectory).join("Debug").join(frameworkName)
 
                 results.checkTask(.matchRule(["ProcessXCFramework", "\(testWorkspace.sourceRoot.str)/aPackageProject/Sources/sample.xcframework", basePath.str, "macos"])) { _ in }
@@ -399,7 +400,7 @@ fileprivate struct XCFrameworkBuildOperationTests: CoreBasedTests {
             }
 
             // Clean out the build folder.
-            try await tester.checkBuild(parameters: parameters, buildCommand: .cleanBuildFolder(style: .regular)) { _ in }
+            try await tester.checkBuild(parameters: parameters, runDestination: .macOS, buildCommand: .cleanBuildFolder(style: .regular)) { _ in }
 
             // Check building a package product only
             let packageProductTarget = try #require(tester.workspace.allTargets.first { $0.name == "P1Product" })
@@ -407,7 +408,7 @@ fileprivate struct XCFrameworkBuildOperationTests: CoreBasedTests {
                                                      buildTargets: [BuildRequest.BuildTargetInfo(parameters: parameters, target: packageProductTarget)],
                                                      continueBuildingAfterErrors: false, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
 
-            try await tester.checkBuild(parameters: parameters, buildRequest: packageProductRequest, persistent: true, signableTargets: signableTargets, signableTargetInputs: signableTargetInputs) { results in
+            try await tester.checkBuild(parameters: parameters, runDestination: .macOS, buildRequest: packageProductRequest, persistent: true, signableTargets: signableTargets, signableTargetInputs: signableTargetInputs) { results in
                 let buildDir = Path(pkgBuildDirectory).join("Debug")
                 let basePath = buildDir.join(frameworkName)
 
@@ -473,7 +474,7 @@ fileprivate struct XCFrameworkBuildOperationTests: CoreBasedTests {
             try await fs.writeFileContents(Path(SRCROOT).join("file.c"), body: { $0 <<< "int main() { return 0; }" })
 
             let supportXCFramework = try XCFramework(version: Version(1, 0), libraries: [
-                XCFramework.Library(libraryIdentifier: "x86_64-apple-macos10.15", supportedPlatform: "macos", supportedArchitectures: ["x86_64"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: Path("Headers"), debugSymbolsPath: Path("dSYMs"), bitcodeSymbolMapsPath: Path("symbolmaps")),
+                XCFramework.Library(libraryIdentifier: "x86_64-apple-macos10.15", supportedPlatform: "macos", supportedArchitectures: ["x86_64"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: Path("Headers"), debugSymbolsPath: Path("dSYMs")),
                 XCFramework.Library(libraryIdentifier: "arm64-apple-iphoneos13.0", supportedPlatform: "ios", supportedArchitectures: ["arm64", "arm64e"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: Path("Headers"), debugSymbolsPath: Path("dSYMs")),
             ])
             let supportXCFrameworkPath = Path(SRCROOT).join("libsample.xcframework")
@@ -481,14 +482,14 @@ fileprivate struct XCFrameworkBuildOperationTests: CoreBasedTests {
             try await XCFrameworkTestSupport.writeXCFramework(supportXCFramework, fs: fs, path: supportXCFrameworkPath, infoLookup: infoLookup)
 
             let otherXCFramework = try XCFramework(version: Version(1, 0), libraries: [
-                XCFramework.Library(libraryIdentifier: "x86_64-apple-macos10.15", supportedPlatform: "macos", supportedArchitectures: ["x86_64"], platformVariant: nil, libraryPath: Path("libother.a"), binaryPath: Path("libother.a"), headersPath: Path("Headers"), debugSymbolsPath: Path("dSYMs"), bitcodeSymbolMapsPath: Path("symbolmaps")),
+                XCFramework.Library(libraryIdentifier: "x86_64-apple-macos10.15", supportedPlatform: "macos", supportedArchitectures: ["x86_64"], platformVariant: nil, libraryPath: Path("libother.a"), binaryPath: Path("libother.a"), headersPath: Path("Headers"), debugSymbolsPath: Path("dSYMs")),
                 XCFramework.Library(libraryIdentifier: "arm64-apple-iphoneos13.0", supportedPlatform: "ios", supportedArchitectures: ["arm64", "arm64e"], platformVariant: nil, libraryPath: Path("libother.a"), binaryPath: Path("libother.a"), headersPath: Path("Headers"), debugSymbolsPath: Path("dSYMs")),
             ])
             let otherXCFrameworkPath = Path(SRCROOT).join("libother.xcframework")
             try fs.createDirectory(otherXCFrameworkPath, recursive: true)
             try await XCFrameworkTestSupport.writeXCFramework(otherXCFramework, fs: fs, path: otherXCFrameworkPath, infoLookup: infoLookup)
 
-            try await tester.checkBuild(parameters: BuildParameters(action: .build, configuration: "Debug")) { results in
+            try await tester.checkBuild(parameters: BuildParameters(action: .build, configuration: "Debug"), runDestination: .macOS) { results in
                 results.checkError(.equal(
                                     """
                                     Multiple commands produce '\(SRCROOT)/build/Debug/include/header1.h'
@@ -511,7 +512,7 @@ fileprivate struct XCFrameworkBuildOperationTests: CoreBasedTests {
     }
 
     @Test(.requireSDKs(.macOS, .iOS))
-    func missingMetatadaFoldersProducesDiagnostics() async throws {
+    func missingMetadataFoldersProducesDiagnostics() async throws {
         try await withTemporaryDirectory { (tmpDir: Path) in
             let testProject = TestProject(
                 "aProject",
@@ -555,10 +556,6 @@ fileprivate struct XCFrameworkBuildOperationTests: CoreBasedTests {
                     { return $0.headersPath },
                     { return "Missing path (\($0.join("Headers").str)) from XCFramework 'libsample.xcframework' as defined by 'HeadersPath' in its `Info.plist` file (in target \'App\' from project \'aProject\')" }
                 ),
-                (
-                    { return $0.bitcodeSymbolMapsPath },
-                    { return "Missing path (\($0.join("symbolmaps").str)) from XCFramework 'libsample.xcframework' as defined by 'BitcodeSymbolMapsPath' in its `Info.plist` file (in target \'App\' from project \'aProject\')" }
-                ),
             ]
 
             for scenario in scenarios {
@@ -574,8 +571,8 @@ fileprivate struct XCFrameworkBuildOperationTests: CoreBasedTests {
 
                 let supportXCFrameworkPath = Path(SRCROOT).join("libsample.xcframework")
                 let supportXCFramework = try XCFramework(version: Version(1, 0), libraries: [
-                    XCFramework.Library(libraryIdentifier: "x86_64-apple-macos10.15", supportedPlatform: "macos", supportedArchitectures: ["x86_64"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: Path("Headers"), debugSymbolsPath: Path("dSYMs"), bitcodeSymbolMapsPath: Path("symbolmaps")),
-                    XCFramework.Library(libraryIdentifier: "arm64-apple-iphoneos13.0", supportedPlatform: "ios", supportedArchitectures: ["arm64", "arm64e"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: Path("Headers"), debugSymbolsPath: Path("dSYMs"), bitcodeSymbolMapsPath: Path("symbolmaps")),
+                    XCFramework.Library(libraryIdentifier: "x86_64-apple-macos10.15", supportedPlatform: "macos", supportedArchitectures: ["x86_64"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: Path("Headers"), debugSymbolsPath: Path("dSYMs")),
+                    XCFramework.Library(libraryIdentifier: "arm64-apple-iphoneos13.0", supportedPlatform: "ios", supportedArchitectures: ["arm64", "arm64e"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: Path("Headers"), debugSymbolsPath: Path("dSYMs")),
                 ])
 
                 try fs.createDirectory(supportXCFrameworkPath, recursive: true)
@@ -597,7 +594,7 @@ fileprivate struct XCFrameworkBuildOperationTests: CoreBasedTests {
                     try remove(supportXCFrameworkPath.join(library.libraryIdentifier).join(path))
                 }
 
-                try await tester.checkBuild(parameters: BuildParameters(action: .build, configuration: "Debug")) { results in
+                try await tester.checkBuild(parameters: BuildParameters(action: .build, configuration: "Debug"), runDestination: .macOS) { results in
                     results.checkError(StringPattern(stringLiteral: scenario.message(supportXCFrameworkPath.join("x86_64-apple-macos10.15"))))
                 }
 
@@ -654,15 +651,15 @@ fileprivate struct XCFrameworkBuildOperationTests: CoreBasedTests {
 
             let supportXCFrameworkPath = Path(SRCROOT).join("libsample.xcframework")
             let supportXCFramework = try XCFramework(version: Version(1, 0), libraries: [
-                XCFramework.Library(libraryIdentifier: "x86_64-apple-macos10.15", supportedPlatform: "macos", supportedArchitectures: ["x86_64"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: Path("Headers"), debugSymbolsPath: Path("dSYMs"), bitcodeSymbolMapsPath: Path("symbolmaps")),
-                XCFramework.Library(libraryIdentifier: "arm64-apple-iphoneos13.0", supportedPlatform: "ios", supportedArchitectures: ["arm64", "arm64e"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: Path("Headers"), debugSymbolsPath: Path("dSYMs"), bitcodeSymbolMapsPath: Path("symbolmaps")),
+                XCFramework.Library(libraryIdentifier: "x86_64-apple-macos10.15", supportedPlatform: "macos", supportedArchitectures: ["x86_64"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: Path("Headers"), debugSymbolsPath: Path("dSYMs")),
+                XCFramework.Library(libraryIdentifier: "arm64-apple-iphoneos13.0", supportedPlatform: "ios", supportedArchitectures: ["arm64", "arm64e"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: Path("Headers"), debugSymbolsPath: Path("dSYMs")),
             ])
 
             try fs.createDirectory(supportXCFrameworkPath, recursive: true)
             try await XCFrameworkTestSupport.writeXCFramework(supportXCFramework, fs: fs, path: supportXCFrameworkPath, infoLookup: infoLookup)
 
 
-            try await tester.checkBuild(parameters: BuildParameters(action: .build, configuration: "Debug")) { results in
+            try await tester.checkBuild(parameters: BuildParameters(action: .build, configuration: "Debug"), runDestination: .macOS) { results in
                 results.checkError(.contains("“libsample.xcframework” is not signed with the expected identity and may have been compromised.\nExpected team identifier: mysignature"))
             }
 
@@ -718,15 +715,15 @@ fileprivate struct XCFrameworkBuildOperationTests: CoreBasedTests {
 
             let supportXCFrameworkPath = Path(SRCROOT).join("libsample.xcframework")
             let supportXCFramework = try XCFramework(version: Version(1, 0), libraries: [
-                XCFramework.Library(libraryIdentifier: "x86_64-apple-macos10.15", supportedPlatform: "macos", supportedArchitectures: ["x86_64"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: Path("Headers"), debugSymbolsPath: Path("dSYMs"), bitcodeSymbolMapsPath: Path("symbolmaps")),
-                XCFramework.Library(libraryIdentifier: "arm64-apple-iphoneos13.0", supportedPlatform: "ios", supportedArchitectures: ["arm64", "arm64e"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: Path("Headers"), debugSymbolsPath: Path("dSYMs"), bitcodeSymbolMapsPath: Path("symbolmaps")),
+                XCFramework.Library(libraryIdentifier: "x86_64-apple-macos10.15", supportedPlatform: "macos", supportedArchitectures: ["x86_64"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: Path("Headers"), debugSymbolsPath: Path("dSYMs")),
+                XCFramework.Library(libraryIdentifier: "arm64-apple-iphoneos13.0", supportedPlatform: "ios", supportedArchitectures: ["arm64", "arm64e"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: Path("Headers"), debugSymbolsPath: Path("dSYMs")),
             ])
 
             try fs.createDirectory(supportXCFrameworkPath, recursive: true)
             try await XCFrameworkTestSupport.writeXCFramework(supportXCFramework, fs: fs, path: supportXCFrameworkPath, infoLookup: infoLookup)
 
 
-            try await tester.checkBuild(parameters: BuildParameters(action: .build, configuration: "Debug", overrides: ["DISABLE_XCFRAMEWORK_SIGNATURE_VALIDATION": "YES"])) { results in
+            try await tester.checkBuild(parameters: BuildParameters(action: .build, configuration: "Debug", overrides: ["DISABLE_XCFRAMEWORK_SIGNATURE_VALIDATION": "YES"]), runDestination: .macOS) { results in
                 results.checkWarning(.contains("XCFramework signature validation is being skipped. Remove `DISABLE_XCFRAMEWORK_SIGNATURE_VALIDATION` to disable this warning."))
             }
 
@@ -772,6 +769,7 @@ fileprivate struct XCFrameworkBuildOperationTests: CoreBasedTests {
                                 "SKIP_INSTALL": "NO",
                                 "GENERATE_INFOPLIST_FILE": "YES",
                                 "SWIFT_VERSION": swiftVersion,
+                                "SKIP_EMBEDDED_FRAMEWORKS_VALIDATION": "YES",
                             ]
                         )],
                         targets: [
@@ -809,7 +807,7 @@ fileprivate struct XCFrameworkBuildOperationTests: CoreBasedTests {
             let tester = try await BuildOperationTester(getCore(), testWorkspace, simulated: false)
             try await tester.fs.writeFileContents(sourceRoot.join("aProject/Sources/best.swift")) { contents in }
 
-            try await tester.checkBuild(parameters: BuildParameters(configuration: "Debug"), persistent: true) { results in
+            try await tester.checkBuild(parameters: BuildParameters(configuration: "Debug"), runDestination: .macOS, persistent: true) { results in
                 // The build should succeed without reporting any cycles.
                 results.checkNoDiagnostics()
             }
@@ -886,8 +884,8 @@ fileprivate struct XCFrameworkBuildOperationTests: CoreBasedTests {
 
             let supportXCFrameworkPath = Path(SRCROOT).join("sample.xcframework")
             let supportXCFramework = try XCFramework(version: Version(1, 0), libraries: [
-                XCFramework.Library(libraryIdentifier: "arm64-apple-iphoneos\(infoLookup.loadSDK(.iOS).defaultDeploymentTarget)", supportedPlatform: "ios", supportedArchitectures: ["arm64", "arm64e"], platformVariant: nil, libraryPath: Path("sample.framework"), binaryPath: Path("sample.framework/sample"), headersPath: nil, debugSymbolsPath: Path("dSYMs"), bitcodeSymbolMapsPath: Path("symbolmaps")),
-                XCFramework.Library(libraryIdentifier: "arm64-apple-watchos\(infoLookup.loadSDK(.watchOS).defaultDeploymentTarget)", supportedPlatform: "watchos", supportedArchitectures: ["arm64", "arm64_32"], platformVariant: nil, libraryPath: Path("sample.framework"), binaryPath: Path("sample.framework/sample"), headersPath: nil, debugSymbolsPath: Path("dSYMs"), bitcodeSymbolMapsPath: Path("symbolmaps")),
+                XCFramework.Library(libraryIdentifier: "arm64-apple-iphoneos\(infoLookup.loadSDK(.iOS).defaultDeploymentTarget)", supportedPlatform: "ios", supportedArchitectures: ["arm64", "arm64e"], platformVariant: nil, libraryPath: Path("sample.framework"), binaryPath: Path("sample.framework/sample"), headersPath: nil, debugSymbolsPath: Path("dSYMs")),
+                XCFramework.Library(libraryIdentifier: "arm64-apple-watchos\(infoLookup.loadSDK(.watchOS).defaultDeploymentTarget)", supportedPlatform: "watchos", supportedArchitectures: ["arm64", "arm64_32"], platformVariant: nil, libraryPath: Path("sample.framework"), binaryPath: Path("sample.framework/sample"), headersPath: nil, debugSymbolsPath: Path("dSYMs")),
             ])
 
             try fs.createDirectory(supportXCFrameworkPath, recursive: true)
@@ -895,14 +893,14 @@ fileprivate struct XCFrameworkBuildOperationTests: CoreBasedTests {
 
             let staticSupportXCFrameworkPath = Path(SRCROOT).join("libsample.xcframework")
             let staticSupportXCFramework = try XCFramework(version: Version(1, 0), libraries: [
-                XCFramework.Library(libraryIdentifier: "arm64-apple-iphoneos\(infoLookup.loadSDK(.iOS).defaultDeploymentTarget)", supportedPlatform: "ios", supportedArchitectures: ["arm64", "arm64e"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: nil, debugSymbolsPath: Path("dSYMs"), bitcodeSymbolMapsPath: Path("symbolmaps")),
-                XCFramework.Library(libraryIdentifier: "arm64-apple-watchos\(infoLookup.loadSDK(.watchOS).defaultDeploymentTarget)", supportedPlatform: "watchos", supportedArchitectures: ["arm64", "arm64_32"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: nil, debugSymbolsPath: Path("dSYMs"), bitcodeSymbolMapsPath: Path("symbolmaps")),
+                XCFramework.Library(libraryIdentifier: "arm64-apple-iphoneos\(infoLookup.loadSDK(.iOS).defaultDeploymentTarget)", supportedPlatform: "ios", supportedArchitectures: ["arm64", "arm64e"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: nil, debugSymbolsPath: Path("dSYMs")),
+                XCFramework.Library(libraryIdentifier: "arm64-apple-watchos\(infoLookup.loadSDK(.watchOS).defaultDeploymentTarget)", supportedPlatform: "watchos", supportedArchitectures: ["arm64", "arm64_32"], platformVariant: nil, libraryPath: Path("libsample.a"), binaryPath: Path("libsample.a"), headersPath: nil, debugSymbolsPath: Path("dSYMs")),
             ])
 
             try fs.createDirectory(staticSupportXCFrameworkPath, recursive: true)
             try await XCFrameworkTestSupport.writeXCFramework(staticSupportXCFramework, fs: fs, path: staticSupportXCFrameworkPath, infoLookup: infoLookup)
 
-            try await tester.checkBuild(parameters: BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .anyiOSDevice, overrides: ["ENABLE_SIGNATURE_AGGREGATION": "YES"])) { results in
+            try await tester.checkBuild(parameters: BuildParameters(action: .build, configuration: "Debug", overrides: ["ENABLE_SIGNATURE_AGGREGATION": "YES"]), runDestination: .anyiOSDevice) { results in
                 results.checkNoDiagnostics()
                 let iOSSignatureFiles = try Set(localFS.listdir(tmpDir.join("build/Debug-iphoneos")).filter { $0.hasSuffix(".signature") })
                 let watchOSSignatureFiles = try Set(localFS.listdir(tmpDir.join("build/Debug-watchos")).filter { $0.hasSuffix(".signature") })
@@ -1011,7 +1009,7 @@ fileprivate struct XCFrameworkBuildOperationTests: CoreBasedTests {
             try fs.createDirectory(supportXCFrameworkPath, recursive: true)
             try await XCFrameworkTestSupport.writeXCFramework(supportXCFramework, fs: fs, path: supportXCFrameworkPath, infoLookup: infoLookup)
 
-            try await tester.checkBuild(parameters: BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .anyiOSDevice)) { results in
+            try await tester.checkBuild(parameters: BuildParameters(action: .build, configuration: "Debug"), runDestination: .anyiOSDevice) { results in
                 results.checkNoDiagnostics()
             }
         }

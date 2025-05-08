@@ -369,9 +369,9 @@ fileprivate struct MultiPlatformTaskConstructionTests: CoreBasedTests {
             ]
         )
 
-        try fs.createDirectory(core.developerPath.join("usr/bin"), recursive: true)
-        try await fs.writeFileContents(core.developerPath.join("usr/bin/actool")) { $0 <<< "binary" }
-        try await fs.writeFileContents(core.developerPath.join("usr/bin/ibtool")) { $0 <<< "binary" }
+        try fs.createDirectory(core.developerPath.path.join("usr/bin"), recursive: true)
+        try await fs.writeFileContents(core.developerPath.path.join("usr/bin/actool")) { $0 <<< "binary" }
+        try await fs.writeFileContents(core.developerPath.path.join("usr/bin/ibtool")) { $0 <<< "binary" }
 
         // Create files in the filesystem so they're known to exist.
         try await fs.writeFileContents(swiftCompilerPath) { $0 <<< "binary" }
@@ -396,7 +396,7 @@ fileprivate struct MultiPlatformTaskConstructionTests: CoreBasedTests {
         let sharedFrameworkTarget = try #require(tester.workspace.target(named: "Shared Framework"))
         let macAppWithEmbeddedPhoneAppTarget = try #require(tester.workspace.target(named: "MacAppEmbeddingiOSApp"))
 
-        let parameters = BuildParameters(action: .build, configuration: "Debug", activeRunDestination: destination)
+        let parameters = BuildParameters(action: .build, configuration: "Debug")
         let request = BuildRequest(parameters: parameters, buildTargets: targets.map { BuildRequest.BuildTargetInfo(parameters: BuildParameters(action: .build, configuration: "Debug"), target: $0) }, continueBuildingAfterErrors: true, useParallelTargets: true, useImplicitDependencies: useImplicitDependencies, useDryRun: false)
 
         let macos = targets.contains(macosTarget) || targets.contains(macAppWithEmbeddedPhoneAppTarget)
@@ -407,7 +407,7 @@ fileprivate struct MultiPlatformTaskConstructionTests: CoreBasedTests {
         let shared = targets.contains(sharedFrameworkTarget)
 
         // Check the debug build, for the device.
-        await tester.checkBuild(buildRequest: request, fs: fs) { results in
+        await tester.checkBuild(runDestination: destination, buildRequest: request, fs: fs) { results in
 
             func validateTargetCompiledForPlatform(_ partialTriple: String, tasks: GenericSequence<any PlannedTask>) {
                 #expect(tasks.count > 0)
@@ -796,11 +796,11 @@ fileprivate struct MultiPlatformTaskConstructionTests: CoreBasedTests {
 
         let targets = tester.workspace.targets(named: "macCatalyst App")
         for destination in [RunDestinationInfo.macOS, RunDestinationInfo.macCatalyst] {
-            let parameters = BuildParameters(action: .build, configuration: "Debug", activeRunDestination: destination)
+            let parameters = BuildParameters(action: .build, configuration: "Debug")
 
             let request = BuildRequest(parameters: parameters, buildTargets: targets.map { BuildRequest.BuildTargetInfo(parameters: BuildParameters(action: .build, configuration: "Debug"), target: $0) }, continueBuildingAfterErrors: true, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
 
-            await tester.checkBuild(buildRequest: request) { results in
+            await tester.checkBuild(runDestination: destination, buildRequest: request) { results in
                 results.checkNoDiagnostics()
             }
         }

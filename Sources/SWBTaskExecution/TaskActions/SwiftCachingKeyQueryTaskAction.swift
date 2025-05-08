@@ -12,6 +12,7 @@
 
 public import SWBUtil
 public import SWBCore
+import Foundation
 
 /// Used only when remote caching is enabled, for remote cache key querying.
 public final class SwiftCachingKeyQueryTaskAction: TaskAction {
@@ -26,9 +27,8 @@ public final class SwiftCachingKeyQueryTaskAction: TaskAction {
         super.init()
     }
 
-    /// Network task so avoid blocking or being restricted by the execution lanes.
     override public var shouldExecuteDetached: Bool {
-        return true
+        return key.casOptions.enableDetachedKeyQueries
     }
 
     override public func performTaskAction(
@@ -46,15 +46,21 @@ public final class SwiftCachingKeyQueryTaskAction: TaskAction {
 
             do {
                 // Request global query to get maximum search space that the database supports
-                let cacheHit = try await cas.queryCacheKey(key.cacheKey, globally: true) != nil
-                if key.casOptions.enableDiagnosticRemarks {
-                    outputDelegate.remark("cache key query \(cacheHit ? "hit" : "miss")")
+                for cacheKey in key.cacheKeys {
+                    let cacheHit = try await cas.queryCacheKey(cacheKey, globally: true) != nil
+                    if key.casOptions.enableDiagnosticRemarks {
+                        outputDelegate.note("cache key query \(cacheHit ? "hit" : "miss")")
+                    }
+                    guard cacheHit else {
+                        // return on first failure.
+                        return .succeeded
+                    }
                 }
             } catch {
                 guard !key.casOptions.enableStrictCASErrors else { throw error }
                 outputDelegate.warning(error.localizedDescription)
                 if key.casOptions.enableDiagnosticRemarks {
-                    outputDelegate.remark("cache key query failed")
+                    outputDelegate.note("cache key query failed")
                 }
             }
             return .succeeded

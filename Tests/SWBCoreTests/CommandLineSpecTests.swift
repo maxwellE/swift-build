@@ -1261,11 +1261,10 @@ import SWBMacro
         }
         var libraries = [LinkerSpec.LibrarySpecifier]()
         for kind in LinkerSpec.LibrarySpecifier.Kind.allCases {
-            guard kind != .object else {
-                continue
-            }
             libraries.append(contentsOf: generateLibrarySpecifiers(kind: kind))
         }
+        // This is a no-op because object files get added in the SourcesTaskProducer, but we want to confirm that this is the case.
+        libraries.append(LinkerSpec.LibrarySpecifier(kind: .object, path: Path.root.join("tmp/Bar.o"), mode: .normal, useSearchPaths: false, swiftModulePaths: [:], swiftModuleAdditionalLinkerArgResponseFilePaths: [:]))
 
         await linkerSpec.constructLinkerTasks(cbc, delegate, libraries: libraries, usedTools: [:])
 
@@ -1403,7 +1402,7 @@ import SWBMacro
         table.push(BuiltinMacros.variant, literal: "normal")
         table.push(BuiltinMacros.MACH_O_TYPE, literal: "dylib")
 
-        // Construst data we can re-use across the tests.
+        // Construct data we can re-use across the tests.
         let producer = try MockCommandProducer(core: core, productTypeIdentifier: "com.apple.product-type.framework", platform: "macosx")
         let mockFileType: FileTypeSpec = try core.specRegistry.getSpec("file")
 
@@ -1472,6 +1471,7 @@ import SWBMacro
         // Create the mock table.
         var table = MacroValueAssignmentTable(namespace: core.specRegistry.internalMacroNamespace)
         table.push(try #require(core.specRegistry.internalMacroNamespace.lookupMacroDeclaration("LIBTOOL") as? PathMacroDeclaration), literal: "libtool")
+        table.push(BuiltinMacros.LIBTOOL_USE_RESPONSE_FILE, literal: true)
         table.push(BuiltinMacros.arch, literal: "x86_64")
         table.push(BuiltinMacros.variant, literal: "normal")
 
@@ -1500,6 +1500,9 @@ import SWBMacro
             LinkerSpec.LibrarySpecifier(kind: .framework, path: Path.root.join("tmp/Foo2.framework"), mode: .weak, useSearchPaths: true, swiftModulePaths: [:], swiftModuleAdditionalLinkerArgResponseFilePaths: [:]),
             LinkerSpec.LibrarySpecifier(kind: .framework, path: Path.root.join("tmp/Foo3.framework"), mode: .normal, useSearchPaths: false, swiftModulePaths: [:], swiftModuleAdditionalLinkerArgResponseFilePaths: [:]),
             LinkerSpec.LibrarySpecifier(kind: .framework, path: Path.root.join("tmp/Foo4.framework"), mode: .weak, useSearchPaths: false, swiftModulePaths: [:], swiftModuleAdditionalLinkerArgResponseFilePaths: [:]),
+
+            // This is a no-op because object files get added in the SourcesTaskProducer, but we want to confirm that this is the case.
+            LinkerSpec.LibrarySpecifier(kind: .object, path: Path.root.join("tmp/Bar.o"), mode: .normal, useSearchPaths: false, swiftModulePaths: [:], swiftModuleAdditionalLinkerArgResponseFilePaths: [:]),
         ]
         await librarianSpec.constructLinkerTasks(cbc, delegate, libraries: libraries, usedTools: [:])
 
@@ -1845,14 +1848,14 @@ import SWBMacro
         let core = try await getCore()
         let clangSpec = try core.specRegistry.getSpec("com.apple.compilers.llvm.clang.1_0") as CommandLineToolSpec
         let mockFileType = try core.specRegistry.getSpec("sourcecode.cpp.cpp") as FileTypeSpec
-        let enableCompileCache = try #require(core.specRegistry.internalMacroNamespace.lookupMacroDeclaration("CLANG_ENABLE_COMPILE_CACHE") as? EnumMacroDeclaration<CompilationCachingSetting>)
+        let enableCompileCache = try #require(core.specRegistry.internalMacroNamespace.lookupMacroDeclaration("CLANG_ENABLE_COMPILE_CACHE") as? BooleanMacroDeclaration)
         let enablePrefixMap = try #require(core.specRegistry.internalMacroNamespace.lookupMacroDeclaration("CLANG_ENABLE_PREFIX_MAPPING") as? BooleanMacroDeclaration)
         let prefixMaps = try #require(core.specRegistry.internalMacroNamespace.lookupMacroDeclaration("CLANG_OTHER_PREFIX_MAPPINGS") as? StringListMacroDeclaration)
         let devDir = try #require(core.specRegistry.internalMacroNamespace.lookupMacroDeclaration("DEVELOPER_DIR") as? PathMacroDeclaration)
 
         func test(caching: Bool, prefixMapping: Bool, extraMaps: [String], completion: ([String]) throws -> Void) async throws {
             var table = MacroValueAssignmentTable(namespace: core.specRegistry.internalMacroNamespace)
-            table.push(enableCompileCache, literal: caching ? .enabled : .disabled)
+            table.push(enableCompileCache, literal: caching)
             table.push(enablePrefixMap, literal: prefixMapping)
             table.push(prefixMaps, literal: extraMaps)
             table.push(devDir, literal: "/Xcode.app/Contents/Developer")
@@ -1899,7 +1902,7 @@ import SWBMacro
         let swiftSpec = try core.specRegistry.getSpec("com.apple.xcode.tools.swift.compiler") as CompilerSpec
 
         let mockFileType = try core.specRegistry.getSpec("sourcecode.swift") as FileTypeSpec
-        let enableCompileCache = try #require(core.specRegistry.internalMacroNamespace.lookupMacroDeclaration("SWIFT_ENABLE_COMPILE_CACHE") as? EnumMacroDeclaration<CompilationCachingSetting>)
+        let enableCompileCache = try #require(core.specRegistry.internalMacroNamespace.lookupMacroDeclaration("SWIFT_ENABLE_COMPILE_CACHE") as? BooleanMacroDeclaration)
         let enablePrefixMap = try #require(core.specRegistry.internalMacroNamespace.lookupMacroDeclaration("SWIFT_ENABLE_PREFIX_MAPPING") as? BooleanMacroDeclaration)
         let prefixMaps = try #require(core.specRegistry.internalMacroNamespace.lookupMacroDeclaration("SWIFT_OTHER_PREFIX_MAPPINGS") as? StringListMacroDeclaration)
         let devDir = try #require(core.specRegistry.internalMacroNamespace.lookupMacroDeclaration("DEVELOPER_DIR") as? PathMacroDeclaration)
@@ -1919,7 +1922,7 @@ import SWBMacro
 
             // remove in rdar://53000820
             table.push(BuiltinMacros.USE_SWIFT_RESPONSE_FILE, literal: true)
-            table.push(enableCompileCache, literal: caching ? .enabled : .disabled)
+            table.push(enableCompileCache, literal: caching)
             table.push(enablePrefixMap, literal: prefixMapping)
             table.push(prefixMaps, literal: extraMaps)
             table.push(devDir, literal: "/Xcode.app/Contents/Developer")

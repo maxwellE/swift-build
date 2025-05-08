@@ -31,31 +31,36 @@ func swiftSettings(languageMode: SwiftLanguageMode) -> [SwiftSetting] {
             .enableUpcomingFeature("ConciseMagicFile"),
             .enableUpcomingFeature("DeprecateApplicationMain"),
             .enableUpcomingFeature("DisableOutwardActorInference"),
+            //.enableUpcomingFeature("DynamicActorIsolation"),
             .enableUpcomingFeature("ForwardTrailingClosures"),
+            .enableUpcomingFeature("GlobalActorIsolatedTypesUsability"),
             .enableUpcomingFeature("GlobalConcurrency"),
             .enableUpcomingFeature("ImplicitOpenExistentials"),
             .enableUpcomingFeature("ImportObjcForwardDeclarations"),
             .enableUpcomingFeature("InferSendableFromCaptures"),
             .enableUpcomingFeature("IsolatedDefaultValues"),
+            .enableUpcomingFeature("NonfrozenEnumExhaustivity"),
             //.enableUpcomingFeature("RegionBasedIsolation"), // rdar://137809703
 
             // Future Swift features
             .enableUpcomingFeature("ExistentialAny"),
+            .enableUpcomingFeature("MemberImportVisibility"),
             .enableUpcomingFeature("InternalImportsByDefault"),
 
             .swiftLanguageMode(.v5),
 
-            .define("USE_STATIC_PLUGIN_INITIALIZATION")
+            .define("USE_STATIC_PLUGIN_INITIALIZATION"),
         ]
     case .v6:
         return [
             // Future Swift features
             .enableUpcomingFeature("ExistentialAny"),
+            .enableUpcomingFeature("MemberImportVisibility"),
             .enableUpcomingFeature("InternalImportsByDefault"),
 
             .swiftLanguageMode(.v6),
 
-            .define("USE_STATIC_PLUGIN_INITIALIZATION")
+            .define("USE_STATIC_PLUGIN_INITIALIZATION"),
         ]
     default:
         fatalError("unexpected language mode")
@@ -83,18 +88,23 @@ let package = Package(
                 "SwiftBuild",
                 "SWBBuildServiceBundle", // the CLI needs to launch the service bundle
             ],
+            exclude: ["CMakeLists.txt"],
             swiftSettings: swiftSettings(languageMode: .v6)),
         .executableTarget(
             name: "SWBBuildServiceBundle",
             dependencies: [
-                "SWBBuildService", "SWBBuildSystem", "SWBServiceCore", "SWBUtil", "SWBCore",
+                "SWBBuildService", "SWBBuildSystem", "SWBServiceCore", "SWBUtil", "SWBCore", .product(name: "SwiftProtobuf", package: "swift-protobuf"), .product(name: "Logging", package: "swift-log")
             ],
+            exclude: ["CMakeLists.txt"],
             swiftSettings: swiftSettings(languageMode: .v6)),
 
         // Libraries
         .target(
             name: "SwiftBuild",
-            dependencies: ["SWBCSupport", "SWBCore", "SWBProtocol", "SWBUtil", "SWBProjectModel"],
+            dependencies: [
+                "SWBCSupport", "SWBCore", "SWBProtocol", "SWBUtil", "SWBProjectModel", .product(name: "SwiftProtobuf", package: "swift-protobuf"), .product(name: "Logging", package: "swift-log")
+            ],
+            exclude: ["CMakeLists.txt"],
             swiftSettings: swiftSettings(languageMode: .v5)),
         .target(
             name: "SWBBuildService",
@@ -104,10 +114,12 @@ let package = Package(
                 "SWBTaskExecution",
                 .product(name: "SystemPackage", package: "swift-system", condition: .when(platforms: [.linux, .android, .windows])),
             ],
+            exclude: ["CMakeLists.txt"],
             swiftSettings: swiftSettings(languageMode: .v5)),
         .target(
             name: "SWBBuildSystem",
-            dependencies: ["SWBCore", "SWBTaskConstruction", "SWBTaskExecution"],
+            dependencies: ["SWBCore", "SWBTaskConstruction", "SWBTaskExecution", .product(name: "SwiftProtobuf", package: "swift-protobuf"), .product(name: "Logging", package: "swift-log")],
+            exclude: ["CMakeLists.txt"],
             swiftSettings: swiftSettings(languageMode: .v5)),
         .target(
             name: "SWBCore",
@@ -120,12 +132,12 @@ let package = Package(
                 .product(name: "SwiftDriver", package: "swift-driver"),
                 "SWBLLBuild",
             ],
-            swiftSettings: swiftSettings(languageMode: .v5),
-            plugins: [
-                .plugin(name: "SWBSpecificationsPlugin")
-            ]),
+            exclude: ["CMakeLists.txt"],
+            resources: [.process("Specs")],
+            swiftSettings: swiftSettings(languageMode: .v5)),
         .target(
             name: "SWBCSupport",
+            exclude: ["empty.swift"],
             publicHeadersPath: ".",
             cSettings: [
                 .define("_CRT_SECURE_NO_WARNINGS", .when(platforms: [.windows])),
@@ -134,12 +146,13 @@ let package = Package(
             swiftSettings: swiftSettings(languageMode: .v6)),
         .target(
             name: "SWBCLibc",
-            exclude: ["README.md"],
+            exclude: ["CMakeLists.txt", "README.md"],
             publicHeadersPath: ".",
             swiftSettings: swiftSettings(languageMode: .v6)),
         .target(
             name: "SWBLibc",
             dependencies: ["SWBCLibc"],
+            exclude: ["CMakeLists.txt"],
             swiftSettings: swiftSettings(languageMode: .v6)),
         .target(
             name: "SWBLLBuild",
@@ -149,6 +162,7 @@ let package = Package(
                 .product(name: "libllbuild", package: useLocalDependencies ? "llbuild" : "swift-llbuild"),
                 .product(name: "llbuildSwift", package: useLocalDependencies ? "llbuild" : "swift-llbuild"),
             ]),
+            exclude: ["CMakeLists.txt"],
             swiftSettings: swiftSettings(languageMode: .v6)),
         .target(
             name: "SWBMacro",
@@ -156,26 +170,32 @@ let package = Package(
                 "SWBUtil",
                 .product(name: "SwiftDriver", package: "swift-driver"),
             ],
+            exclude: ["CMakeLists.txt"],
             swiftSettings: swiftSettings(languageMode: .v6)),
         .target(
             name: "SWBProjectModel",
             dependencies: ["SWBProtocol"],
+            exclude: ["CMakeLists.txt"],
             swiftSettings: swiftSettings(languageMode: .v6)),
         .target(
             name: "SWBProtocol",
             dependencies: ["SWBUtil"],
+            exclude: ["CMakeLists.txt"],
             swiftSettings: swiftSettings(languageMode: .v6)),
         .target(
             name: "SWBServiceCore",
             dependencies: ["SWBProtocol"],
+            exclude: ["CMakeLists.txt"],
             swiftSettings: swiftSettings(languageMode: .v6)),
         .target(
             name: "SWBTaskConstruction",
             dependencies: ["SWBCore", "SWBUtil"],
+            exclude: ["CMakeLists.txt"],
             swiftSettings: swiftSettings(languageMode: .v5)),
         .target(
             name: "SWBTaskExecution",
             dependencies: ["SWBCore", "SWBUtil", "SWBCAS", "SWBLLBuild", "SWBTaskConstruction"],
+            exclude: ["CMakeLists.txt"],
             swiftSettings: swiftSettings(languageMode: .v5)),
         .target(
             name: "SWBUtil",
@@ -183,52 +203,65 @@ let package = Package(
                 "SWBCSupport",
                 "SWBLibc",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
-                .product(name: "Crypto", package: "swift-crypto", condition: .when(platforms: [.linux, .android])),
                 .product(name: "SystemPackage", package: "swift-system", condition: .when(platforms: [.linux, .android, .windows])),
             ],
+            exclude: ["CMakeLists.txt"],
             swiftSettings: swiftSettings(languageMode: .v5)),
         .target(
             name: "SWBCAS",
             dependencies: ["SWBUtil", "SWBCSupport"],
+            exclude: ["CMakeLists.txt"],
             swiftSettings: swiftSettings(languageMode: .v6)),
 
         .target(
             name: "SWBAndroidPlatform",
             dependencies: ["SWBCore", "SWBMacro", "SWBUtil"],
+            exclude: ["CMakeLists.txt"],
+            resources: [.process("Specs")],
             swiftSettings: swiftSettings(languageMode: .v6)),
         .target(
             name: "SWBApplePlatform",
             dependencies: ["SWBCore", "SWBMacro", "SWBUtil", "SWBTaskConstruction"],
+            exclude: ["CMakeLists.txt"],
+            resources: [.process("Specs")],
             swiftSettings: swiftSettings(languageMode: .v6)),
         .target(
             name: "SWBGenericUnixPlatform",
             dependencies: ["SWBCore", "SWBUtil"],
+            exclude: ["CMakeLists.txt"],
+            resources: [.process("Specs")],
             swiftSettings: swiftSettings(languageMode: .v6)),
         .target(
             name: "SWBQNXPlatform",
             dependencies: ["SWBCore", "SWBMacro", "SWBUtil"],
+            exclude: ["CMakeLists.txt"],
+            resources: [.process("Specs")],
             swiftSettings: swiftSettings(languageMode: .v6)),
         .target(
             name: "SWBUniversalPlatform",
-            dependencies: ["SWBCore", "SWBMacro", "SWBUtil"],
+            dependencies: [
+                "SWBCore",
+                "SWBMacro",
+                "SWBUtil",
+                "SWBTaskConstruction",
+                "SWBTaskExecution",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            exclude: ["CMakeLists.txt"],
+            resources: [.process("Specs")],
             swiftSettings: swiftSettings(languageMode: .v6)),
         .target(
             name: "SWBWebAssemblyPlatform",
             dependencies: ["SWBCore", "SWBMacro", "SWBUtil"],
+            exclude: ["CMakeLists.txt"],
+            resources: [.process("Specs")],
             swiftSettings: swiftSettings(languageMode: .v6)),
         .target(
             name: "SWBWindowsPlatform",
             dependencies: ["SWBCore", "SWBMacro", "SWBUtil"],
+            exclude: ["CMakeLists.txt"],
+            resources: [.process("Specs")],
             swiftSettings: swiftSettings(languageMode: .v6)),
-
-        // Helper targets for SwiftPM
-        .executableTarget(
-            name: "SWBSpecificationsCompiler",
-            swiftSettings: swiftSettings(languageMode: .v6)),
-        .plugin(
-            name: "SWBSpecificationsPlugin",
-            capability: .buildTool(),
-            dependencies: ["SWBSpecificationsCompiler"]),
 
         // Test support
         .target(
@@ -238,10 +271,7 @@ let package = Package(
         .target(
             name: "SWBTestSupport",
             dependencies: ["SwiftBuild", "SWBBuildSystem", "SWBCore", "SWBTaskConstruction", "SWBTaskExecution", "SWBUtil", "SWBLLBuild", "SWBMacro"],
-            swiftSettings: swiftSettings(languageMode: .v5) + [
-                // Temporary until swift-testing introduces replacement for this SPI
-                .define("DONT_HAVE_CUSTOM_EXECUTION_TRAIT")
-            ]),
+            swiftSettings: swiftSettings(languageMode: .v5)),
 
         // Tests
         .testTarget(
@@ -378,9 +408,23 @@ let package = Package(
                 verb: "run-xcodebuild",
                 description: "Run xcodebuild from the currently selected Xcode configured to use the just-built build service"
             ))
+        ),
+        .plugin(
+            name: "cmake-smoke-test",
+            capability: .command(intent: .custom(
+                verb: "cmake-smoke-test",
+                description: "Build Swift Build using CMake for validation purposes"
+            ))
+        ),
+        .plugin(
+            name: "generate-windows-installer-component-groups",
+            capability: .command(intent: .custom(
+                verb: "generate-windows-installer-component-groups",
+                description: "Generate XML fragments for cli.wxs in swift-installer-scripts"
+            ))
         )
     ],
-    swiftLanguageModes: [.v6],
+    swiftLanguageModes: [.v5, .v6],
     cxxLanguageStandard: .cxx20
 )
 
@@ -399,18 +443,11 @@ for target in package.targets {
     if ["SWBBuildService", "SWBTestSupport"].contains(target.name) {
         target.dependencies += pluginTargetNames.map { .target(name: $0) }
     }
-
-    if pluginTargetNames.contains(target.name) {
-        target.plugins = (target.plugins ?? []) + [
-            .plugin(name: "SWBSpecificationsPlugin")
-        ]
-    }
 }
 
 // `SWIFTCI_USE_LOCAL_DEPS` configures if dependencies are locally available to build
 if useLocalDependencies {
     package.dependencies += [
-        .package(path: "../swift-crypto"),
         .package(path: "../swift-driver"),
         .package(path: "../swift-system"),
         .package(path: "../swift-argument-parser"),
@@ -420,14 +457,13 @@ if useLocalDependencies {
     }
 } else {
     package.dependencies += [
-        // https://github.com/apple/swift-crypto/issues/262
-        // 3.7.1 introduced a regression which fails to link on aarch64-windows; revert to <4.0.0 for the upper bound when this is fixed
-        .package(url: "https://github.com/apple/swift-crypto.git", "2.0.0"..<"3.7.1"),
-        .package(url: "https://github.com/apple/swift-driver.git", branch: "main"),
-        .package(url: "https://github.com/apple/swift-system.git", .upToNextMajor(from: "1.4.0")),
+        .package(url: "https://github.com/swiftlang/swift-driver.git", branch: "main"),
+        .package(url: "https://github.com/apple/swift-system.git", .upToNextMajor(from: "1.4.1")),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.0.3"),
+        .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.27.0"),
+        .package(url: "https://github.com/apple/swift-log.git", from: "1.0.0"),
     ]
     if !useLLBuildFramework {
-        package.dependencies += [.package(url: "https://github.com/apple/swift-llbuild.git", branch: "main"),]
+        package.dependencies += [.package(url: "https://github.com/swiftlang/swift-llbuild.git", branch: "main"),]
     }
 }

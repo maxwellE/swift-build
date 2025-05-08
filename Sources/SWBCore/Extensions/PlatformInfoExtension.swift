@@ -30,11 +30,13 @@ public protocol PlatformInfoExtension: Sendable {
 
     func additionalKnownTestLibraryPathSuffixes() -> [Path]
 
-    func additionalPlatformExecutableSearchPaths(platformName: String, platformPath: Path) -> [Path]
+    func additionalPlatformExecutableSearchPaths(platformName: String, platformPath: Path, fs: any FSProxy) async -> [Path]
 
     func additionalToolchainExecutableSearchPaths(toolchainIdentifier: String, toolchainPath: Path) -> [Path]
 
-    func additionalPlatforms() -> [(path: Path, data: [String: PropertyListItem])]
+    func additionalPlatforms(context: any PlatformInfoExtensionAdditionalPlatformsContext) throws -> [(path: Path, data: [String: PropertyListItem])]
+
+    func adjustPlatformSDKSearchPaths(platformName: String, platformPath: Path, sdkSearchPaths: inout [Path])
 }
 
 extension PlatformInfoExtension {
@@ -54,7 +56,7 @@ extension PlatformInfoExtension {
         []
     }
 
-    public func additionalPlatformExecutableSearchPaths(platformName: String, platformPath: Path) -> [Path] {
+    public func additionalPlatformExecutableSearchPaths(platformName: String, platformPath: Path, fs: any FSProxy) async -> [Path] {
         []
     }
 
@@ -62,7 +64,16 @@ extension PlatformInfoExtension {
         []
     }
 
-    public func additionalPlatforms() -> [(path: Path, data: [String: PropertyListItem])] {
+    public func additionalPlatforms(context: any PlatformInfoExtensionAdditionalPlatformsContext) throws -> [(path: Path, data: [String: PropertyListItem])] {
         []
     }
+
+    public func adjustPlatformSDKSearchPaths(platformName: String, platformPath: Path, sdkSearchPaths: inout [Path]) {
+    }
+}
+
+public protocol PlatformInfoExtensionAdditionalPlatformsContext: Sendable {
+    var hostOperatingSystem: OperatingSystem { get }
+    var developerPath: Core.DeveloperPath { get }
+    var fs: any FSProxy { get }
 }

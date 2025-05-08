@@ -15,6 +15,8 @@ import Testing
 import SWBCore
 import SWBUtil
 import SWBTestSupport
+import SWBTaskExecution
+import SWBProtocol
 
 @Suite
 fileprivate struct DevelopmentAssetsDiagnosticTests: CoreBasedTests {
@@ -46,7 +48,7 @@ fileprivate struct DevelopmentAssetsDiagnosticTests: CoreBasedTests {
                 ])
 
             let parameters = BuildParameters(action: .install, configuration: "Release")
-            try await BuildOperationTester(getCore(), testProject, simulated: false).checkBuild(parameters: parameters) { results in
+            try await BuildOperationTester(getCore(), testProject, simulated: false).checkBuild(parameters: parameters, runDestination: .macOS) { results in
                 results.checkNoTask(.matchRuleItem("Preview"))
 
                 results.checkTask(.matchRuleType("ValidateDevelopmentAssets")) { task in
@@ -92,7 +94,7 @@ fileprivate struct DevelopmentAssetsDiagnosticTests: CoreBasedTests {
             try fs.write(Path("\(tmpDirPath.str)/Preview Assets/ExampleImage2.png"), contents: ByteString(""))
 
             let parameters = BuildParameters(action: .install, configuration: "Release")
-            try await BuildOperationTester(getCore(), testProject, simulated: false, fileSystem: fs).checkBuild(parameters: parameters) { results in
+            try await BuildOperationTester(getCore(), testProject, simulated: false, fileSystem: fs).checkBuild(parameters: parameters, runDestination: .macOS) { results in
                 results.checkNoTask(.matchRuleItemPattern(.contains("Preview")))
                 results.checkNoTask(.matchRuleItemPattern(.contains("ExampleImage1")))
                 results.checkNoTask(.matchRuleItemPattern(.contains("ExampleImage2")))
@@ -135,7 +137,7 @@ fileprivate struct DevelopmentAssetsDiagnosticTests: CoreBasedTests {
             try fs.write(Path("\(tmpDirPath.str)/Preview Assets/ExampleImage2.png"), contents: ByteString(""))
 
             let parameters = BuildParameters(action: .build, configuration: "Release", overrides: ["DEPLOYMENT_POSTPROCESSING": "YES"])
-            try await BuildOperationTester(getCore(), testProject, simulated: false, fileSystem: fs).checkBuild(parameters: parameters) { results in
+            try await BuildOperationTester(getCore(), testProject, simulated: false, fileSystem: fs).checkBuild(parameters: parameters, runDestination: .macOS) { results in
                 results.checkNoTask(.matchRuleItemPattern(.contains("Preview")))
                 results.checkNoTask(.matchRuleItemPattern(.contains("ExampleImage1")))
                 results.checkNoTask(.matchRuleItemPattern(.contains("ExampleImage2")))
@@ -180,7 +182,7 @@ fileprivate struct DevelopmentAssetsDiagnosticTests: CoreBasedTests {
             try fs.write(Path("\(tmpDirPath.str)/Preview Assets/ExampleImage1.jpg"), contents: ByteString(""))
             try fs.write(Path("\(tmpDirPath.str)/Preview Assets/ExampleImage2.jpg"), contents: ByteString(""))
 
-            try await BuildOperationTester(getCore(), testProject, simulated: false, fileSystem: fs).checkBuild(parameters: parameters) { results in
+            try await BuildOperationTester(getCore(), testProject, simulated: false, fileSystem: fs).checkBuild(parameters: parameters, runDestination: .macOS) { results in
                 results.checkTask(.matchRuleItemPattern(.contains("ExampleImage1"))) { task in
                     #expect(task.ruleInfo.first == "Copy")
                 }
@@ -229,7 +231,7 @@ fileprivate struct DevelopmentAssetsDiagnosticTests: CoreBasedTests {
             try fs.write(Path("\(tmpDirPath.str)/Preview Assets/ExampleImage1.jpg"), contents: ByteString(""))
             try fs.write(Path("\(tmpDirPath.str)/Preview Assets/ExampleImage2.jpg"), contents: ByteString(""))
 
-            try await BuildOperationTester(getCore(), testProject, simulated: false, fileSystem: fs).checkBuild(parameters: parameters) { results in
+            try await BuildOperationTester(getCore(), testProject, simulated: false, fileSystem: fs).checkBuild(parameters: parameters, runDestination: .macOS) { results in
                 results.checkTask(.matchRuleItemPattern(.contains("ExampleImage1"))) { task in
                     #expect(task.ruleInfo.first == "Copy")
                 }
@@ -269,14 +271,14 @@ fileprivate struct DevelopmentAssetsDiagnosticTests: CoreBasedTests {
             try fs.createDirectory(developmentAssetsDirectoryPath, recursive: true)
             let tester = try await BuildOperationTester(getCore(), testProject, simulated: false, fileSystem: fs)
 
-            try await tester.checkBuild(parameters: parameters) { results in
+            try await tester.checkBuild(parameters: parameters, runDestination: .macOS) { results in
                 // we don't expect errors because the specified directory exists
                 results.checkNoDiagnostics()
             }
 
             // removing the directory should emit the error, even it nothing else changed
             try fs.removeDirectory(developmentAssetsDirectoryPath)
-            try await tester.checkBuild(parameters: parameters) { results in
+            try await tester.checkBuild(parameters: parameters, runDestination: .macOS) { results in
                 results.checkError("[targetIntegrity] One of the paths in DEVELOPMENT_ASSET_PATHS does not exist: \(tmpDirPath.str)/Preview Assets (for task: [\"ValidateDevelopmentAssets\", \"\(tmpDirPath.str)/build/aProject.build/Debug/AppTarget.build\"])")
                 results.checkNoDiagnostics()
             }
@@ -332,7 +334,7 @@ fileprivate struct DevelopmentAssetsDiagnosticTests: CoreBasedTests {
 
             let testWorkspace = TestWorkspace("aWorkspace", sourceRoot: tmpDirPath, projects: [testProject, testProject2])
             let parameters = BuildParameters(action: .install, configuration: "Release")
-            try await BuildOperationTester(getCore(), testWorkspace, simulated: false).checkBuild(parameters: parameters) { results in
+            try await BuildOperationTester(getCore(), testWorkspace, simulated: false).checkBuild(parameters: parameters, runDestination: .macOS) { results in
                 results.checkNoTask(.matchRuleItem("Preview"))
 
                 results.checkError("[targetIntegrity] One of the paths in DEVELOPMENT_ASSET_PATHS does not exist: \(tmpDirPath.str)/aProject/Preview Assets (for task: [\"ValidateDevelopmentAssets\", \"\(tmpDirPath.str)/aProject/build/aProject.build/Release/AppTarget.build\"])")
@@ -342,9 +344,9 @@ fileprivate struct DevelopmentAssetsDiagnosticTests: CoreBasedTests {
     }
 
     @Test(.requireSDKs(.macOS))
-    func developmentAssetsOverridenSRCROOT() async throws {
+    func developmentAssetsOverriddenSRCROOT() async throws {
         try await withTemporaryDirectory { tmpDirPath in
-            // Some environments override SRCROOT but that shouldn't interfer with relative paths in DEVELOPMENT_ASSET_PATHS since they are based in PROJECT_DIR
+            // Some environments override SRCROOT but that shouldn't interfere with relative paths in DEVELOPMENT_ASSET_PATHS since they are based in PROJECT_DIR
             let testProject = TestProject(
                 "aProject",
                 sourceRoot: tmpDirPath,
@@ -375,7 +377,7 @@ fileprivate struct DevelopmentAssetsDiagnosticTests: CoreBasedTests {
             try fs.write(Path("\(tmpDirPath.str)/Preview Assets/ExampleImage2.png"), contents: ByteString(""))
 
             let parameters = BuildParameters(action: .install, configuration: "Release")
-            try await BuildOperationTester(getCore(), testProject, simulated: false, fileSystem: fs).checkBuild(parameters: parameters) { results in
+            try await BuildOperationTester(getCore(), testProject, simulated: false, fileSystem: fs).checkBuild(parameters: parameters, runDestination: .macOS) { results in
                 results.checkNoTask(.matchRuleItemPattern(.contains("Preview")))
                 results.checkNoTask(.matchRuleItemPattern(.contains("ExampleImage1")))
                 results.checkNoTask(.matchRuleItemPattern(.contains("ExampleImage2")))

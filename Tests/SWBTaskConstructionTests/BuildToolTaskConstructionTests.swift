@@ -51,6 +51,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildPhases: [
                         // Whatever gets dragged into a Headers build phase will be unifdef'ed.
                         TestHeadersBuildPhase([
@@ -67,6 +68,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
                     ]),
                 TestStandardTarget(
                     "CustomBuildRule",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration(
                             "Debug",
@@ -94,6 +96,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
                     ]),
                 TestStandardTarget(
                     "NoApplyRules",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration(
                             "Debug",
@@ -102,7 +105,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
                             ]),
                     ],
                     buildPhases: [
-                        // Copy Files will not unidfef unless APPLY_RULES_IN_COPY_FILES is set.
+                        // Copy Files will not unifdef unless APPLY_RULES_IN_COPY_FILES is set.
                         TestCopyFilesBuildPhase([
                             "Header.h",
                             "ModuleMap.modulemap",
@@ -117,7 +120,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
         // Check the debug build.
-        await tester.checkBuild { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget("AppTarget") { target in
                 // Check that we have an unifdef task.
                 results.checkTask(.matchTarget(target), .matchRule(["Unifdef", "\(SRCROOT)/build/Debug/AppTarget.app/Contents/Headers/Header.h", "\(SRCROOT)/Sources/Header.h"])) { task in
@@ -135,7 +138,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             }
         }
 
-        await tester.checkBuild(targetName: "CustomBuildRule") { results in
+        await tester.checkBuild(runDestination: .macOS, targetName: "CustomBuildRule") { results in
             results.checkTarget("CustomBuildRule") { target in
                 results.checkTask(.matchTarget(target), .matchRule(["CpHeader", "\(SRCROOT)/build/Debug/CustomBuildRule.app/Contents/Headers/Header.h", "\(SRCROOT)/Sources/Header.h"])) { _ in }
 
@@ -145,7 +148,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             }
         }
 
-        await tester.checkBuild(targetName: "NoApplyRules") { results in
+        await tester.checkBuild(runDestination: .macOS, targetName: "NoApplyRules") { results in
             results.checkTarget("NoApplyRules") { target in
                 results.checkTask(.matchTarget(target), .matchRule(["Copy", "\(SRCROOT)/build/Debug/NoApplyRules.app/Contents/Resources/Header.h", "\(SRCROOT)/Sources/Header.h"])) { _ in }
                 results.checkTask(.matchTarget(target), .matchRule(["Copy", "\(SRCROOT)/build/Debug/NoApplyRules.app/Contents/Resources/ModuleMap.modulemap", "\(SRCROOT)/Sources/ModuleMap.modulemap"])) { _ in }
@@ -170,6 +173,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
                                                                ])],
                                       targets: [
                                         TestStandardTarget("AppTarget",
+                                                           type: .application,
                                                            buildPhases: [
                                                             TestSourcesBuildPhase([
                                                                 "SourceFile1.fake-ext",
@@ -179,7 +183,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
                                       ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget("AppTarget") { target in
                 // Check that we warned about the missing source file.
                 results.checkWarning(.prefix("no rule to process file"))
@@ -262,7 +266,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
 
         func checkBuild(params: BuildParameters) async throws {
             // Check the debug build.
-            try await tester.checkBuild(params, clientDelegate: TestCoreDataCompilerTaskPlanningClientDelegate()) { results in
+            try await tester.checkBuild(params, runDestination: .macOS, clientDelegate: TestCoreDataCompilerTaskPlanningClientDelegate()) { results in
                 try results.checkTarget(targetName) { target in
 
                     if params.action == .build || params.action == .installAPI || params.action == .installHeaders {
@@ -385,7 +389,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
         try await checkBuild(params: BuildParameters(action: .installHeaders, configuration: "Debug", overrides: ["EXPERIMENTAL_ALLOW_INSTALL_HEADERS_FILTERING": "YES"]))
 
         // Check a build which emits an error when trying to get the generated file paths for the model.
-        await tester.checkBuild() { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget(targetName) { _ in }
 
             // Check diagnostics.
@@ -639,7 +643,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
                 let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
                 // Test generating for Swift via an explicit override.
-                try await tester.checkBuild(BuildParameters(action: action, configuration: "Debug", overrides: overrides.addingContents(of: ["COREML_CODEGEN_LANGUAGE": "Swift"])), fs: fs, clientDelegate: TestCoreMLCompilerTaskPlanningClientDelegate()) { results in
+                try await tester.checkBuild(BuildParameters(action: action, configuration: "Debug", overrides: overrides.addingContents(of: ["COREML_CODEGEN_LANGUAGE": "Swift"])), runDestination: .macOS, fs: fs, clientDelegate: TestCoreMLCompilerTaskPlanningClientDelegate()) { results in
 
                     try checkBuild(action: action, with: results, srcroot: SRCROOT, expectedVisibility: visibilityBeingTested, expectedCodegenLanguage: .swift) { results, target in
                         // There should be a CoreMLModelCodegen task.
@@ -721,7 +725,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
                 }
 
                 // Test generating for Objective-C.
-                try await tester.checkBuild(BuildParameters(action: action, configuration: "Debug", overrides: overrides.addingContents(of: ["COREML_CODEGEN_LANGUAGE": "Objective-C"])), fs: fs, clientDelegate: TestCoreMLCompilerTaskPlanningClientDelegate()) { results in
+                try await tester.checkBuild(BuildParameters(action: action, configuration: "Debug", overrides: overrides.addingContents(of: ["COREML_CODEGEN_LANGUAGE": "Objective-C"])), runDestination: .macOS, fs: fs, clientDelegate: TestCoreMLCompilerTaskPlanningClientDelegate()) { results in
 
                     try checkBuild(action: action, with: results, srcroot: SRCROOT, expectedVisibility: visibilityBeingTested, expectedCodegenLanguage: .objectiveC) { results, target in
                         // There should be a CoreMLModelCodegen task.
@@ -839,7 +843,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
                 }
 
                 // Test generating for Swift using the target's defined predominant source code language.
-                try await tester.checkBuild(BuildParameters(action: action, configuration: "Debug", overrides: overrides), fs: fs, clientDelegate: TestCoreMLCompilerTaskPlanningClientDelegate()) { results in
+                try await tester.checkBuild(BuildParameters(action: action, configuration: "Debug", overrides: overrides), runDestination: .macOS, fs: fs, clientDelegate: TestCoreMLCompilerTaskPlanningClientDelegate()) { results in
 
                     try checkBuild(action: action, with: results, srcroot: SRCROOT, expectedVisibility: visibilityBeingTested, expectedCodegenLanguage: .swift) { results, target in
                         // There should be a CoreMLModelCodegen task.
@@ -925,7 +929,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             let tester = try await taskConstructionTesterForProject(with: .public)
 
             // Check some builds which emit errors when trying to get the generated file paths for the model.
-            await tester.checkBuild(BuildParameters(action: action, configuration: "Debug", overrides: overrides.addingContents(of: ["COREML_CODEGEN_SWIFT_VERSION": ""])), fs: fs, clientDelegate: TestCoreMLCompilerTaskPlanningClientDelegate()) { results in
+            await tester.checkBuild(BuildParameters(action: action, configuration: "Debug", overrides: overrides.addingContents(of: ["COREML_CODEGEN_SWIFT_VERSION": ""])), runDestination: .macOS, fs: fs, clientDelegate: TestCoreMLCompilerTaskPlanningClientDelegate()) { results in
                 results.checkTarget(targetName) { _ in }
 
                 // Check diagnostics.
@@ -934,7 +938,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
                 results.checkError(.prefix("SmartStuff3.mlmodel: No Swift version specified.  Set COREML_CODEGEN_SWIFT_VERSION to preferred Swift version."))
                 results.checkNoDiagnostics()
             }
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: overrides.addingContents(of: ["COREML_CODEGEN_LANGUAGE": "C"])), fs: fs, clientDelegate: TestCoreMLCompilerTaskPlanningClientDelegate()) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: overrides.addingContents(of: ["COREML_CODEGEN_LANGUAGE": "C"])), runDestination: .macOS, fs: fs, clientDelegate: TestCoreMLCompilerTaskPlanningClientDelegate()) { results in
                 results.checkTarget(targetName) { _ in }
 
                 // Check diagnostics.
@@ -1198,14 +1202,14 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
         var SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
         // Test passing the module name to intentbuilderc.
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["INTENTS_CODEGEN_LANGUAGE": "Swift", "DEFINES_MODULE": "YES", "PRODUCT_MODULE_NAME": "TestModule"]), clientDelegate: TestIntentsCompilerTaskPlanningClientDelegate(visibility: .public, moduleName: "TestModule")) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["INTENTS_CODEGEN_LANGUAGE": "Swift", "DEFINES_MODULE": "YES", "PRODUCT_MODULE_NAME": "TestModule"]), runDestination: .macOS, clientDelegate: TestIntentsCompilerTaskPlanningClientDelegate(visibility: .public, moduleName: "TestModule")) { results in
             checkBuild(with: results, srcroot: SRCROOT, visibility: .public, codegenLanguage: .swift, moduleName: "TestModule")
         }
 
         // We should not pass module name to intentbuilderc when building the app target
         // even if it has DEFINES_MODULE = YES.
         let applicationTester = try await taskConstructionTesterForProject(with: .public, targetType: .application)
-        await applicationTester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["INTENTS_CODEGEN_LANGUAGE": "Objective-C", "DEFINES_MODULE": "YES", "PRODUCT_MODULE_NAME": "TestModule"]), clientDelegate: TestIntentsCompilerTaskPlanningClientDelegate(visibility: .public)) { results in
+        await applicationTester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["INTENTS_CODEGEN_LANGUAGE": "Objective-C", "DEFINES_MODULE": "YES", "PRODUCT_MODULE_NAME": "TestModule"]), runDestination: .macOS, clientDelegate: TestIntentsCompilerTaskPlanningClientDelegate(visibility: .public)) { results in
             results.checkTarget(targetName) { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("IntentDefinitionCodegen")) { task in
                     task.checkCommandLine(["intentbuilderc", "generate", "-input", "\(SRCROOT)/Intents.intentdefinition", "-output", "\(SRCROOT)/build/aProject.build/Debug/\(targetName).build/DerivedSources/IntentDefinitionGenerated/Intents", "-classPrefix", "XC", "-language", "Objective-C", "-visibility", "public"])
@@ -1214,22 +1218,22 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
         }
 
         // Test generating for Swift via an explicit override.
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["INTENTS_CODEGEN_LANGUAGE": "Swift"]), clientDelegate: TestIntentsCompilerTaskPlanningClientDelegate(visibility: .public)) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["INTENTS_CODEGEN_LANGUAGE": "Swift"]), runDestination: .macOS, clientDelegate: TestIntentsCompilerTaskPlanningClientDelegate(visibility: .public)) { results in
             checkBuild(with: results, srcroot: SRCROOT, visibility: .public, codegenLanguage: .swift)
         }
 
         // Test generating for Objective-C.
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["INTENTS_CODEGEN_LANGUAGE": "Objective-C"]), clientDelegate: TestIntentsCompilerTaskPlanningClientDelegate(visibility: .public)) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["INTENTS_CODEGEN_LANGUAGE": "Objective-C"]), runDestination: .macOS, clientDelegate: TestIntentsCompilerTaskPlanningClientDelegate(visibility: .public)) { results in
             checkBuild(with: results, srcroot: SRCROOT, visibility: .public, codegenLanguage: .objectiveC)
         }
 
         // Test generating for Swift using the target's defined predominant source code language.
-        await tester.checkBuild(clientDelegate: TestIntentsCompilerTaskPlanningClientDelegate(visibility: .public)) { results in
+        await tester.checkBuild(runDestination: .macOS, clientDelegate: TestIntentsCompilerTaskPlanningClientDelegate(visibility: .public)) { results in
             checkBuild(with: results, srcroot: SRCROOT, visibility: .public, codegenLanguage: .swift)
         }
 
         // Check some builds which emit errors when trying to get the generated file paths for the model.
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["INTENTS_CODEGEN_LANGUAGE": "C"]), clientDelegate: TestIntentsCompilerTaskPlanningClientDelegate(visibility: .public)) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["INTENTS_CODEGEN_LANGUAGE": "C"]), runDestination: .macOS, clientDelegate: TestIntentsCompilerTaskPlanningClientDelegate(visibility: .public)) { results in
             results.checkTarget(targetName) { _ in }
 
             // Check diagnostics.
@@ -1240,21 +1244,21 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
         tester = try await taskConstructionTesterForProject(with: .private)
         SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["INTENTS_CODEGEN_LANGUAGE": "Objective-C"]), clientDelegate: TestIntentsCompilerTaskPlanningClientDelegate(visibility: .private)) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["INTENTS_CODEGEN_LANGUAGE": "Objective-C"]), runDestination: .macOS, clientDelegate: TestIntentsCompilerTaskPlanningClientDelegate(visibility: .private)) { results in
             checkBuild(with: results, srcroot: SRCROOT, visibility: .private, codegenLanguage: .objectiveC)
         }
 
         tester = try await taskConstructionTesterForProject(with: .project)
         SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["INTENTS_CODEGEN_LANGUAGE": "Objective-C"]), clientDelegate: TestIntentsCompilerTaskPlanningClientDelegate(visibility: .project)) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["INTENTS_CODEGEN_LANGUAGE": "Objective-C"]), runDestination: .macOS, clientDelegate: TestIntentsCompilerTaskPlanningClientDelegate(visibility: .project)) { results in
             checkBuild(with: results, srcroot: SRCROOT, visibility: .project, codegenLanguage: .objectiveC)
         }
 
         tester = try await taskConstructionTesterForProject(with: .noCodegen)
         SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["INTENTS_CODEGEN_LANGUAGE": "Objective-C"]), clientDelegate: TestIntentsCompilerTaskPlanningClientDelegate(visibility: .noCodegen)) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["INTENTS_CODEGEN_LANGUAGE": "Objective-C"]), runDestination: .macOS, clientDelegate: TestIntentsCompilerTaskPlanningClientDelegate(visibility: .noCodegen)) { results in
             checkBuild(with: results, srcroot: SRCROOT, visibility: .noCodegen, codegenLanguage: .objectiveC)
         }
     }
@@ -1365,7 +1369,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
         let perFileFlagsAvailableWorkaround = try core.xcodeProductBuildVersion >= ProductBuildVersion("12A65")
 
         // Check the tasks.
-        try await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        try await tester.checkBuild(runDestination: .macOS) { results in
             try results.checkTarget(targetName) { target in
                 // There should be two CompileMetalFile tasks.
                 try results.checkTask(.matchTarget(target), .matchRuleType("CompileMetalFile"), .matchRuleItemBasename("Some.metal")) { task in
@@ -1490,7 +1494,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testProject)
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget(targetName) { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("CompileMetalFile"), .matchRuleItemBasename("Foo.metal")) { task in
                     task.checkCommandLineContains(["\(SRCROOT)/build/aProject.build/Debug/MetalStuff.build/Metal/Foo-\(BuildPhaseWithBuildFiles.filenameUniquefierSuffixFor(path: Path(SRCROOT).join("Sources").join("Foo.metal"))).air"])
@@ -1531,7 +1535,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
 
             let tester = try TaskConstructionTester(core, testProject)
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+            await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkTarget(targetName) { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("CompileMetalFile"), .matchRuleItemBasename("foo.metal")) { task in
                         if languageRevision == "UseDeploymentTarget" {
@@ -1629,7 +1633,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
 
             let tester = try TaskConstructionTester(core, testProject)
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+            await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkTarget(targetName) { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("CompileMetalFile"), .matchRuleItemBasename("foo.metal")) { task in
                         if enableModules == "STDLIB" {
@@ -1678,7 +1682,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget(targetName) { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("CompileMetalFile"), .matchRuleItemBasename("foo.metal")) { task in
                     task.checkCommandLineNoMatch([.prefix("-O")])
@@ -1713,7 +1717,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget(targetName) { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("CompileMetalFile"), .matchRuleItemBasename("foo.metal")) { task in
                     task.checkCommandLineContains(["-Os"])
@@ -1748,7 +1752,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
 
         let tester = try TaskConstructionTester(core, testProject)
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget(targetName) { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("CompileMetalFile"), .matchRuleItemBasename("foo.metal")) { task in
                     task.checkCommandLineContains(expectedOptions)
@@ -1997,7 +2001,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testProject)
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .anyMac)) { results in
+        await tester.checkBuild(runDestination: .anyMac) { results in
             results.checkTarget("Foo") { target in
                 // There should be one OpenCL code generation task.
                 results.checkTask(.matchTarget(target), .matchRuleType("Compile")) { task in
@@ -2081,7 +2085,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
             // Default build uses clang.
-            await tester.checkBuild() { results in
+            await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["clang", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2093,7 +2097,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             }
 
             // Override LD to use a different linker path.
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LD": "/usr/bin/ld"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LD": "/usr/bin/ld"]), runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["/usr/bin/ld", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2105,7 +2109,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             }
 
             // Override LDPLUSPLUS to use a different linker path - has no effect here
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LDPLUSPLUS": "/usr/bin/ldplusplus"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LDPLUSPLUS": "/usr/bin/ldplusplus"]), runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["clang", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2150,7 +2154,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
             // Default build uses clang++.
-            await tester.checkBuild() { results in
+            await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["clang++", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2162,7 +2166,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             }
 
             // Override LD to use a different linker path - has no effect here.
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LD": "/usr/bin/ld"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LD": "/usr/bin/ld"]), runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["clang++", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2174,7 +2178,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             }
 
             // Override LDPLUSPLUS to use a different linker path
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LDPLUSPLUS": "/usr/bin/ldplusplus"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LDPLUSPLUS": "/usr/bin/ldplusplus"]), runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["/usr/bin/ldplusplus", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2219,7 +2223,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
             // Default build uses clang++.
-            await tester.checkBuild() { results in
+            await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["clang++", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2231,7 +2235,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             }
 
             // Override LD to use a different linker path - has no effect here.
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LD": "/usr/bin/ld"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LD": "/usr/bin/ld"]), runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["clang++", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2243,7 +2247,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             }
 
             // Override LDPLUSPLUS to use a different linker path
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LDPLUSPLUS": "/usr/bin/ldplusplus"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LDPLUSPLUS": "/usr/bin/ldplusplus"]), runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["/usr/bin/ldplusplus", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2287,7 +2291,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
             // Default build uses clang++.
-            await tester.checkBuild() { results in
+            await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["clang++", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2299,7 +2303,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             }
 
             // Override LD to use a different linker path - has no effect here.
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LD": "/usr/bin/ld"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LD": "/usr/bin/ld"]), runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["clang++", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2311,7 +2315,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             }
 
             // Override LDPLUSPLUS to use a different linker path
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LDPLUSPLUS": "/usr/bin/ldplusplus"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LDPLUSPLUS": "/usr/bin/ldplusplus"]), runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["/usr/bin/ldplusplus", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2356,7 +2360,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
             // Default build uses clang++.
-            await tester.checkBuild() { results in
+            await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["clang++", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2368,7 +2372,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             }
 
             // Override LD to use a different linker path - has no effect here.
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LD": "/usr/bin/ld"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LD": "/usr/bin/ld"]), runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["clang++", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2380,7 +2384,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             }
 
             // Override LDPLUSPLUS to use a different linker path
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LDPLUSPLUS": "/usr/bin/ldplusplus"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LDPLUSPLUS": "/usr/bin/ldplusplus"]), runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["/usr/bin/ldplusplus", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2426,7 +2430,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
             // Default build uses clang++.
-            await tester.checkBuild() { results in
+            await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["clang++", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2438,7 +2442,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             }
 
             // Override LD to use a different linker path - has no effect here.
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LD": "/usr/bin/ld"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LD": "/usr/bin/ld"]), runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["clang++", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2450,7 +2454,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             }
 
             // Override LDPLUSPLUS to use a different linker path
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LDPLUSPLUS": "/usr/bin/ldplusplus"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LDPLUSPLUS": "/usr/bin/ldplusplus"]), runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["/usr/bin/ldplusplus", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2496,7 +2500,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
             // Default build uses clang++.
-            await tester.checkBuild() { results in
+            await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["clang++", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2509,7 +2513,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             }
 
             // Override LD to use a different linker path - has no effect here.
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LD": "/usr/bin/ld"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LD": "/usr/bin/ld"]), runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["clang++", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2522,7 +2526,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             }
 
             // Override LDPLUSPLUS to use a different linker path
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LDPLUSPLUS": "/usr/bin/ldplusplus"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["LDPLUSPLUS": "/usr/bin/ldplusplus"]), runDestination: .macOS) { results in
                 results.checkTarget("Application") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
                         task.checkCommandLineContains(["/usr/bin/ldplusplus", "-o", "\(SRCROOT)/build/Debug/Application.app/Contents/MacOS/Application"])
@@ -2572,7 +2576,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild() { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkNoDiagnostics()
 
             results.checkTarget("Application") { target in
@@ -2622,7 +2626,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
         try fs.write(Path("/c.plist"), contents: "")
         try fs.write(Path("/e.plist"), contents: "")
 
-        await tester.checkBuild(fs: fs) { results in
+        await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
             results.checkNoDiagnostics()
 
             results.checkTarget("Application") { target in
@@ -2687,7 +2691,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
         // Check the build.
-        await tester.checkBuild() { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget("Application") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("CompileC"), .matchRuleItemBasename("CFile1.c")) { task in
                     task.checkCommandLineContains(["clang", "-x", "c"])
@@ -2760,7 +2764,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
         // Check the build.
-        await tester.checkBuild(BuildParameters(action: .install, configuration: "Release")) { results in
+        await tester.checkBuild(BuildParameters(action: .install, configuration: "Release"), runDestination: .macOS) { results in
             results.consumeTasksMatchingRuleTypes(["CodeSign", "CreateBuildDirectory", "Gate", "Ld", "MkDir", "ProcessInfoPlistFile", "ProcessProductPackaging", "RegisterExecutionPolicyException", "SetMode", "SetOwnerAndGroup", "SymLink", "Touch", "WriteAuxiliaryFile"])
 
             // Check there are no diagnostics.
@@ -2807,7 +2811,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
         // Check the build.
-        await tester.checkBuild() { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkNoDiagnostics()
 
             results.checkTarget("MyLibrary") { target in
@@ -2847,6 +2851,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "App",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug",
                                                buildSettings: [
@@ -2865,7 +2870,7 @@ fileprivate struct BuildToolTaskConstructionTests: CoreBasedTests {
         let tester = try TaskConstructionTester(core, testProject)
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
-        await tester.checkBuild { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget("App") { target in
                 // Check the storyboard compiles.
                 results.checkTask(.matchTarget(target), .matchRuleType("CompileStoryboard")) { task in

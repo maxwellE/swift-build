@@ -34,7 +34,7 @@ public struct CASOptions: Hashable, Serializable, Encodable, Sendable {
         /// Cache directory is removed after the build is finished.
         case discarded
         /// The maximum size for the cache directory in bytes. `nil` means no limit.
-        case maxSizeBytes(Int?)
+        case maxSizeBytes(ByteCount?)
         /// The maximum size for the cache directory, in terms of percentage of the
         /// available space on the disk. Set to 100 to indicate no limit, 50 to
         /// indicate that the cache size will not be left over half the available disk
@@ -86,26 +86,22 @@ public struct CASOptions: Hashable, Serializable, Encodable, Sendable {
     /// * "0": indicates no limit
     ///
     /// Returns `nil` if the string is invalid.
-    public static func parseSizeLimit(_ sizeLimitStr: String) -> Int? {
-        if let size = Int(sizeLimitStr) {
+    public static func parseSizeLimit(_ sizeLimitStr: String) -> ByteCount? {
+        if let size = ByteCount(Int64(sizeLimitStr)) {
             return size
         }
-        guard let size = Int(sizeLimitStr.dropLast()) else {
+        guard let size = Int64(sizeLimitStr.dropLast()) else {
             return nil
         }
-        let kb = 1024
-        let mb = kb * 1024
-        let gb = mb * 1024
-        let tb = gb * 1024
-        switch sizeLimitStr.last! {
-        case "K": // kilobytes
-            return size * kb
-        case "M": // megabytes
-            return size * mb
-        case "G": // gigabytes
-            return size * gb
-        case "T": // terrabytes
-            return size * tb
+        switch sizeLimitStr.last {
+        case "K":
+            return .kilobytes(size)
+        case "M":
+            return .megabytes(size)
+        case "G":
+            return .gigabytes(size)
+        case "T":
+            return .terabytes(size)
         default:
             return nil
         }
@@ -170,17 +166,26 @@ public struct CASOptions: Hashable, Serializable, Encodable, Sendable {
         self.limitingStrategy = try deserializer.deserialize()
     }
 
+    public enum Purpose: Sendable {
+        case generic
+        case compiler(GCCCompatibleLanguageDialect)
+    }
+
     public static func create(
         _ scope: MacroEvaluationScope,
-        _ language: GCCCompatibleLanguageDialect?
+        _ purpose: Purpose
     ) throws -> CASOptions {
         func isLanguageSupportedForRemoteCaching() -> Bool {
-            let supportedLangs = scope.evaluate(BuiltinMacros.COMPILATION_CACHE_REMOTE_SUPPORTED_LANGUAGES)
-            // If no specific list of languages is provided then all languages are supported.
-            guard !supportedLangs.isEmpty else { return true }
-            // If we're  not compiling a specific language, assume support.
-            guard let language else { return true }
-            return supportedLangs.contains(language.dialectNameForCompilerCommandLineArgument)
+            switch purpose {
+            case .compiler(let language):
+                let supportedLangs = scope.evaluate(BuiltinMacros.COMPILATION_CACHE_REMOTE_SUPPORTED_LANGUAGES)
+                // If no specific list of languages is provided then all languages are supported.
+                guard !supportedLangs.isEmpty else { return true }
+                // If we're  not compiling a specific language, assume support.
+                return supportedLangs.contains(language.dialectNameForCompilerCommandLineArgument)
+            case .generic:
+                return true
+            }
         }
 
         let casPath: Path
@@ -200,7 +205,12 @@ public struct CASOptions: Hashable, Serializable, Encodable, Sendable {
                 remoteServicePath = nil
             }
         } else {
-            casPath = Path(scope.evaluate(BuiltinMacros.COMPILATION_CACHE_CAS_PATH)).join("builtin")
+            switch purpose {
+            case .compiler:
+                casPath = Path(scope.evaluate(BuiltinMacros.COMPILATION_CACHE_CAS_PATH)).join("builtin")
+            case .generic:
+                casPath = Path(scope.evaluate(BuiltinMacros.COMPILATION_CACHE_CAS_PATH)).join("generic")
+            }
             pluginPath = nil
             remoteServicePath = nil
         }
@@ -214,7 +224,7 @@ public struct CASOptions: Hashable, Serializable, Encodable, Sendable {
                 guard let sizeLimit = CASOptions.parseSizeLimit(sizeLimitStr) else {
                     throw Errors.invalidSizeLimit(sizeLimitString: sizeLimitStr, origin: origin)
                 }
-                return .maxSizeBytes(sizeLimit > 0 ? sizeLimit : nil)
+                return .maxSizeBytes(sizeLimit > .zero ? sizeLimit : nil)
             }
 
             let sizeLimitStr = scope.evaluate(BuiltinMacros.COMPILATION_CACHE_LIMIT_SIZE)

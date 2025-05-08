@@ -52,7 +52,7 @@ package protocol BuildOperationDelegate {
     /// - Parameters:
     ///   - status: Overall build operation status to override the build result with. This can be used when the operation was aborted (the build could not run to completion, e.g. due to discovery of a cycle) or cancelled and wants to propagate that status regardless of the status of the individual build tasks in the underlying (llbuild) build system. `nil` will use the status based on the result status of the tasks in the underlying llbuild build system.
     ///   - delegate: The task output delegate provided by the \see buildStarted() method.
-    func buildComplete(_ operation: any BuildSystemOperation, status: BuildOperationEnded.Status?, delegate: any BuildOutputDelegate, metrics: BuildOperationMetrics?)
+    @discardableResult func buildComplete(_ operation: any BuildSystemOperation, status: BuildOperationEnded.Status?, delegate: any BuildOutputDelegate, metrics: BuildOperationMetrics?) -> BuildOperationEnded.Status
 
     /// Called when an individual task has been started.
     ///
@@ -137,7 +137,7 @@ package protocol BuildSystemOperation: AnyObject, Sendable {
     var subtaskProgressReporter: (any SubtaskProgressReporter)? { get }
     var uuid: UUID { get }
 
-    func build() async
+    @discardableResult func build() async -> BuildOperationEnded.Status
     func cancel()
     func abort()
 }
@@ -154,7 +154,7 @@ package extension BuildSystemOperation {
 }
 
 /// An in-flight build operation created in response to a build request.
-package final class BuildOperation: BuildSystemOperation {
+package class BuildOperation: BuildSystemOperation {
     /// Statistics on an executing operation.
     ///
     /// These statistics do not necessarily include all low-level commands.
@@ -285,7 +285,7 @@ package final class BuildOperation: BuildSystemOperation {
     }
 
     /// Perform the build.
-    package func build() async {
+    package func build() async -> BuildOperationEnded.Status {
         // Inform the client the build has started.
         buildOutputDelegate = delegate.buildStarted(self)
 
@@ -305,8 +305,9 @@ package final class BuildOperation: BuildSystemOperation {
         // Diagnose attempts to use "dry run" mode, which we don't support yet.
         if request.useDryRun {
             buildOutputDelegate.error("-dry-run is not yet supported in the new build system")
-            delegate.buildComplete(self, status: .failed, delegate: buildOutputDelegate, metrics: nil)
-            return
+            let effectiveStatus = BuildOperationEnded.Status.failed
+            delegate.buildComplete(self, status: effectiveStatus, delegate: buildOutputDelegate, metrics: nil)
+            return effectiveStatus
         }
 
         // Helper method to emit information to the CAPTURED_BUILD_INFO_DIR.  This is mainly to be able to gracefully return after emitting a warning if something goes wrong, because not being able to emit this info is typically not serious enough to want to abort the whole build.
@@ -367,8 +368,9 @@ package final class BuildOperation: BuildSystemOperation {
 
         // If task construction had errors, fail the build immediately, unless `continueBuildingAfterErrors` is set.
         if !request.continueBuildingAfterErrors && buildDescription.hadErrors {
-            delegate.buildComplete(self, status: .failed, delegate: buildOutputDelegate, metrics: nil)
-            return
+            let effectiveStatus = BuildOperationEnded.Status.failed
+            delegate.buildComplete(self, status: effectiveStatus, delegate: buildOutputDelegate, metrics: nil)
+            return effectiveStatus
         }
 
         if userPreferences.enableDebugActivityLogs {
@@ -410,37 +412,25 @@ package final class BuildOperation: BuildSystemOperation {
         do {
             let isCancelled = await queue.sync{ self.wasCancellationRequested }
             if !UserDefaults.skipEarlyBuildOperationCancellation && isCancelled {
-                delegate.buildComplete(self, status: .cancelled, delegate: buildOutputDelegate, metrics: nil)
-                return
+                let effectiveStatus = BuildOperationEnded.Status.cancelled
+                delegate.buildComplete(self, status: effectiveStatus, delegate: buildOutputDelegate, metrics: nil)
+                return effectiveStatus
             }
         }
 
         // Perform any needed steps before we kick off the build.
-        if let (warnings, errors) = prepareForBuilding() {
+        if let (warnings, errors) = await prepareForBuilding() {
             // Emit any warnings and errors.  If there were any errors, then bail out.
             for message in warnings { buildOutputDelegate.warning(message) }
             for message in errors { buildOutputDelegate.error(message) }
             guard errors.isEmpty else {
-                delegate.buildComplete(self, status: .failed, delegate: buildOutputDelegate, metrics: nil)
-                return
+                let effectiveStatus = BuildOperationEnded.Status.failed
+                delegate.buildComplete(self, status: effectiveStatus, delegate: buildOutputDelegate, metrics: nil)
+                return effectiveStatus
             }
         }
 
         let dbPath = persistent ? buildDescription.buildDatabasePath : Path("")
-
-        func saveBuildDebuggingData(from sourcePath: Path, to filename: String, type: String, debuggingDataPath: Path?) {
-            guard let debuggingDataPath else {
-                return
-            }
-            do {
-                try fs.createDirectory(debuggingDataPath, recursive: true)
-                let savedPath = debuggingDataPath.join(filename)
-                try fs.copy(sourcePath, to: savedPath)
-                self.buildOutputDelegate.note("build debugging is enabled, \(type): '\(savedPath.str)'")
-            } catch {
-                self.buildOutputDelegate.warning("unable to preserve \(type) for post-mortem debugging: \(error)")
-            }
-        }
 
         // Enable build debugging, if requested.
         let traceFile: Path?
@@ -486,12 +476,44 @@ package final class BuildOperation: BuildSystemOperation {
             self.buildOutputDelegate.error("unable to retrieve additional environment variables via the BuildOperationExtensionPoint.")
         }
 
+        struct Context: EnvironmentExtensionAdditionalEnvironmentVariablesContext {
+            var hostOperatingSystem: OperatingSystem
+            var fs: any FSProxy
+        }
+
         do {
-            try await buildEnvironment.addContents(of: EnvironmentExtensionPoint.additionalEnvironmentVariables(pluginManager: core.pluginManager, fs: fs))
+            try await buildEnvironment.addContents(of: EnvironmentExtensionPoint.additionalEnvironmentVariables(pluginManager: core.pluginManager, context: Context(hostOperatingSystem: core.hostOperatingSystem, fs: fs)))
         } catch {
             self.buildOutputDelegate.error("unable to retrieve additional environment variables via the EnvironmentExtensionPoint.")
         }
 
+        // If we use a cached build system, be sure to release it on build completion.
+        if userPreferences.enableBuildSystemCaching {
+            // Get the build system to use, keyed by the directory containing the (sole) database.
+            let entry = cachedBuildSystems.getOrInsert(buildDescription.buildDatabasePath.dirname, { SystemCacheEntry() })
+            return await entry.lock.withLock { [buildEnvironment] _ in
+                await _build(cacheEntry: entry, dbPath: dbPath, traceFile: traceFile, debuggingDataPath: debuggingDataPath, buildEnvironment: buildEnvironment)
+            }
+        } else {
+            return await _build(cacheEntry: nil, dbPath: dbPath, traceFile: traceFile, debuggingDataPath: debuggingDataPath, buildEnvironment: buildEnvironment)
+        }
+    }
+
+    private func saveBuildDebuggingData(from sourcePath: Path, to filename: String, type: String, debuggingDataPath: Path?) {
+        guard let debuggingDataPath else {
+            return
+        }
+        do {
+            try fs.createDirectory(debuggingDataPath, recursive: true)
+            let savedPath = debuggingDataPath.join(filename)
+            try fs.copy(sourcePath, to: savedPath)
+            self.buildOutputDelegate.note("build debugging is enabled, \(type): '\(savedPath.str)'")
+        } catch {
+            self.buildOutputDelegate.warning("unable to preserve \(type) for post-mortem debugging: \(error)")
+        }
+    }
+
+    private func _build(cacheEntry entry: SystemCacheEntry?, dbPath: Path, traceFile: Path?, debuggingDataPath: Path?, buildEnvironment: [String: String]) async -> BuildOperationEnded.Status {
         let algorithm: BuildSystem.SchedulerAlgorithm = {
             if let algorithmString = UserDefaults.schedulerAlgorithm {
                 if let algorithm = BuildSystem.SchedulerAlgorithm(rawValue: algorithmString) {
@@ -509,12 +531,6 @@ package final class BuildOperation: BuildSystemOperation {
         let adaptor: OperationSystemAdaptor
         let system: BuildSystem
 
-        // If we use a cached build system, be sure to release it on build completion.
-        var cacheEntry: SystemCacheEntry? = nil
-        defer {
-            cacheEntry?.lock.signal()
-        }
-
         let llbQoS: SWBLLBuild.BuildSystem.QualityOfService?
         switch request.qos {
         case .default: llbQoS = .default
@@ -524,16 +540,7 @@ package final class BuildOperation: BuildSystemOperation {
         default: llbQoS = nil
         }
 
-        if userPreferences.enableBuildSystemCaching {
-            // Get the build system to use, keyed by the directory containing the (sole) database.
-            let key = buildDescription.buildDatabasePath.dirname
-            let entry = cachedBuildSystems.getOrInsert(key) { SystemCacheEntry() }
-            cacheEntry = entry
-
-            // Wait for exclusive lock on this cache entry to prevent concurrent
-            // use/free of accompanying objects.
-            await entry.lock.wait()
-
+        if let entry {
             // If the entry is valid, reuse it.
             if let cachedAdaptor = entry.adaptor, entry.environment == buildEnvironment, entry.buildDescription! === buildDescription, entry.llbQoS == llbQoS {
                 adaptor = cachedAdaptor
@@ -584,7 +591,7 @@ package final class BuildOperation: BuildSystemOperation {
                 if let buildOnlyTheseOutputs = buildOutputMap?.keys {
                     // Build selected outputs, the build fails if one operation failed.
                     result = await _Concurrency.Task.detachNewThread(name: "llb_buildsystem_build_node") {
-                        !buildOnlyTheseOutputs.map({ system.build(node: $0) }).contains(false)
+                        !buildOnlyTheseOutputs.map({ return system.build(node: Path($0).strWithPosixSlashes) }).contains(false)
                     }
                 } else if let buildOnlyTheseNodes = nodesToBuild {
                     // Build selected nodes, the build fails if one operation failed.
@@ -656,24 +663,52 @@ package final class BuildOperation: BuildSystemOperation {
             }
         }
 
+        let aggregatedCounters = await adaptor.getAggregatedCounters()
+        let aggregatedTaskCounters = await adaptor.getAggregatedTaskCounters()
+        do {
+            let cacheHits: Int
+            let cacheMisses: Int
+            do {
+                let swiftCacheHits = aggregatedCounters[.swiftCacheHits, default: 0]
+                let swiftCacheMisses = aggregatedCounters[.swiftCacheMisses, default: 0]
+                let clangCacheHits = aggregatedCounters[.clangCacheHits, default: 0]
+                let clangCacheMisses = aggregatedCounters[.clangCacheMisses, default: 0]
+                cacheHits = swiftCacheHits + clangCacheHits
+                cacheMisses = swiftCacheMisses + clangCacheMisses
+            }
+            if cacheHits + cacheMisses > 0 {
+                let signature = ByteString(encodingAsUTF8: "compilation_cache_metrics")
+                adaptor.withActivity(ruleInfo: "CompilationCacheMetrics", executionDescription: "Report compilation cache metrics", signature: signature, target: nil, parentActivity: nil) { activity in
+                    func getSummary(hits: Int, misses: Int) -> String {
+                        let hitPercent = Int((Double(hits) / Double(hits + misses) * 100).rounded())
+                        let total = hits + misses
+                        return "\(hits) hit\(hits == 1 ? "" : "s") / \(total) cacheable task\(total == 1 ? "" : "s") (\(hitPercent)%)"
+                    }
+                    delegate.emit(diagnostic: Diagnostic(behavior: .note, location: .unknown, data: DiagnosticData(getSummary(hits: cacheHits, misses: cacheMisses))), for: activity, signature: signature)
+                    return .succeeded
+                }
+
+            }
+        }
+
         if SWBFeatureFlag.enableCacheMetricsLogs.value {
-            adaptor.withActivity(ruleInfo: "CacheMetrics", executionDescription: "Report cache metrics", signature: "cache_metrics", target: nil, parentActivity: nil) { activity in
+            adaptor.withActivity(ruleInfo: "RawCacheMetrics", executionDescription: "Report raw cache metrics", signature: "raw_cache_metrics", target: nil, parentActivity: nil) { activity in
                 struct AllCounters: Encodable {
                     var global: [String: Double] = [:]
                     var tasks: [String: [String: Double]] = [:]
                 }
                 var serializedCounters = AllCounters()
-                for (key, value) in self.delegate.aggregatedCounters {
+                for (key, value) in aggregatedCounters {
                     serializedCounters.global[key.rawValue] = Double(value)
                 }
-                for (taskId, taskCounters) in self.delegate.aggregatedTaskCounters {
+                for (taskId, taskCounters) in aggregatedTaskCounters {
                     var serialTaskCounters: [String: Double] = [:]
                     for (counterKey, counterValue) in taskCounters {
                         serialTaskCounters[counterKey.rawValue] = Double(counterValue)
                     }
                     serializedCounters.tasks[taskId] = serialTaskCounters
                 }
-                delegate.emit(data: ByteString(encodingAsUTF8: "\(serializedCounters)").bytes, for: activity, signature: "cache_metrics")
+                delegate.emit(data: ByteString(encodingAsUTF8: "\(serializedCounters)").bytes, for: activity, signature: "raw_cache_metrics")
                 return .succeeded
             }
         }
@@ -702,10 +737,10 @@ package final class BuildOperation: BuildSystemOperation {
                     var tasks: [String: [String: Double]] = [:]
                 }
                 var serializedCounters = AllCounters()
-                for (key, value) in self.delegate.aggregatedCounters {
+                for (key, value) in aggregatedCounters {
                     serializedCounters.global[key.rawValue] = Double(value)
                 }
-                for (taskId, taskCounters) in self.delegate.aggregatedTaskCounters {
+                for (taskId, taskCounters) in aggregatedTaskCounters {
                     var serialTaskCounters: [String: Double] = [:]
                     for (counterKey, counterValue) in taskCounters {
                         serialTaskCounters[counterKey.rawValue] = Double(counterValue)
@@ -738,11 +773,15 @@ package final class BuildOperation: BuildSystemOperation {
             struct SwiftDataTraceEntry: Codable {
                 let buildDescriptionSignature: String
                 let isTargetParallelizationEnabled: Bool
+                let name: String
+                let path: String
             }
             do {
                 let traceEntry  = SwiftDataTraceEntry(
                     buildDescriptionSignature: buildDescription.signature.asString,
-                    isTargetParallelizationEnabled: request.useParallelTargets
+                    isTargetParallelizationEnabled: request.useParallelTargets,
+                    name: workspace.name,
+                    path: workspace.path.str
                 )
                 let encoder = JSONEncoder(outputFormatting: .sortedKeys)
                 try fs.append(swiftBuildTraceFilePath, contents: ByteString(encoder.encode(traceEntry)) + "\n")
@@ -767,10 +806,10 @@ package final class BuildOperation: BuildSystemOperation {
         }
 
         // `buildComplete()` should not run within `queue`, otherwise there can be a deadlock during cancelling.
-        delegate.buildComplete(self, status: effectiveStatus, delegate: buildOutputDelegate, metrics: .init(counters: delegate.aggregatedCounters))
+        return delegate.buildComplete(self, status: effectiveStatus, delegate: buildOutputDelegate, metrics: .init(counters: aggregatedCounters))
     }
 
-    func prepareForBuilding() -> ([String], [String])? {
+    func prepareForBuilding() async -> ([String], [String])? {
         let warnings = [String]()       // Not presently used
         var errors = [String]()
 
@@ -790,7 +829,59 @@ package final class BuildOperation: BuildSystemOperation {
             }
         }
 
+        if UserDefaults.enableCASValidation {
+            for info in buildDescription.casValidationInfos {
+                do {
+                    try await validateCAS(info)
+                } catch {
+                    errors.append("cas validation failed for \(info.options.casPath.str)")
+                }
+            }
+        }
+
         return (warnings.count > 0 || errors.count > 0) ? (warnings, errors) : nil
+    }
+
+    func validateCAS(_ info: BuildDescription.CASValidationInfo) async throws {
+        assert(UserDefaults.enableCASValidation)
+
+        let casPath = info.options.casPath
+        let ruleInfo = "ValidateCAS \(casPath.str) \(info.llvmCasExec.str)"
+
+        let signatureCtx = InsecureHashContext()
+        signatureCtx.add(string: "ValidateCAS")
+        signatureCtx.add(string: casPath.str)
+        signatureCtx.add(string: info.llvmCasExec.str)
+        let signature = signatureCtx.signature
+
+        let activityId = delegate.beginActivity(self, ruleInfo: ruleInfo, executionDescription: "Validate CAS contents at \(casPath.str)", signature: signature, target: nil, parentActivity: nil)
+        var status: BuildOperationTaskEnded.Status = .failed
+        defer {
+            delegate.endActivity(self, id: activityId, signature: signature, status: status)
+        }
+
+        var commandLine = [
+            info.llvmCasExec.str,
+            "-cas", casPath.str,
+            "-validate-if-needed",
+            "-check-hash",
+            "-allow-recovery",
+        ]
+        if let pluginPath = info.options.pluginPath {
+            commandLine.append(contentsOf: [
+                "-fcas-plugin-path", pluginPath.str
+            ])
+        }
+        let result: Processes.ExecutionResult = try await clientDelegate.executeExternalTool(commandLine: commandLine)
+        // In a task we might use a discovered tool info to detect if the tool supports validation, but without that scaffolding, just check the specific error.
+        if result.exitStatus == .exit(1) && result.stderr.contains(ByteString("Unknown command line argument '-validate-if-needed'")) {
+            delegate.emit(data: ByteString("validation not supported").bytes, for: activityId, signature: signature)
+            status = .succeeded
+        } else {
+            delegate.emit(data: ByteString(result.stderr).bytes, for: activityId, signature: signature)
+            delegate.emit(data: ByteString(result.stdout).bytes, for: activityId, signature: signature)
+            status = result.exitStatus.isSuccess ? .succeeded : result.exitStatus.wasCanceled ? .cancelled : .failed
+        }
     }
 
     /// Cancel the executing build operation.
@@ -851,8 +942,17 @@ package final class BuildOperation: BuildSystemOperation {
             guard targetSettings.platform?.name == antecedentSettings.platform?.name && targetSettings.sdkVariant?.name == antecedentSettings.sdkVariant?.name else {
                 return
             }
+            // Implicit dependency domains allow projects to build multiple copies of a module in a workspace with implicit dependencies enabled, so never diagnose a cross-domain dependency.
+            guard targetSettings.globalScope.evaluate(BuiltinMacros.IMPLICIT_DEPENDENCY_DOMAIN) == antecedentSettings.globalScope.evaluate(BuiltinMacros.IMPLICIT_DEPENDENCY_DOMAIN) else {
+                return
+            }
 
-            let message = DiagnosticData("'\(target.target.name)' is missing a dependency on '\(antecedent.target.name)' because \(reason)")
+            let message: DiagnosticData
+            if self.userPreferences.enableDebugActivityLogs {
+                message = DiagnosticData("'\(target.target.name):\(target.guid.stringValue)' is missing a dependency on '\(antecedent.target.name):\(antecedent.guid.stringValue)' because \(reason)")
+            } else {
+                message = DiagnosticData("'\(target.target.name)' is missing a dependency on '\(antecedent.target.name)' because \(reason)")
+            }
             switch warningLevel {
             case .yes:
                 buildOutputDelegate.emit(Diagnostic(behavior: .warning, location: .unknown, data: message))
@@ -897,6 +997,10 @@ extension BuildOperation: TaskExecutionDelegate {
 
     package var namespace: MacroNamespace {
         workspace.userNamespace
+    }
+
+    package var emitFrontendCommandLines: Bool {
+        buildDescription.emitFrontendCommandLines
     }
 }
 
@@ -976,7 +1080,6 @@ private struct OperatorSystemAdaptorDynamicContext: DynamicTaskExecutionDelegate
         singleUse: Bool,
         workingDirectory: Path,
         environment: EnvironmentBindings = EnvironmentBindings(),
-        taskInputs: [ExecutionNode],
         forTarget: ConfiguredTarget?,
         priority: TaskPriority,
         showEnvironment: Bool = false,
@@ -987,7 +1090,6 @@ private struct OperatorSystemAdaptorDynamicContext: DynamicTaskExecutionDelegate
             taskKey: taskKey,
             workingDirectory: workingDirectory,
             environment: environment,
-            taskInputs: taskInputs,
             target: forTarget,
             showEnvironment: showEnvironment
         )
@@ -1078,7 +1180,12 @@ private class InProcessCommand: SWBLLBuild.ExternalCommand, SWBLLBuild.ExternalD
         return signature
     }
 
+    // temporary for compatibility
     var depedencyDataFormat: SWBLLBuild.DependencyDataFormat {
+        dependencyDataFormat
+    }
+
+    var dependencyDataFormat: SWBLLBuild.DependencyDataFormat {
         switch task.dependencyData {
         case .makefile?, .makefiles?:
             return .makefile
@@ -1147,7 +1254,7 @@ private class InProcessCommand: SWBLLBuild.ExternalCommand, SWBLLBuild.ExternalD
         // Get the current output delegate from the adaptor.
         //
         // FIXME: This should never fail (since we are executing), but we have seen a crash here with that assumption. For now we are defensive until the source can be tracked down: <rdar://problem/31670274> Diagnose unexpected missing output delegate from: <rdar://problem/31669245> Crash in InProcessCommand.execute()
-        guard let outputDelegate = adaptor.getActiveOutputDelegate(command) else {
+        guard let outputDelegate = await adaptor.getActiveOutputDelegate(command) else {
             return .failed
         }
 
@@ -1334,6 +1441,16 @@ internal final class OperationSystemAdaptor: SWBLLBuild.BuildSystemDelegate, Act
 
     fileprivate let dynamicOperationContext: DynamicTaskOperationContext
 
+    /// Returns the delegate's `aggregatedCounters` in a thread-safe manner.
+    func getAggregatedCounters() async -> [BuildOperationMetrics.Counter: Int] {
+        return await queue.sync { self.operation.delegate.aggregatedCounters }
+    }
+
+    /// Returns the delegate's `aggregatedTaskCounters` in a thread-safe manner.
+    func getAggregatedTaskCounters() async -> [String: [BuildOperationMetrics.TaskCounter: Int]] {
+        return await queue.sync { self.operation.delegate.aggregatedTaskCounters }
+    }
+
     init(operation: BuildOperation, buildOutputDelegate: any BuildOutputDelegate, core: Core) {
         self.operation = operation
         self.buildOutputDelegate = buildOutputDelegate
@@ -1352,11 +1469,14 @@ internal final class OperationSystemAdaptor: SWBLLBuild.BuildSystemDelegate, Act
 
     private static func setupCAS(core: Core, operation: BuildOperation) throws -> ToolchainCAS? {
         let settings = operation.requestContext.getCachedSettings(operation.request.parameters)
-        let casOptions = try CASOptions.create(settings.globalScope, nil)
-        guard let casPlugin = core.lookupCASPlugin() else { return nil }
-        guard let cas = try? casPlugin.createCAS(path: casOptions.casPath, options: [:]) else { return nil }
-
-        return cas
+        let casOptions = try CASOptions.create(settings.globalScope, .generic)
+        let casPlugin: ToolchainCASPlugin?
+        if let pluginPath = casOptions.pluginPath {
+            casPlugin = try? ToolchainCASPlugin(dylib: pluginPath)
+        } else {
+            casPlugin = core.lookupCASPlugin()
+        }
+        return try? casPlugin?.createCAS(path: casOptions.casPath, options: [:])
     }
 
     /// Reset the operation for a new build.
@@ -1443,7 +1563,7 @@ internal final class OperationSystemAdaptor: SWBLLBuild.BuildSystemDelegate, Act
             self.validateTargetCompletion(buildSucceeded: buildSucceeded)
 
             // If the build failed, make sure we flush any pending incremental build records.
-            // Usually, driver instances are cleaned up and write out their incremental build records when a target finishes building. However, this won't necesarily be the case if the build fails. Ensure we write out any pending records before tearing down the graph so we don't use a stale record on a subsequent build.
+            // Usually, driver instances are cleaned up and write out their incremental build records when a target finishes building. However, this won't necessarily be the case if the build fails. Ensure we write out any pending records before tearing down the graph so we don't use a stale record on a subsequent build.
             if !buildSucceeded {
                 self.dynamicOperationContext.swiftModuleDependencyGraph.cleanUpForAllKeys()
             }
@@ -1465,7 +1585,7 @@ internal final class OperationSystemAdaptor: SWBLLBuild.BuildSystemDelegate, Act
             return
         }
 
-        let signatureCtx = MD5Context()
+        let signatureCtx = InsecureHashContext()
         signatureCtx.add(string: "CleanupCompileCache")
         signatureCtx.add(string: cachePath.str)
         let signature = signatureCtx.signature
@@ -1484,9 +1604,9 @@ internal final class OperationSystemAdaptor: SWBLLBuild.BuildSystemDelegate, Act
     /// Get the active output delegate for an executing command.
     ///
     /// - returns: The active delegate, or nil if not found.
-    func getActiveOutputDelegate(_ command: Command) -> (any TaskOutputDelegate)? {
-        // FIXME: This is a very bad idea, doing a sync against the response queue is introducing artifical latency when an in-process command needs to wait for the response queue to flush. However, we also can't simply move to a decoupled lock, because we don't want the command to start reporting output before it has been fully reported as having started. We need to move in-process task to another model.
-        return queue.blocking_sync {
+    func getActiveOutputDelegate(_ command: Command) async -> (any TaskOutputDelegate)? {
+        // FIXME: This is a very bad idea, doing a sync against the response queue is introducing artificial latency when an in-process command needs to wait for the response queue to flush. However, we also can't simply move to a decoupled lock, because we don't want the command to start reporting output before it has been fully reported as having started. We need to move in-process task to another model.
+        return await queue.sync {
             self.commandOutputDelegates[command]
         }
     }
@@ -1782,14 +1902,18 @@ internal final class OperationSystemAdaptor: SWBLLBuild.BuildSystemDelegate, Act
             return
         }
 
-        queue.async {
-            // Find the output delegate, and remove it from the active set.
-            guard let outputDelegate = self.commandOutputDelegates.removeValue(forKey: command) else {
-                // If there's no outputDelegate, the command never started (i.e. it was skipped by shouldCommandStart().
-                return
-            }
+        guard let outputDelegate = (queue.blocking_sync { self.commandOutputDelegates.removeValue(forKey: command) }) else {
+            // If there's no outputDelegate, the command never started (i.e. it was skipped by shouldCommandStart().
+            return
+        }
 
-            outputDelegate.emitSandboxingViolations(task: task, commandResult: result)
+        // We can call this here because we're on an llbuild worker thread. This shouldn't be used while on `self.queue` because we have Swift async work elsewhere which blocks on that queue.
+        let sandboxViolations = task.isSandboxed && result == .failed ? task.extractSandboxViolationMessages_ASYNC_UNSAFE(startTime: outputDelegate.startTime) : []
+
+        queue.async {
+            for message in sandboxViolations {
+                outputDelegate.emit(Diagnostic(behavior: .error, location: .unknown, data: DiagnosticData(message)))
+            }
 
             // This may be updated by commandProcessFinished if it was an
             // ExternalCommand, so only update the exit status in output delegate if

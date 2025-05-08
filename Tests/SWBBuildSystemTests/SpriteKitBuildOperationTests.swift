@@ -16,6 +16,8 @@ import SWBTestSupport
 import SWBUtil
 
 import Testing
+import SwiftBuildTestSupport
+import SWBCore
 
 @Suite
 fileprivate struct SpriteKitBuildOperationTests: CoreBasedTests {
@@ -39,7 +41,9 @@ fileprivate struct SpriteKitBuildOperationTests: CoreBasedTests {
                         ]),
                 ],
                 targets: [
-                    TestStandardTarget("App", buildPhases: [
+                    TestStandardTarget("App",
+                                       type: .application,
+                                       buildPhases: [
                         TestResourcesBuildPhase([
                             TestBuildFile("assets.atlas"),
                         ]),
@@ -53,10 +57,10 @@ fileprivate struct SpriteKitBuildOperationTests: CoreBasedTests {
             try tester.fs.createDirectory(Path(SRCROOT).join("Sources").join("assets.atlas"))
             try tester.fs.writeImage(Path(SRCROOT).join("Sources").join("assets.atlas").join("foo.png"), width: 16, height: 16)
 
-            try await tester.checkBuild() { results in
+            try await tester.checkBuild(runDestination: .macOS) { results in
                 try results.checkTask(.matchRuleType("GenerateTextureAtlas")) { task in
                     task.checkRuleInfo(["GenerateTextureAtlas", "\(SRCROOT)/build/Debug/App.app/Contents/Resources/assets.atlasc", "\(SRCROOT)/Sources/assets.atlas"])
-                    task.checkCommandLine(["\(core.developerPath.str)/usr/bin/TextureAtlas", "\(SRCROOT)/Sources/assets.atlas", "\(SRCROOT)/build/Debug/App.app/Contents/Resources"])
+                    task.checkCommandLine(["\(core.developerPath.path.str)/usr/bin/TextureAtlas", "\(SRCROOT)/Sources/assets.atlas", "\(SRCROOT)/build/Debug/App.app/Contents/Resources"])
                     task.checkEnvironment([:], exact: true)
 
                     try results.checkPropertyListContents(Path("\(SRCROOT)/build/Debug/App.app/Contents/Resources/assets.atlasc/assets.plist")) { plist in

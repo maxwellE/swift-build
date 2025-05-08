@@ -19,7 +19,7 @@ import SWBMacro
 
 @Suite fileprivate struct PlatformRegistryTests {
     final class TestDataDelegate: PlatformRegistryDelegate {
-        final class MockSpecRegistryDelegate : SpecRegistryDelegate {
+        final class MockSpecRegistryDelegate: SpecRegistryDelegate, Sendable {
             let diagnosticsEngine: DiagnosticProducingDelegateProtocolPrivate<DiagnosticsEngine>
 
             init(_ diagnosticsEngine: DiagnosticsEngine) {
@@ -47,6 +47,10 @@ import SWBMacro
         var errors: [String] {
             return _diagnosticsEngine.diagnostics.filter { $0.behavior == .error }.map { $0.formatLocalizedDescription(.debugWithoutBehavior) }
         }
+
+        var developerPath: Core.DeveloperPath {
+            .fallback(Path.temporaryDirectory)
+        }
     }
 
     /// Helper function for scanning test inputs.
@@ -66,7 +70,7 @@ import SWBMacro
             }
 
             let delegate = await TestDataDelegate(pluginManager: PluginManager(skipLoadingPluginIdentifiers: []))
-            let registry = PlatformRegistry(delegate: delegate, searchPaths: [tmpDirPath], hostOperatingSystem: try ProcessInfo.processInfo.hostOperatingSystem())
+            let registry = await PlatformRegistry(delegate: delegate, searchPaths: [tmpDirPath], hostOperatingSystem: try ProcessInfo.processInfo.hostOperatingSystem(), fs: localFS)
             try await perform(registry, delegate)
         }
     }
@@ -76,20 +80,13 @@ import SWBMacro
 
     @Test
     func loadingErrors() async throws {
-        let builtinPlatforms: [String]
-#if os(Linux)
-        builtinPlatforms = ["linux"]
-#else
-        builtinPlatforms = []
-#endif
-
         try await withRegistryForTestInputs([
             ("unused", nil),
             ("a.platform", nil),
             ("b.platform", []),
             ("c.platform", ["Type": "Platform", "Name": "c", "Identifier": "c", "Version": "1.0", "Description": "c", "FamilyName": "c", "FamilyIdentifier": "c", "DefaultProperties": ["CODE_SIGNING_REQUIRED": true]]),
         ]) { registry, delegate in
-            #expect(Set(registry.platformsByIdentifier.keys) == Set(["c"] + builtinPlatforms))
+            #expect(Set(registry.platformsByIdentifier.keys) == Set(["c"]))
             registry.loadExtendedInfo(MacroNamespace())
 
             XCTAssertMatch(delegate.errors, [
@@ -123,7 +120,7 @@ import SWBMacro
             ("ok2.platform", ["Type": "Platform", "Name": "ok", "Description": "ok", "FamilyName": "okFamily", "FamilyIdentifier": "ok", "Identifier": "ok", "Version": "1.0"]),
             ("ok2.platform", ["Type": "Platform", "Name": "ok", "Description": "ok", "FamilyName": "okFamily", "FamilyIdentifier": "ok", "Identifier": "ok", "Version": "1.0"]),
         ]) { registry, delegate in
-            #expect(Set(registry.platformsByIdentifier.keys) == Set(["ok"] + builtinPlatforms))
+            #expect(Set(registry.platformsByIdentifier.keys) == Set(["ok"]))
 
             let jPlatform = try #require(registry.lookup(identifier: "ok"))
             #expect(registry.lookup(name: "okName") === jPlatform)

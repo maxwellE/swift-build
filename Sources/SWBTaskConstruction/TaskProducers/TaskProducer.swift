@@ -15,6 +15,7 @@ public import SWBCore
 import struct SWBProtocol.BuildOperationTaskEnded
 public import Foundation
 public import SWBMacro
+import Synchronization
 
 /// A `TaskProducer` has two distinct phases that are used to create the necessary planning work.
 enum TaskProducerPhase {
@@ -113,75 +114,101 @@ public class TaskProducerContext: StaleFileRemovalContext, BuildFileResolution
     let onDemandResourcesEnabled: Bool
     let onDemandResourcesInitialInstallTags: Set<String>
     let onDemandResourcesPrefetchOrder: [String]
-    private var onDemandResourcesAssetPacks: [ODRTagSet: ODRAssetPackInfo] = [:]
-    private var onDemandResourcesAssetPackSubPaths: [String: Set<String>] = [:]
 
     /// The registry used for spec data caches.
-    public var specDataCaches = Registry<Spec, any SpecDataCache>()
+    public let specDataCaches = Registry<Spec, any SpecDataCache>()
 
-    /// The list of generated source files produced in this target.
-    private var _generatedSourceFiles: [Path] = []
+    /// Whether a task planned by this producer has requested frontend command line emission.
+    var emitFrontendCommandLines: Bool
 
-    /// The list of generated info plist additions produced in this target.
-    private var _generatedInfoPlistContents: [Path] = []
+    private struct State: Sendable {
+        fileprivate var onDemandResourcesAssetPacks: [ODRTagSet: ODRAssetPackInfo] = [:]
+        fileprivate var onDemandResourcesAssetPackSubPaths: [String: Set<String>] = [:]
 
-    private var _generatedPrivacyContentFilePaths: [Path] = []
+        /// The list of generated source files produced in this target.
+        fileprivate var _generatedSourceFiles: [Path] = []
 
-    /// The list of generated TBD files produced in this target.
-    ///
-    /// This is currently only ever done by Swift.
-    private var _generatedTBDFiles: [String: [Path]] = [:]
+        /// The list of generated info plist additions produced in this target.
+        fileprivate var _generatedInfoPlistContents: [Path] = []
 
-    /// The map of architecture names to generated Swift Objective-C interface header files produced in this target.
-    ///
-    /// This is currently only ever done by Swift.
-    private var _generatedSwiftObjectiveCHeaderFiles: [String: Path] = [:]
+        fileprivate var _generatedPrivacyContentFilePaths: [Path] = []
 
-    /// The map of architecture names to generated Swift compile-time value metadata files produced in this target.
-    /// Only ever done by Swift.
-    private var _generatedGeneratedSwiftConstMetadataFiles: [String: [Path]] = [:]
+        /// The list of generated TBD files produced in this target.
+        ///
+        /// This is currently only ever done by Swift.
+        fileprivate var _generatedTBDFiles: [String: [Path]] = [:]
 
-    /// Virtual output nodes for shell script build phases that don't have any declared outputs.
-    private var _shellScriptVirtualOutputs: [PlannedVirtualNode] = []
+        /// The map of architecture names to generated Swift Objective-C interface header files produced in this target.
+        ///
+        /// This is currently only ever done by Swift.
+        fileprivate var _generatedSwiftObjectiveCHeaderFiles: [String: Path] = [:]
 
-    /// The outputs of the tasks for this target prior to deferred task production.
-    private var _outputsOfMainTaskProducers: [any PlannedNode] = []
+        /// The map of architecture names to generated Swift compile-time value metadata files produced in this target.
+        /// Only ever done by Swift.
+        fileprivate var _generatedGeneratedSwiftConstMetadataFiles: [String: [Path]] = [:]
 
-    /// The map of top-level binaries path, keyed by variant.
-    private var _producedBinaryPaths: [String: Path] = [:]
+        /// Virtual output nodes for shell script build phases that don't have any declared outputs.
+        fileprivate var _shellScriptVirtualOutputs: [PlannedVirtualNode] = []
 
-    /// The map of dSYM paths, keyed by variant.
-    private var _producedDSYMPaths: [String: Path] = [:]
+        /// The outputs of the tasks for this target prior to deferred task production.
+        fileprivate var _outputsOfMainTaskProducers: [any PlannedNode] = []
 
-    /// The list of deferred task production blocks.
-    private var _deferredProducers: [() async -> [any PlannedTask]] = []
+        /// The map of top-level binaries path, keyed by variant.
+        fileprivate var _producedBinaryPaths: [String: Path] = [:]
 
-    /// Whether we have transitioned to processing deferred tasks.
-    private var _inDeferredMode = false
+        /// The map of dSYM paths, keyed by variant.
+        fileprivate var _producedDSYMPaths: [String: Path] = [:]
 
-    /// Map of the files which are copied during the build, used for mapping diagnostics.
-    private var _copiedPathMap: [String: Set<String>] = [:]
+        /// The list of deferred task production blocks.
+        fileprivate var _deferredProducers: [() async -> [any PlannedTask]] = []
 
-    /// The set of additional inputs for codesigning. These are tracked explicitly on the codesign task and are captured during the `.planning` phase.
-    private var _additionalCodeSignInputs: OrderedSet<Path> = []
+        /// Whether we have transitioned to processing deferred tasks.
+        fileprivate var _inDeferredMode = false
 
-    /// Notes generated by the internal state of the task prodcer context.  These are harvested by the `BuildPlan` once all task producers have been run.
+        /// Map of the files which are copied during the build, used for mapping diagnostics.
+        fileprivate var _copiedPathMap: [String: Set<String>] = [:]
+
+        /// The set of additional inputs for codesigning. These are tracked explicitly on the codesign task and are captured during the `.planning` phase.
+        fileprivate var _additionalCodeSignInputs: OrderedSet<Path> = []
+
+        /// Notes generated by the internal state of the task producer context.  These are harvested by the `BuildPlan` once all task producers have been run.
+        ///
+        /// This is an `OrderedSet` because the context is shared among all task producers for a target, and multiple producers could cause the same note to be emitted
+        fileprivate(set) var notes = OrderedSet<String>()
+
+        /// Warnings generated by the internal state of the task producer context.  These are harvested by the `BuildPlan` once all task producers have been run.
+        ///
+        /// This is an `OrderedSet` because the context is shared among all task producers for a target, and multiple producers could cause the same warning to be emitted
+        fileprivate(set) var warnings = OrderedSet<String>()
+
+        /// Errors generated by the internal state of the task producer context.  These are harvested by the `BuildPlan` once all task producers have been run.
+        ///
+        /// This is an `OrderedSet` because the context is shared among all task producers for a target, and multiple producers could cause the same error to be emitted .
+        fileprivate(set) var errors = OrderedSet<String>()
+    }
+
+    /// Notes generated by the internal state of the task producer context.  These are harvested by the `BuildPlan` once all task producers have been run.
     ///
     /// This is an `OrderedSet` because the context is shared among all task producers for a target, and multiple producers could cause the same note to be emitted
-    private(set) var notes = OrderedSet<String>()
+    var notes: OrderedSet<String> {
+        state.withLock { $0.notes }
+    }
 
-    /// Warnings generated by the internal state of the task prodcer context.  These are harvested by the `BuildPlan` once all task producers have been run.
+    /// Warnings generated by the internal state of the task producer context.  These are harvested by the `BuildPlan` once all task producers have been run.
     ///
     /// This is an `OrderedSet` because the context is shared among all task producers for a target, and multiple producers could cause the same warning to be emitted
-    private(set) var warnings = OrderedSet<String>()
+    var warnings: OrderedSet<String> {
+        state.withLock { $0.warnings }
+    }
 
-    /// Errors generated by the internal state of the task prodcer context.  These are harvested by the `BuildPlan` once all task producers have been run.
+    /// Errors generated by the internal state of the task producer context.  These are harvested by the `BuildPlan` once all task producers have been run.
     ///
     /// This is an `OrderedSet` because the context is shared among all task producers for a target, and multiple producers could cause the same error to be emitted .
-    private(set) var errors = OrderedSet<String>()
+    var errors: OrderedSet<String> {
+        state.withLock { $0.errors }
+    }
 
-    /// The queue used to serialize concurrent operations.
-    let queue: SWBQueue
+    private let state = SWBMutex<State>(.init())
 
     // MARK: Bound Tool Specs.
 
@@ -191,16 +218,14 @@ public class TaskProducerContext: StaleFileRemovalContext, BuildFileResolution
         case .success(let toolSpec):
             return toolSpec
         case .failure(let error):
-            return queue.blocking_sync {
-                errors.append("\(error)")
+            return state.withLock { state in
+                state.errors.append("\(error)")
                 return nil
             }
         }
     }
 
-    let appIntentsMetadataCompilerSpec: AppIntentsMetadataCompilerSpec
-    let appShortcutStringsMetadataCompilerSpec: AppShortcutStringsMetadataCompilerSpec
-    let appIntentsSsuTrainingCompilerSpec: AppIntentsSSUTrainingCompilerSpec
+    public let appShortcutStringsMetadataCompilerSpec: AppShortcutStringsMetadataCompilerSpec
     let appleScriptCompilerSpec: CommandLineToolSpec
     public let clangSpec: ClangCompilerSpec
     public let clangAssemblerSpec: ClangCompilerSpec
@@ -227,7 +252,7 @@ public class TaskProducerContext: StaleFileRemovalContext, BuildFileResolution
     public let ldLinkerSpec: LdLinkerSpec
     public let libtoolLinkerSpec: LibtoolLinkerSpec
     public let lipoSpec: LipoToolSpec
-    let masterObjectLinkSpec: CommandLineToolSpec
+    let prelinkedObjectLinkSpec: CommandLineToolSpec
     public let mkdirSpec: MkdirToolSpec
     let modulesVerifierSpec: ModulesVerifierToolSpec
     let clangModuleVerifierInputGeneratorSpec: ClangModuleVerifierInputGeneratorSpec
@@ -282,7 +307,6 @@ public class TaskProducerContext: StaleFileRemovalContext, BuildFileResolution
         let settings = configuredTarget.map(globalProductPlan.getTargetSettings) ?? globalProductPlan.getWorkspaceSettings()
         self.settings = settings
         self.delegate = delegate
-        self.queue = SWBQueue(label: "SWBTaskConstruction.TaskProducerContext.queue", qos: globalProductPlan.planRequest.buildRequest.qos, autoreleaseFrequency: .workItem)
 
         // Construct a build ruleset from the built-in system rules (which may be different for different platforms), and for any custom rules from the target.
         //
@@ -328,9 +352,7 @@ public class TaskProducerContext: StaleFileRemovalContext, BuildFileResolution
         //
         // FIXME: These should really be bound even earlier, like in the spec cache. Or at least, we should throw here and just produce a dep graph error if any are missing.
         let domain = settings.platform?.name ?? ""
-        self.appIntentsMetadataCompilerSpec = workspaceContext.core.specRegistry.getSpec("com.apple.compilers.appintentsmetadata", domain: domain) as! AppIntentsMetadataCompilerSpec
         self.appShortcutStringsMetadataCompilerSpec = workspaceContext.core.specRegistry.getSpec("com.apple.compilers.appshortcutstringsmetadata", domain: domain) as! AppShortcutStringsMetadataCompilerSpec
-        self.appIntentsSsuTrainingCompilerSpec = workspaceContext.core.specRegistry.getSpec("com.apple.compilers.appintents-ssu-training", domain: domain) as! AppIntentsSSUTrainingCompilerSpec
         self.appleScriptCompilerSpec = workspaceContext.core.specRegistry.getSpec("com.apple.compilers.osacompile", domain: domain) as! CommandLineToolSpec
         self.clangSpec = try! workspaceContext.core.specRegistry.getSpec(domain: domain) as ClangCompilerSpec
         self.clangAssemblerSpec = try! workspaceContext.core.specRegistry.getSpec(domain: domain) as ClangAssemblerSpec
@@ -355,7 +377,7 @@ public class TaskProducerContext: StaleFileRemovalContext, BuildFileResolution
         self.ldLinkerSpec = try! workspaceContext.core.specRegistry.getSpec(domain: domain) as LdLinkerSpec
         self.libtoolLinkerSpec = try! workspaceContext.core.specRegistry.getSpec(domain: domain) as LibtoolLinkerSpec
         self.lipoSpec = workspaceContext.core.specRegistry.getSpec("com.apple.xcode.linkers.lipo", domain: domain) as! LipoToolSpec
-        self.masterObjectLinkSpec = workspaceContext.core.specRegistry.getSpec("com.apple.build-tools.master-object-link", domain: domain) as! CommandLineToolSpec
+        self.prelinkedObjectLinkSpec = workspaceContext.core.specRegistry.getSpec(PrelinkedObjectLinkSpec.identifier, domain: domain) as! CommandLineToolSpec
         self.mkdirSpec = workspaceContext.core.specRegistry.getSpec("com.apple.tools.mkdir", domain: domain) as! MkdirToolSpec
         self.modulesVerifierSpec = workspaceContext.core.specRegistry.getSpec("com.apple.build-tools.modules-verifier", domain: domain) as! ModulesVerifierToolSpec
         self.clangModuleVerifierInputGeneratorSpec = workspaceContext.core.specRegistry.getSpec("com.apple.build-tools.module-verifier-input-generator", domain: domain) as! ClangModuleVerifierInputGeneratorSpec
@@ -389,7 +411,7 @@ public class TaskProducerContext: StaleFileRemovalContext, BuildFileResolution
         self._realityAssetsCompilerSpec = Result { try workspaceContext.core.specRegistry.getSpec("com.apple.build-tasks.compile-rk-assets.xcplugin", domain: domain) as CommandLineToolSpec }
 
         self.compilationRequirementOutputFileTypes = (SpecRegistry.headerFileTypeIdentifiers + [SpecRegistry.modulemapFileTypeIdentifier]).compactMap { workspaceContext.core.specRegistry.lookupFileType(identifier: $0, domain: domain) }
-
+        self.emitFrontendCommandLines = settings.globalScope.evaluate(BuiltinMacros.EMIT_FRONTEND_COMMAND_LINES)
 
         for diagnostic in settings.diagnostics {
             delegate.emit(diagnostic)
@@ -424,190 +446,188 @@ public class TaskProducerContext: StaleFileRemovalContext, BuildFileResolution
 
     /// Get the list of source files generated for this target.
     var generatedSourceFiles: [Path] {
-        return queue.blocking_sync {
-            assert(_inDeferredMode)
-            return _generatedSourceFiles
+        return state.withLock { state in
+            assert(state._inDeferredMode)
+            return state._generatedSourceFiles
         }
     }
 
     /// Add a source file generated by this target.
     func addGeneratedSourceFile(_ path: Path) {
-        queue.blocking_sync {
-            assert(!_inDeferredMode)
-            _generatedSourceFiles.append(path)
+        state.withLock { state in
+            assert(!state._inDeferredMode)
+            state._generatedSourceFiles.append(path)
         }
     }
 
     /// Get the list of info plist additions generated for this target.
     var generatedInfoPlistContents: [Path] {
-        return queue.blocking_sync {
-            assert(_inDeferredMode)
-            return _generatedInfoPlistContents
+        return state.withLock { state in
+            assert(state._inDeferredMode)
+            return state._generatedInfoPlistContents
         }
     }
 
     var generatedPrivacyContentFilePaths: [Path] {
-        return queue.blocking_sync {
-            assert(_inDeferredMode)
-            return _generatedPrivacyContentFilePaths
+        return state.withLock { state in
+            assert(state._inDeferredMode)
+            return state._generatedPrivacyContentFilePaths
         }
     }
 
     /// Add an info plist addition generated by this target.
     func addGeneratedInfoPlistContent(_ path: Path) {
-        queue.blocking_sync {
-            assert(!_inDeferredMode)
-            _generatedInfoPlistContents.append(path)
+        state.withLock { state in
+            assert(!state._inDeferredMode)
+            state._generatedInfoPlistContents.append(path)
         }
     }
 
     func addPrivacyContentPlistContent(_ path: Path) {
-        queue.blocking_sync {
-            assert(!_inDeferredMode)
-            _generatedPrivacyContentFilePaths.append(path)
+        state.withLock { state in
+            assert(!state._inDeferredMode)
+            state._generatedPrivacyContentFilePaths.append(path)
         }
     }
 
     /// Get the produced binary path for the given variant, if any.
     func producedBinary(forVariant variant: String) -> Path? {
-        return queue.blocking_sync {
-            assert(_inDeferredMode)
-            return _producedBinaryPaths[variant]
+        return state.withLock { state in
+            assert(state._inDeferredMode)
+            return state._producedBinaryPaths[variant]
         }
     }
 
     /// Add a produced binary path for the given variant.
     func addProducedBinary(path: Path, forVariant variant: String) {
-        queue.blocking_sync {
-            assert(!_inDeferredMode)
-            assert(_producedBinaryPaths[variant] == nil || _producedBinaryPaths[variant] == path)
-            _producedBinaryPaths[variant] = path
+        state.withLock { state in
+            assert(!state._inDeferredMode)
+            assert(state._producedBinaryPaths[variant] == nil || state._producedBinaryPaths[variant] == path)
+            state._producedBinaryPaths[variant] = path
         }
     }
 
     /// Get the produced dSYM path for the given variant, if any.
     func producedDSYM(forVariant variant: String) -> Path? {
-        return queue.blocking_sync {
-            assert(_inDeferredMode)
-            return _producedDSYMPaths[variant]
+        return state.withLock { state in
+            assert(state._inDeferredMode)
+            return state._producedDSYMPaths[variant]
         }
     }
 
     /// Add a produced dSYM path for the given variant.
     func addProducedDSYM(path: Path, forVariant variant: String) {
-        queue.blocking_sync {
-            assert(!_inDeferredMode)
-            assert(_producedDSYMPaths[variant] == nil || _producedDSYMPaths[variant] == path)
-            _producedDSYMPaths[variant] = path
+        state.withLock { state in
+            assert(!state._inDeferredMode)
+            assert(state._producedDSYMPaths[variant] == nil || state._producedDSYMPaths[variant] == path)
+            state._producedDSYMPaths[variant] = path
         }
     }
 
     /// Add a file that was copied.
     func addCopiedPath(src: String, dst: String) {
-        // This is async because we only need to read copied path map
-        // after running all of the deferred task producers.
-        queue.async {
-            assert(!self._inDeferredMode)
-            self._copiedPathMap[dst, default: []].insert(src)
+        state.withLock { state in
+            assert(!state._inDeferredMode)
+            state._copiedPathMap[dst, default: []].insert(src)
         }
     }
 
     /// Get the map of the files which will be copied.
     func copiedPathMap() -> [String: Set<String>] {
-        return queue.blocking_sync {
-            assert(_inDeferredMode)
-            return _copiedPathMap
+        return state.withLock { state in
+            assert(state._inDeferredMode)
+            return state._copiedPathMap
         }
     }
 
     /// Get the product custom TBD paths.
     func generatedTBDFiles(forVariant variant: String) -> [Path] {
-        return queue.blocking_sync {
-            assert(_inDeferredMode)
-            return _generatedTBDFiles[variant] ?? []
+        return state.withLock { state in
+            assert(state._inDeferredMode)
+            return state._generatedTBDFiles[variant] ?? []
         }
     }
 
     /// Add a produced binary path for the given variant.
     func addGeneratedTBDFile(_ path: Path, forVariant variant: String) {
-        queue.blocking_sync {
-            assert(!_inDeferredMode)
-            _generatedTBDFiles[variant, default: []].append(path)
+        state.withLock { state in
+            assert(!state._inDeferredMode)
+            state._generatedTBDFiles[variant, default: []].append(path)
         }
     }
 
     /// Get the product generated Swift Objective-C interface header files.
     func generatedSwiftObjectiveCHeaderFiles() -> [String: Path] {
-        return queue.blocking_sync {
-            //assert(_inDeferredMode)
-            return _generatedSwiftObjectiveCHeaderFiles
+        return state.withLock { state in
+            //assert(state._inDeferredMode)
+            return state._generatedSwiftObjectiveCHeaderFiles
         }
     }
 
     /// Add a generated Swift Objective-C interface header file.
     func addGeneratedSwiftObjectiveCHeaderFile(_ path: Path, architecture: String) {
-        queue.blocking_sync {
-            assert(!_inDeferredMode)
-            _generatedSwiftObjectiveCHeaderFiles[architecture] = path
+        state.withLock { state in
+            assert(!state._inDeferredMode)
+            state._generatedSwiftObjectiveCHeaderFiles[architecture] = path
         }
     }
 
     /// Get the product generated Swift Objective-C interface header files.
-    func generatedSwiftConstMetadataFiles() -> [String: [Path]] {
-        return queue.blocking_sync {
-            assert(_inDeferredMode)
-            return _generatedGeneratedSwiftConstMetadataFiles
+    public func generatedSwiftConstMetadataFiles() -> [String: [Path]] {
+        return state.withLock { state in
+            assert(state._inDeferredMode)
+            return state._generatedGeneratedSwiftConstMetadataFiles
         }
     }
 
     /// Add a generated Swift supplementary const metadata file.
     func addGeneratedSwiftConstMetadataFile(_ path: Path, architecture: String) {
-        queue.blocking_sync {
-            assert(!_inDeferredMode)
-            if _generatedGeneratedSwiftConstMetadataFiles[architecture] != nil {
-                _generatedGeneratedSwiftConstMetadataFiles[architecture]?.append(path)
+        state.withLock { state in
+            assert(!state._inDeferredMode)
+            if state._generatedGeneratedSwiftConstMetadataFiles[architecture] != nil {
+                state._generatedGeneratedSwiftConstMetadataFiles[architecture]?.append(path)
             } else {
-                _generatedGeneratedSwiftConstMetadataFiles[architecture] = [path]
+                state._generatedGeneratedSwiftConstMetadataFiles[architecture] = [path]
             }
         }
     }
 
     /// Virtual output nodes for shell script build phases that don't have any declared outputs.
     func shellScriptVirtualOutputs() -> [PlannedVirtualNode] {
-        return queue.blocking_sync {
-            assert(_inDeferredMode)
-            return _shellScriptVirtualOutputs
+        return state.withLock { state in
+            assert(state._inDeferredMode)
+            return state._shellScriptVirtualOutputs
         }
     }
 
     func addShellScriptVirtualOutput(_ virtualOutput: PlannedVirtualNode) {
-        queue.async {
-            assert(!self._inDeferredMode)
-            self._shellScriptVirtualOutputs.append(virtualOutput)
+        state.withLock { state in
+            assert(!state._inDeferredMode)
+            state._shellScriptVirtualOutputs.append(virtualOutput)
         }
     }
 
     /// The outputs of the tasks for this target prior to deferred task production.
     var outputsOfMainTaskProducers: [any PlannedNode] {
         get {
-            queue.blocking_sync {
-                assert(_inDeferredMode)
-                return _outputsOfMainTaskProducers
+            state.withLock { state in
+                assert(state._inDeferredMode)
+                return state._outputsOfMainTaskProducers
             }
         }
         set {
-            queue.async {
-                assert(!self._inDeferredMode)
-                self._outputsOfMainTaskProducers = newValue
+            state.withLock { state in
+                assert(!state._inDeferredMode)
+                state._outputsOfMainTaskProducers = newValue
             }
         }
     }
 
     /// Add a deferred task production block.
-    func addDeferredProducer(_ body: @escaping () async -> [any PlannedTask]) {
-        queue.blocking_sync {
-            assert(!_inDeferredMode)
-            _deferredProducers.append(body)
+    public func addDeferredProducer(_ body: @escaping () async -> [any PlannedTask]) {
+        state.withLock { state in
+            assert(!state._inDeferredMode)
+            state._deferredProducers.append(body)
         }
     }
 
@@ -615,11 +635,11 @@ public class TaskProducerContext: StaleFileRemovalContext, BuildFileResolution
     ///
     /// We model this as a "take" operation to ensure that any potential reference cycles through the producers are automatically discarded.
     func takeDeferredProducers() -> [() async -> [any PlannedTask]] {
-        return queue.blocking_sync {
-            assert(!_inDeferredMode)
-            _inDeferredMode = true
-            let result = _deferredProducers
-            _deferredProducers.removeAll()
+        return state.withLock { state in
+            assert(!state._inDeferredMode)
+            state._inDeferredMode = true
+            let result = state._deferredProducers
+            state._deferredProducers.removeAll()
             return result
         }
     }
@@ -630,14 +650,16 @@ public class TaskProducerContext: StaleFileRemovalContext, BuildFileResolution
         // This API should only be used during the `planning` phase.
         assert(phase == .planning)
 
-        // A feature guard to provide a fallback mechanims, primarily to alleviate risk.
+        // A feature guard to provide a fallback mechanism, primarily to alleviate risk.
         guard scope.evaluate(BuiltinMacros.ENABLE_ADDITIONAL_CODESIGN_INPUT_TRACKING) else { return }
 
-        queue.blocking_sync {
-            assert(!_inDeferredMode)
-            // This is a bit unfortunate, but to prevent workspace diagnostic issues downstream, silently ignore any missing items, it's necessary to allow callers to ignore files that do not actually exist on disk.
-            if alwaysAdd || fs.exists(path) {
-                _additionalCodeSignInputs.append(path)
+        // This is a bit unfortunate, but to prevent workspace diagnostic issues downstream, silently ignore any missing items, it's necessary to allow callers to ignore files that do not actually exist on disk.
+        let exists = fs.exists(path)
+
+        state.withLock { state in
+            assert(!state._inDeferredMode)
+            if alwaysAdd || exists {
+                state._additionalCodeSignInputs.append(path)
             }
         }
     }
@@ -682,7 +704,9 @@ public class TaskProducerContext: StaleFileRemovalContext, BuildFileResolution
     var additionalCodeSignInputs: OrderedSet<Path> {
         // The data from this collection should only be used after the planning phase has been completed. Doing so before can lead to incorrect assumptions due to the un-ordered nature of task producers.
         assert(phase == .taskGeneration)
-        return _additionalCodeSignInputs
+        return state.withLock { state in
+            return state._additionalCodeSignInputs
+        }
     }
 
     // FIXME: <rdar://problem/30298464> This is something of a hack.  Uses in the ProductPostprocessingTaskProducer say this should be expressed instead on a check against a provisional task of the product, but as of this writing the future of provisional tasks is unclear.
@@ -725,9 +749,9 @@ public class TaskProducerContext: StaleFileRemovalContext, BuildFileResolution
             return false
         }
 
-        // If this target is generating a master object file, then we assume it will produce a binary.
-        // FIXME: This is nasty.  See SourcesTaskProducer.generateTasks() for handling of GENERATE_MASTER_OBJECT_FILE.
-        guard !scope.evaluate(BuiltinMacros.GENERATE_MASTER_OBJECT_FILE) else {
+        // If this target is generating a prelinked object file, then we assume it will produce a binary.
+        // FIXME: This is nasty.  See SourcesTaskProducer.generateTasks() for handling of GENERATE_PRELINK_OBJECT_FILE.
+        guard !scope.evaluate(BuiltinMacros.GENERATE_PRELINK_OBJECT_FILE) else {
             return true
         }
 
@@ -922,12 +946,12 @@ public class TaskProducerContext: StaleFileRemovalContext, BuildFileResolution
     }
 
     package var allOnDemandResourcesAssetPacks: [ODRAssetPackInfo] {
-        return queue.blocking_sync { Array(onDemandResourcesAssetPacks.values) }
+        return state.withLock { state in Array(state.onDemandResourcesAssetPacks.values) }
     }
 
     public func onDemandResourcesAssetPack(for tags: ODRTagSet) -> ODRAssetPackInfo? {
         guard onDemandResourcesEnabled else { return nil }
-        if let r = (queue.blocking_sync { onDemandResourcesAssetPacks[tags] }) { return r }
+        if let r = (state.withLock { state in state.onDemandResourcesAssetPacks[tags] }) { return r }
         let maxPriority = tags.lazy.compactMap { self.onDemandResourcesAssetTagPriority(tag: $0) }.max()
 
         let productBundleIdentifier = settings.globalScope.evaluate(BuiltinMacros.PRODUCT_BUNDLE_IDENTIFIER)
@@ -937,7 +961,7 @@ public class TaskProducerContext: StaleFileRemovalContext, BuildFileResolution
         }
 
         let info = ODRAssetPackInfo(tags: tags, priority: maxPriority, productBundleIdentifier: productBundleIdentifier, settings.globalScope)
-        queue.blocking_sync { onDemandResourcesAssetPacks[tags] = info }
+        state.withLock { state in state.onDemandResourcesAssetPacks[tags] = info }
         return info
     }
 
@@ -949,11 +973,11 @@ public class TaskProducerContext: StaleFileRemovalContext, BuildFileResolution
     }
 
     package func didProduceAssetPackSubPath(_ assetPack: ODRAssetPackInfo, _ subPath: String) {
-        _ = queue.blocking_sync { onDemandResourcesAssetPackSubPaths[assetPack.identifier, default: Set()].insert(subPath) }
+        _ = state.withLock { state in state.onDemandResourcesAssetPackSubPaths[assetPack.identifier, default: Set()].insert(subPath) }
     }
 
     package var allOnDemandResourcesAssetPackSubPaths: [String: Set<String>] {
-        return queue.blocking_sync { onDemandResourcesAssetPackSubPaths }
+        return state.withLock { state in state.onDemandResourcesAssetPackSubPaths }
     }
 
     private func onDemandResourcesAssetTagPriority(tag: String) -> Double? {
@@ -1158,6 +1182,10 @@ extension TaskProducerContext: Hashable {
 }
 
 extension TaskProducerContext: CommandProducer {
+    public func lookupPlatformInfo(platform: BuildVersion.Platform) -> (any PlatformInfoProvider)? {
+        workspaceContext.core.lookupPlatformInfo(platform: platform)
+    }
+    
     public var preferredArch: String? {
         return settings.preferredArch
     }
@@ -1305,7 +1333,6 @@ extension TaskProducerContext: CommandProducer {
             scope.evaluate(BuiltinMacros.SWIFT_USE_INTEGRATED_DRIVER) && // Prerequisite for eager linking
             !SwiftCompilerSpec.shouldUseWholeModuleOptimization(for: scope).result && // off for WMO
             scope.evaluate(BuiltinMacros.EAGER_LINKING) && // Optimization is currently opt-in via this build setting
-            scope.evaluate(BuiltinMacros.BITCODE_GENERATION_MODE) != "bitcode" && // Using this optimization is currently unsupported with full bitcode
             settings.productType?.supportsEagerLinking == true && // The optimization is only valid for supported product types
             compileSourcesExportOnlySwiftSymbols(scope: scope) && // All exported symbols from compile sources must be from Swift sources
             !linkedLibrariesMayIntroduceExportedSymbols(scope: scope) // We must not be linking anything that introduces exported symbols
@@ -1655,7 +1682,7 @@ class ProducerBasedTaskGenerationDelegate: TaskGenerationDelegate {
 
 /// This class adapts the TaskGenerationDelegate protocol used by the Core to that provided by the producer delegate API, to provide phase ordering among tasks created by different `PhasedTaskProducers`.
 ///
-/// This delegate auto-attachs constructed tasks to the phase ordering gates.
+/// This delegate auto-attaches constructed tasks to the phase ordering gates.
 class PhasedProducerBasedTaskGenerationDelegate: ProducerBasedTaskGenerationDelegate {
     let phaseStartNodes: [any PlannedNode]
     let phaseEndTask: any PlannedTask

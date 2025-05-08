@@ -17,6 +17,7 @@ import SWBCore
 import SWBTaskConstruction
 import SWBTestSupport
 @_spi(Testing) import SWBUtil
+import SWBProtocol
 
 @Suite
 fileprivate struct DriverKitTaskConstructionTests: CoreBasedTests {
@@ -92,7 +93,7 @@ fileprivate struct DriverKitTaskConstructionTests: CoreBasedTests {
 
         let iigPath = try await self.iigPath
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: hasDriverKitPlatform ? .driverKit : .macOS), fs: fs) { results in
+        await tester.checkBuild(runDestination: hasDriverKitPlatform ? .driverKit : .macOS, fs: fs) { results in
             results.consumeTasksMatchingRuleTypes(["CreateBuildDirectory", "CodeSign", "Gate", "Ld", "GenerateTAPI", "MkDir", "RegisterExecutionPolicyException", "ProcessInfoPlistFile", "ProcessProductPackaging", "ProcessProductPackagingDER", "SymLink", "Touch", "WriteAuxiliaryFile"])
 
             results.checkTarget("DextTarget") { target in
@@ -171,7 +172,7 @@ fileprivate struct DriverKitTaskConstructionTests: CoreBasedTests {
 
     @Test(.requireSDKs(.driverKit), arguments: [true, false])
     func driverKitFrameworkInstallHeaders(trace: Bool) async throws {
-        var env = ProcessInfo.processInfo.environment.filter { $0.key != "IIG_TRACE_HEADERS" }
+        var env = Environment.current.filter { $0.key != EnvironmentKey("IIG_TRACE_HEADERS") }
         if trace {
             env["IIG_TRACE_HEADERS"] = "1"
         }
@@ -228,7 +229,7 @@ fileprivate struct DriverKitTaskConstructionTests: CoreBasedTests {
             let iigPath = try await self.iigPath
 
             if trace {
-                await tester.checkBuild(BuildParameters(action: .installHeaders, configuration: "Debug", overrides: ["EXPERIMENTAL_ALLOW_INSTALL_HEADERS_FILTERING": "YES"])) { results in
+                await tester.checkBuild(BuildParameters(action: .installHeaders, configuration: "Debug", overrides: ["EXPERIMENTAL_ALLOW_INSTALL_HEADERS_FILTERING": "YES"]), runDestination: .macOS) { results in
                     results.consumeTasksMatchingRuleTypes(["CreateBuildDirectory", "CodeSign", "Gate", "Ld", "MkDir", "RegisterExecutionPolicyException", "ProcessInfoPlistFile", "ProcessProductPackaging", "SymLink", "Touch", "WriteAuxiliaryFile"])
 
                     results.checkTarget("LibraryTarget") { target in
@@ -261,7 +262,7 @@ fileprivate struct DriverKitTaskConstructionTests: CoreBasedTests {
                 }
             } else {
                 // installhdrs and installapi should only install the iig files.
-                await tester.checkBuild(BuildParameters(action: .installHeaders, configuration: "Debug", overrides: ["EXPERIMENTAL_ALLOW_INSTALL_HEADERS_FILTERING": "YES"])) { results in
+                await tester.checkBuild(BuildParameters(action: .installHeaders, configuration: "Debug", overrides: ["EXPERIMENTAL_ALLOW_INSTALL_HEADERS_FILTERING": "YES"]), runDestination: .macOS) { results in
                     results.consumeTasksMatchingRuleTypes(["CreateBuildDirectory", "CodeSign", "Gate", "Ld", "MkDir", "RegisterExecutionPolicyException", "ProcessInfoPlistFile", "ProcessProductPackaging", "SymLink", "Touch", "WriteAuxiliaryFile"])
 
                     results.checkTarget("LibraryTarget") { target in
@@ -276,7 +277,7 @@ fileprivate struct DriverKitTaskConstructionTests: CoreBasedTests {
                     // Check there are no diagnostics.
                     results.checkNoDiagnostics()
                 }
-                await tester.checkBuild(BuildParameters(action: .installAPI, configuration: "Debug")) { results in
+                await tester.checkBuild(BuildParameters(action: .installAPI, configuration: "Debug"), runDestination: .macOS) { results in
                     results.consumeTasksMatchingRuleTypes(["CreateBuildDirectory", "CodeSign", "Gate", "GenerateTAPI", "Ld", "MkDir", "RegisterExecutionPolicyException", "ProcessInfoPlistFile", "ProcessProductPackaging", "SymLink", "Touch", "WriteAuxiliaryFile"])
 
                     results.checkTarget("LibraryTarget") { target in
@@ -334,7 +335,7 @@ fileprivate struct DriverKitTaskConstructionTests: CoreBasedTests {
             try fs.writeSimulatedProvisioningProfile(uuid: "8db0e92c-592c-4f06-bfed-9d945841b78d")
 
             // Analyze for a generic destination should analyze arm64 + x86_64
-            await tester.checkBuild(BuildParameters(action: .analyze, configuration: "Debug", activeRunDestination: .anyDriverKit, overrides: ["RUN_CLANG_STATIC_ANALYZER": "YES"]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(action: .analyze, configuration: "Debug", overrides: ["RUN_CLANG_STATIC_ANALYZER": "YES"]), runDestination: .anyDriverKit, fs: fs) { results in
                 results.checkTask(.matchRule(["AnalyzeShallow", "\(tmpDir.str)/Sources/main.c", "normal", "arm64"])) { _ in }
                 results.checkTask(.matchRule(["AnalyzeShallow", "\(tmpDir.str)/Sources/main.c", "normal", "x86_64"])) { _ in }
                 results.checkNoTask(.matchRuleItem("AnalyzeShallow"))
@@ -342,13 +343,13 @@ fileprivate struct DriverKitTaskConstructionTests: CoreBasedTests {
             }
 
             // Analyze for concrete destinations should only analyze those architectures
-            await tester.checkBuild(BuildParameters(action: .analyze, configuration: "Debug", activeRunDestination: .driverKitAppleSilicon, overrides: ["RUN_CLANG_STATIC_ANALYZER": "YES"]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(action: .analyze, configuration: "Debug", overrides: ["RUN_CLANG_STATIC_ANALYZER": "YES"]), runDestination: .driverKitAppleSilicon, fs: fs) { results in
                 results.checkTask(.matchRule(["AnalyzeShallow", "\(tmpDir.str)/Sources/main.c", "normal", "arm64"])) { _ in }
                 results.checkNoTask(.matchRuleItem("AnalyzeShallow"))
                 results.checkNoDiagnostics()
             }
 
-            await tester.checkBuild(BuildParameters(action: .analyze, configuration: "Debug", activeRunDestination: .driverKitIntel, overrides: ["RUN_CLANG_STATIC_ANALYZER": "YES"]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(action: .analyze, configuration: "Debug", overrides: ["RUN_CLANG_STATIC_ANALYZER": "YES"]), runDestination: .driverKitIntel, fs: fs) { results in
                 results.checkTask(.matchRule(["AnalyzeShallow", "\(tmpDir.str)/Sources/main.c", "normal", "x86_64"])) { _ in }
                 results.checkNoTask(.matchRuleItem("AnalyzeShallow"))
                 results.checkNoDiagnostics()

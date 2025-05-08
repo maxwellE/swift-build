@@ -93,13 +93,12 @@ final public class SwiftDriverTaskAction: TaskAction, BuildValueValidatingTaskAc
                 outputDelegate.emitNote(message)
             }
 
-            if driverPayload.reportRequiredTargetDependencies != .no && driverPayload.explicitModulesEnabled,
-               let target = task.forTarget,
-               let dependencyModuleNames = try dependencyGraph.queryPlannedBuild(for: driverPayload.uniqueID).transitiveDependencyModuleNames {
+            if driverPayload.reportRequiredTargetDependencies != .no && driverPayload.explicitModulesEnabled, let target = task.forTarget {
+                let dependencyModuleNames = try await dependencyGraph.queryTransitiveDependencyModuleNames(for: driverPayload.uniqueID)
                 for dependencyModuleName in dependencyModuleNames {
                     if let targetDependencies = dynamicExecutionDelegate.operationContext.definingTargetsByModuleName[dependencyModuleName] {
                         for targetDependency in targetDependencies {
-                            guard targetDependency != target else {
+                            guard targetDependency.guid != target.guid else {
                                 continue
                             }
                             executionDelegate.taskDiscoveredRequiredTargetDependency(target: target, antecedent: targetDependency, reason: .swiftModuleDependency(dependentModuleName: driverPayload.moduleName, dependencyModuleName: dependencyModuleName), warningLevel: driverPayload.reportRequiredTargetDependencies)
@@ -110,14 +109,9 @@ final public class SwiftDriverTaskAction: TaskAction, BuildValueValidatingTaskAc
 
             if let linkerResponseFilePath = driverPayload.linkerResponseFilePath {
                 var responseFileCommandLine: [String] = []
-                let plannedBuild = try dependencyGraph.queryPlannedBuild(for: driverPayload.uniqueID)
                 if driverPayload.explicitModulesEnabled {
-                    for job in plannedBuild.explicitModulesPlannedDriverJobs() {
-                        for output in job.driverJob.outputs {
-                            if output.fileExtension == "swiftmodule" {
-                                responseFileCommandLine.append(contentsOf: ["-Wl,-add_ast_path", "-Wl,\(output.str)"])
-                            }
-                        }
+                    for swiftmodulePath in try dependencyGraph.querySwiftmodulesNeedingRegistrationForDebugging(for: driverPayload.uniqueID) {
+                        responseFileCommandLine.append(contentsOf: ["-Xlinker", "-add_ast_path", "-Xlinker", "\(swiftmodulePath)"])
                     }
                 }
                 let contents = ByteString(encodingAsUTF8: ResponseFiles.responseFileContents(args: responseFileCommandLine))

@@ -15,6 +15,7 @@ import Foundation
 public import SWBCore
 public import SWBUtil
 public import SWBLLBuild
+import SWBProtocol
 
 public final class SwiftDriverJobTaskAction: TaskAction, BuildValueValidatingTaskAction {
     public override class var toolIdentifier: String {
@@ -112,12 +113,12 @@ public final class SwiftDriverJobTaskAction: TaskAction, BuildValueValidatingTas
     }
 
     let identifier: SwiftDriverJobIdentifier
-    let variant: String
+    let variant: String?
     let arch: String
     let driverJob: LibSwiftDriver.PlannedBuild.PlannedSwiftDriverJob
     let isUsingWholeModuleOptimization: Bool
 
-    init(_ driverJob: LibSwiftDriver.PlannedBuild.PlannedSwiftDriverJob, variant: String, arch: String, identifier: SwiftDriverJobIdentifier, isUsingWholeModuleOptimization: Bool) {
+    init(_ driverJob: LibSwiftDriver.PlannedBuild.PlannedSwiftDriverJob, variant: String?, arch: String, identifier: SwiftDriverJobIdentifier, isUsingWholeModuleOptimization: Bool) {
         self.driverJob = driverJob
         self.variant = variant
         self.arch = arch
@@ -150,6 +151,8 @@ public final class SwiftDriverJobTaskAction: TaskAction, BuildValueValidatingTas
     private struct State {
         var openDependencies: Set<UInt> = []
         var inputNodesRequested = false
+        var cacheJobRequested = false
+        var jobTaskIDBase: UInt = 0
 
         var executionError: String? = nil
         var jobDependencyFailed = false
@@ -162,56 +165,42 @@ public final class SwiftDriverJobTaskAction: TaskAction, BuildValueValidatingTas
     private var state = State()
 
     public override func getSignature(_ task: any ExecutableTask, executionDelegate: any TaskExecutionDelegate) -> ByteString {
-        let md5 = MD5Context()
+        let md5 = InsecureHashContext()
         // We intentionally do not integrate the superclass signature here, because the driver job's signature captures the same information without requiring expensive serialization.
         md5.add(bytes: driverJob.driverJob.signature)
         task.environment.computeSignature(into: md5)
         return md5.signature
     }
 
+    private func requestCacheJobIfNecessary(_ task: any ExecutableTask, _ dynamicExecutionDelegate: any DynamicTaskExecutionDelegate) throws {
+        guard state.cacheJobRequested == false else { return }
+        guard let payload = task.payload as? SwiftDriverJobDynamicTaskPayload else {
+            fatalError("Unexpected payload type: \(type(of: task.payload)).")
+        }
+        let taskID = state.jobTaskIDBase
+        if try Self.maybeRequestCachingKeyMaterialization(plannedJob: driverJob,
+                                                          dynamicExecutionDelegate: dynamicExecutionDelegate,
+                                                          casOptions: payload.casOptions,
+                                                          compilerLocation: payload.compilerLocation,
+                                                          taskID: taskID) {
+            state.openDependencies.insert(taskID)
+        }
+        state.cacheJobRequested = true
+    }
+
     private func requestInputNodesIfNecessary(_ task: any ExecutableTask, _ dynamicExecutionDelegate: any DynamicTaskExecutionDelegate) {
         guard state.inputNodesRequested == false else { return }
         if state.openDependencies.isEmpty {
-            do {
-                let graph = dynamicExecutionDelegate.operationContext.swiftModuleDependencyGraph
-                let dependencyCount: Int
-                switch self.identifier {
-                    case .targetCompile(let identifierStr):
-                        let identifier = identifierStr
-                        let plannedBuild = try graph.queryPlannedBuild(for: identifier)
-                        dependencyCount = plannedBuild.dependencies(for: driverJob).count
-                    case .explicitDependency:
-                        guard let explicitBuildJob = graph.plannedExplicitDependencyBuildJob(for: self.driverJob.key) else {
-                            fatalError("Could not query build containing explicit dependency build job: \(self.driverJob.driverJob.descriptionForLifecycle)")
-                        }
-                        dependencyCount = graph.explicitDependencies(for: explicitBuildJob).count
-                }
-
-                for (index, input) in (task.executionInputs ?? []).enumerated() {
-                    // rdar://82078120 pch input has wrong name, will fail build with missingInput
-                    if Path(input.identifier).fileExtension == "pch" { continue }
-                    dynamicExecutionDelegate.requestInputNode(node: input, nodeID: UInt(index + dependencyCount))
-                }
-
-                // request cache key query
-                guard let payload = task.payload as? SwiftDriverJobDynamicTaskPayload else {
-                    fatalError("Unexpected payload type: \(type(of: task.payload)).")
-                }
-                var taskID = UInt((task.executionInputs ?? []).count + dependencyCount)
-                try Self.maybeRequestCachingKeyMaterialization(plannedJob: driverJob,
-                                                               dynamicExecutionDelegate: dynamicExecutionDelegate,
-                                                               casOptions: payload.casOptions,
-                                                               compilerLocation: payload.compilerLocation,
-                                                               taskID: &taskID)
-
-                state.inputNodesRequested = true
-            } catch {
-                state.executionError = error.localizedDescription
+            for (index, input) in (task.executionInputs ?? []).enumerated() {
+                // rdar://82078120 pch input has wrong name, will fail build with missingInput
+                if Path(input.identifier).fileExtension == "pch" { continue }
+                dynamicExecutionDelegate.requestInputNode(node: input, nodeID: state.jobTaskIDBase + 1 + UInt(index))
             }
+            state.inputNodesRequested = true
         }
     }
 
-    internal func constructDriverJobTaskKey(variant: String,
+    internal func constructDriverJobTaskKey(variant: String?,
                                             arch: String,
                                             plannedJob: LibSwiftDriver.PlannedBuild.PlannedSwiftDriverJob,
                                             identifier: String?,
@@ -220,13 +209,15 @@ public final class SwiftDriverJobTaskAction: TaskAction, BuildValueValidatingTas
         let key: DynamicTaskKey
         if plannedJob.driverJob.categorizer.isExplicitDependencyBuild {
             key = .swiftDriverExplicitDependencyJob(SwiftDriverExplicitDependencyJobTaskKey(
-                variant: variant,
                 arch: arch,
                 driverJobKey: plannedJob.key,
                 driverJobSignature: plannedJob.driverJob.signature,
                 compilerLocation: compilerLocation,
                 casOptions: casOptions))
         } else {
+            guard let variant else {
+                fatalError("Expected variant for non-explicit-module job: \(plannedJob.driverJob.descriptionForLifecycle)")
+            }
             guard let jobID = identifier else {
                 fatalError("Expected job identifier for target compile: \(plannedJob.driverJob.descriptionForLifecycle)")
             }
@@ -267,6 +258,7 @@ public final class SwiftDriverJobTaskAction: TaskAction, BuildValueValidatingTas
                     jobDependencies = graph.explicitDependencies(for: explicitBuildJob)
             }
 
+            let jobTaskIDBase = UInt((task.executionInputs ?? []).count)
             // For each depended-upon job, request a dynamic task.
             for (index, dependency) in jobDependencies.enumerated() {
                 let isExplicitDependencyBuildJob = dependency.driverJob.categorizer.isExplicitDependencyBuild
@@ -276,7 +268,7 @@ public final class SwiftDriverJobTaskAction: TaskAction, BuildValueValidatingTas
                                                         identifier: jobID,
                                                         compilerLocation: payload.compilerLocation,
                                                         casOptions: payload.casOptions)
-                let taskID = UInt(index)
+                let taskID = jobTaskIDBase + UInt(index)
                 state.openDependencies.insert(taskID)
                 dynamicExecutionDelegate.requestDynamicTask(
                     toolIdentifier: SwiftDriverJobTaskAction.toolIdentifier,
@@ -285,14 +277,14 @@ public final class SwiftDriverJobTaskAction: TaskAction, BuildValueValidatingTas
                     singleUse: true,
                     workingDirectory: dependency.workingDirectory,
                     environment: task.environment,
-                    taskInputs: dependency.driverJob.inputs.map({ ExecutionNode(identifier: $0.str) }),
                     forTarget: isExplicitDependencyBuildJob ? nil : task.forTarget,
                     priority: dependency.driverJob.categorizer.priority,
                     showEnvironment: task.showEnvironment,
                     reason: .wasScheduledBySwiftDriver
                 )
             }
-
+            state.jobTaskIDBase = jobTaskIDBase + UInt(jobDependencies.count)
+            try requestCacheJobIfNecessary(task, dynamicExecutionDelegate)
             requestInputNodesIfNecessary(task, dynamicExecutionDelegate)
         } catch {
             state.executionError = error.localizedDescription
@@ -393,7 +385,7 @@ public final class SwiftDriverJobTaskAction: TaskAction, BuildValueValidatingTas
             outputDelegate.emitOutput(ByteString(encodingAsUTF8: commandString) + "\n")
         }
 
-        if executionDelegate.userPreferences.enableDebugActivityLogs {
+        if executionDelegate.userPreferences.enableDebugActivityLogs || executionDelegate.emitFrontendCommandLines {
             emitCommandLine()
         }
 
@@ -428,7 +420,14 @@ public final class SwiftDriverJobTaskAction: TaskAction, BuildValueValidatingTas
                 private var pid = llbuild_pid_t.invalid
 
                 var executionError: String?
-                var commandResult: CommandResult?
+                private var processStarted = false
+                private var _commandResult: CommandResult?
+                var commandResult: CommandResult? {
+                    guard processStarted else {
+                        return .cancelled
+                    }
+                    return _commandResult
+                }
 
                 init(plannedBuild: LibSwiftDriver.PlannedBuild?, driverJob: LibSwiftDriver.PlannedBuild.PlannedSwiftDriverJob, arguments: [String], environment: [String : String], outputDelegate: any TaskOutputDelegate) {
                     self.plannedBuild = plannedBuild
@@ -439,6 +438,7 @@ public final class SwiftDriverJobTaskAction: TaskAction, BuildValueValidatingTas
                 }
 
                 func processStarted(pid: llbuild_pid_t?) {
+                    processStarted = true
                     do {
                         guard let pid else {
                             // `pid` is only optional because the Windows implementation of llbuild's pid_t type is optional. This should never be nil on other platforms
@@ -474,7 +474,7 @@ public final class SwiftDriverJobTaskAction: TaskAction, BuildValueValidatingTas
                     if outputDelegate.result == nil {
                         outputDelegate.updateResult(TaskResult(result))
                     }
-                    self.commandResult = result.result
+                    self._commandResult = result.result
                     do {
                         try plannedBuild?.jobFinished(job: driverJob, arguments: arguments, pid: pid.pid, environment: environment, exitStatus: .exit(result.exitStatus), output: output)
                     } catch {
@@ -494,6 +494,17 @@ public final class SwiftDriverJobTaskAction: TaskAction, BuildValueValidatingTas
             if let casOpts = payload.casOptions, casOpts.enableIntegratedCacheQueries {
                 let swiftModuleDependencyGraph = dynamicExecutionDelegate.operationContext.swiftModuleDependencyGraph
                 cas = try swiftModuleDependencyGraph.getCASDatabases(casOptions: casOpts, compilerLocation: payload.compilerLocation)
+
+                let casKey = ClangCachingPruneDataTaskKey(
+                    path: payload.compilerLocation.compilerOrLibraryPath,
+                    casOptions: casOpts
+                )
+                dynamicExecutionDelegate.operationContext.compilationCachingDataPruner.pruneCAS(
+                    cas!,
+                    key: casKey,
+                    activityReporter: dynamicExecutionDelegate,
+                    fileSystem: executionDelegate.fs
+                )
             } else {
                 cas = nil
             }
@@ -526,7 +537,7 @@ public final class SwiftDriverJobTaskAction: TaskAction, BuildValueValidatingTas
                                 enableStrictCASErrors: casOpts.enableStrictCASErrors)
             }
 
-            if delegate.commandResult == .failed && !executionDelegate.userPreferences.enableDebugActivityLogs {
+            if delegate.commandResult == .failed && !executionDelegate.userPreferences.enableDebugActivityLogs && !executionDelegate.emitFrontendCommandLines {
                 outputDelegate.emitOutput("Failed frontend command:\n")
                 emitCommandLine()
             }
@@ -546,29 +557,26 @@ public final class SwiftDriverJobTaskAction: TaskAction, BuildValueValidatingTas
         dynamicExecutionDelegate: any DynamicTaskExecutionDelegate,
         casOptions: CASOptions?,
         compilerLocation: LibSwiftDriver.CompilerLocation,
-        taskID: inout UInt
-    ) throws {
+        taskID: UInt
+    ) throws -> Bool {
         guard let casOptions,
               casOptions.enableIntegratedCacheQueries,
               casOptions.hasRemoteCache else {
-            return
+            return false
         }
-        for cacheKey in plannedJob.driverJob.cacheKeys {
-            let cacheQueryKey = SwiftCachingKeyQueryTaskKey(casOptions: casOptions, cacheKey: cacheKey, compilerLocation: compilerLocation)
-            dynamicExecutionDelegate.requestDynamicTask(
-                toolIdentifier: SwiftCachingMaterializeKeyTaskAction.toolIdentifier,
-                taskKey: .swiftCachingMaterializeKey(cacheQueryKey),
-                taskID: taskID,
-                singleUse: true,
-                workingDirectory: Path(""),
-                environment: .init(),
-                taskInputs: [],
-                forTarget: nil,
-                priority: .network,
-                showEnvironment: false,
-                reason: .wasCompilationCachingQuery)
-            taskID += 1
-        }
+        let cacheQueryKey = SwiftCachingKeyQueryTaskKey(casOptions: casOptions, cacheKeys: plannedJob.driverJob.cacheKeys, compilerLocation: compilerLocation)
+        dynamicExecutionDelegate.requestDynamicTask(
+            toolIdentifier: SwiftCachingMaterializeKeyTaskAction.toolIdentifier,
+            taskKey: .swiftCachingMaterializeKey(cacheQueryKey),
+            taskID: taskID,
+            singleUse: true,
+            workingDirectory: Path(""),
+            environment: .init(),
+            forTarget: nil,
+            priority: .network,
+            showEnvironment: false,
+            reason: .wasCompilationCachingQuery)
+        return true
     }
 
     /// Attempts to replay a previously cached compilation, using data from the local CAS.
@@ -591,24 +599,24 @@ public final class SwiftDriverJobTaskAction: TaskAction, BuildValueValidatingTas
                 // If any of the key misses, return cache miss.
                 guard let comp = try cas.queryLocalCacheKey(cacheKey) else {
                     if enableDiagnosticRemarks {
-                        outputDelegate.remark("local cache miss for key: \(cacheKey)")
+                        outputDelegate.note("local cache miss for key: \(cacheKey)")
                     }
                     return false
                 }
                 if enableDiagnosticRemarks {
-                    outputDelegate.remark("local cache found for key: \(cacheKey)")
+                    outputDelegate.note("local cache found for key: \(cacheKey)")
                 }
                 // Check all outputs are materialized.
                 // Doing the check immediately after the key allows associating the output remarks with the right key.
                 for output in try comp.getOutputs() {
                     if !output.isMaterialized {
                         if enableDiagnosticRemarks {
-                            outputDelegate.remark("cached output \(output.kindName) not available locally: \(output.casID)")
+                            outputDelegate.note("cached output \(output.kindName) not available locally: \(output.casID)")
                         }
                         return false
                     }
                     if enableDiagnosticRemarks {
-                        outputDelegate.remark("using CAS output \(output.kindName): \(output.casID)")
+                        outputDelegate.note("using CAS output \(output.kindName): \(output.casID)")
                     }
                 }
                 comps.append(comp)
@@ -634,14 +642,16 @@ public final class SwiftDriverJobTaskAction: TaskAction, BuildValueValidatingTas
 
         let result = try await replayCachedCommandImpl()
         if enableDiagnosticRemarks {
-            outputDelegate.remark("replay cache \(result ? "hit" : "miss")")
+            outputDelegate.note("replay cache \(result ? "hit" : "miss")")
         }
         if result {
             outputDelegate.incrementSwiftCacheHit()
             outputDelegate.incrementTaskCounter(.cacheHits)
+            outputDelegate.emitOutput("Cache hit\n")
         } else {
             outputDelegate.incrementSwiftCacheMiss()
             outputDelegate.incrementTaskCounter(.cacheMisses)
+            outputDelegate.emitOutput("Cache miss\n")
         }
         return result
     }

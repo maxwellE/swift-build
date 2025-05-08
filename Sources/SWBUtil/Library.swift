@@ -33,8 +33,8 @@ public enum Library: Sendable {
     @_alwaysEmitIntoClient
     public static func open(_ path: Path) throws -> LibraryHandle {
         #if os(Windows)
-        guard let handle = path.withPlatformString(LoadLibraryW) else {
-            throw LibraryOpenError(message: "LoadLibraryW returned \(GetLastError())")
+        guard let handle = try path.withPlatformString({ p in try p.withCanonicalPathRepresentation({ LoadLibraryW($0) }) }) else {
+            throw LibraryOpenError(message: Win32Error(GetLastError()).description)
         }
         return LibraryHandle(rawValue: handle)
         #else
@@ -64,15 +64,18 @@ public enum Library: Sendable {
     }
 
     public static func locate<T>(_ pointer: T.Type) -> Path {
-        let outPointer: UnsafeMutablePointer<CInterop.PlatformChar>
         #if os(Windows)
         var handle: HMODULE?
-        GetModuleHandleExW(DWORD(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT), unsafeBitCast(pointer, to: LPCWSTR?.self), &handle)
-        let capacity = 260
-        outPointer = .allocate(capacity: capacity)
-        defer { outPointer.deallocate() }
-        GetModuleFileNameW(handle, outPointer, DWORD(capacity))
+        guard GetModuleHandleExW(DWORD(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT), unsafeBitCast(pointer, to: LPCWSTR?.self), &handle) else {
+            return Path("")
+        }
+        do {
+            return try Path(SWB_GetModuleFileNameW(handle))
+        } catch {
+            return Path("")
+        }
         #else
+        let outPointer: UnsafeMutablePointer<CInterop.PlatformChar>
         var info = Dl_info()
         #if os(Android)
         dladdr(unsafeBitCast(pointer, to: UnsafeMutableRawPointer.self), &info)
@@ -81,8 +84,8 @@ public enum Library: Sendable {
         dladdr(unsafeBitCast(pointer, to: UnsafeMutableRawPointer?.self), &info)
         outPointer = UnsafeMutablePointer(mutating: info.dli_fname)
         #endif
-        #endif
         return Path(platformString: outPointer)
+        #endif
     }
 }
 

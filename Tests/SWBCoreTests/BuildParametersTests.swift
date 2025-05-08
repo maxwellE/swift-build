@@ -15,10 +15,11 @@ import Testing
 import SWBUtil
 import SWBCore
 import SWBProtocol
+import SWBTestSupport
 
 @Suite fileprivate struct BuildParametersTests {
     @Test
-    func serializationDoesNotContainUnstablaHash() throws {
+    func serializationDoesNotContainUnstableHash() throws {
         let action = BuildAction.build
         let configuration = "Debug"
         let activeRunDestination = RunDestinationInfo(

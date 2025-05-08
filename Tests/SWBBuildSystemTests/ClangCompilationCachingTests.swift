@@ -18,9 +18,9 @@ import SWBTaskExecution
 import SWBTestSupport
 import SWBUtil
 
-@Suite(.skipHostOS(.windows), .requireCompilationCaching,
-    .requireDependencyScannerPlusCaching, // Windows: CAS creation failed: fatal error: CAS cannot be initialized from the specified '-fcas-*' options: OnDiskCache is disabled
-       .flaky("A handful of Swift Build CAS tests fail when running the entire test suite"), .bug("rdar://137717929"))
+@Suite(.skipHostOS(.windows, "Windows platform has no CAS support yet"),
+       .requireCompilationCaching, .requireDependencyScannerPlusCaching,
+       .flaky("A handful of Swift Build CAS tests fail when running the entire test suite"), .bug("rdar://146781403"))
 fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
     let canUseCASPlugin: Bool
     let canUseCASPruning: Bool
@@ -71,7 +71,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 """
             }
 
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 results.checkNoTask(.matchRuleType("ScanDependencies"))
             }
         }
@@ -150,7 +150,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 """
             }
 
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 _ = results.checkTask(.matchTargetName("Textual"), .matchRuleType("ScanDependencies")) { $0 }
                 _ = results.checkTask(.matchTargetName("TextualWithFMod"), .matchRuleType("ScanDependencies")) { $0 }
                 results.checkNoTask(.matchTargetName("CppModules"), .matchRuleType("ScanDependencies"))
@@ -234,6 +234,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 // Make sure scanning happens before compilation...
                 results.check(event: .taskHadEvent(scanTask, event: .completed), precedes: .taskHadEvent(compileTask, event: .started))
 
+                results.checkNote("0 hits / 1 cacheable task (0%)")
                 results.checkCompileCacheMiss(compileTask)
                 results.checkNoDiagnostics()
             }
@@ -261,6 +262,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                     // Make sure scanning happens before compilation.
                     results.check(event: .taskHadEvent(scanTask, event: .completed), precedes: .taskHadEvent(compileTask, event: .started))
 
+                    results.checkNote("1 hit / 1 cacheable task (100%)")
                     results.checkCompileCacheHit(compileTask)
                 }
                 results.checkNoDiagnostics()
@@ -338,6 +340,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                                 "CCHROOT": cchrootPath.str,
                                 "CLANG_ENABLE_MODULES": "NO",
                                 "CLANG_ENABLE_EXPLICIT_MODULES": "NO",
+                                "EMIT_FRONTEND_COMMAND_LINES": "YES",
                             ])],
                         targets: [
                             TestStandardTarget(
@@ -357,7 +360,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 let arena = ArenaInfo.buildArena(derivedDataRoot: derivedDataPath)
                 let parameters = BuildParameters(action: .build, configuration: "Debug", arena: arena)
 
-                try await tester.checkBuild(parameters: parameters, persistent: false) { results in
+                try await tester.checkBuild(parameters: parameters, runDestination: .macOS, persistent: false) { results in
                     let compileTask: Task = try results.checkTask(.matchRuleType("CompileC")) { $0 }
                     results.checkTaskOutput(compileTask) { compileOutput in
                         XCTAssertMatch(compileOutput.stringValue, .contains("-fcas-path \(derivedDataPath.str)/"))
@@ -371,7 +374,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                     stream <<< ""
                 }
 
-                try await tester.checkBuild() { results in
+                try await tester.checkBuild(runDestination: .macOS) { results in
                     let compileTask: Task = try results.checkTask(.matchRuleType("CompileC")) { $0 }
                     results.checkTaskOutput(compileTask) { compileOutput in
                         XCTAssertMatch(compileOutput.stringValue, .contains("-fcas-path \(cchrootPath.str)/"))
@@ -388,6 +391,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
             "CLANG_ENABLE_COMPILE_CACHE": "YES",
             "CLANG_CACHE_FINE_GRAINED_OUTPUTS": "NO",
             "CLANG_CACHE_FINE_GRAINED_OUTPUTS_VERIFICATION": "NO",
+            "EMIT_FRONTEND_COMMAND_LINES": "YES",
         ]
 
         try await testCachingFineGrainedOutputsBasicNoMatch(buildSettings: buildSettings)
@@ -400,6 +404,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
             "CLANG_ENABLE_COMPILE_CACHE": "NO",
             "CLANG_CACHE_FINE_GRAINED_OUTPUTS": "YES",
             "CLANG_CACHE_FINE_GRAINED_OUTPUTS_VERIFICATION": "YES",
+            "EMIT_FRONTEND_COMMAND_LINES": "YES",
         ]
 
         try await testCachingFineGrainedOutputsBasicNoMatch(buildSettings: buildSettings)
@@ -442,7 +447,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 let arena = ArenaInfo.buildArena(derivedDataRoot: derivedDataPath)
                 let parameters = BuildParameters(action: .build, configuration: "Debug", arena: arena)
 
-                try await tester.checkBuild(parameters: parameters, persistent: false) { results in
+                try await tester.checkBuild(parameters: parameters, runDestination: .macOS, persistent: false) { results in
                     let compileTask: Task = try results.checkTask(.matchRuleType("CompileC")) { $0 }
                     results.checkTaskOutput(compileTask) { compileOutput in
                         XCTAssertNoMatch(compileOutput.stringValue, .contains("-fcas-backend"))
@@ -458,7 +463,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                     stream <<< ""
                 }
 
-                try await tester.checkBuild() { results in
+                try await tester.checkBuild(runDestination: .macOS) { results in
                     let compileTask: Task = try results.checkTask(.matchRuleType("CompileC")) { $0 }
                     results.checkTaskOutput(compileTask) { compileOutput in
                         XCTAssertNoMatch(compileOutput.stringValue, .contains("-fcas-backend"))
@@ -475,6 +480,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
         let buildSettings = [
             "PRODUCT_NAME": "$(TARGET_NAME)",
             "CLANG_ENABLE_COMPILE_CACHE": "YES",
+            "EMIT_FRONTEND_COMMAND_LINES": "YES",
         ]
 
         try await testCachingFineGrainedOutputsBasicMatch(buildSettings: buildSettings, checkVerification: false)
@@ -486,6 +492,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
             "PRODUCT_NAME": "$(TARGET_NAME)",
             "CLANG_ENABLE_COMPILE_CACHE": "YES",
             "CLANG_CACHE_FINE_GRAINED_OUTPUTS": "YES",
+            "EMIT_FRONTEND_COMMAND_LINES": "YES",
         ]
 
         try await testCachingFineGrainedOutputsBasicMatch(buildSettings: buildSettings, checkVerification: false)
@@ -498,6 +505,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
             "CLANG_ENABLE_COMPILE_CACHE": "YES",
             "CLANG_CACHE_FINE_GRAINED_OUTPUTS": "YES",
             "CLANG_CACHE_FINE_GRAINED_OUTPUTS_VERIFICATION": "YES",
+            "EMIT_FRONTEND_COMMAND_LINES": "YES",
         ]
 
         try await testCachingFineGrainedOutputsBasicMatch(buildSettings: buildSettings, checkVerification: true)
@@ -540,7 +548,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 let arena = ArenaInfo.buildArena(derivedDataRoot: derivedDataPath)
                 let parameters = BuildParameters(action: .build, configuration: "Debug", arena: arena)
 
-                try await tester.checkBuild(parameters: parameters, persistent: false) { results in
+                try await tester.checkBuild(parameters: parameters, runDestination: .macOS, persistent: false) { results in
                     let compileTask: Task = try results.checkTask(.matchRuleType("CompileC")) { $0 }
                     results.checkTaskOutput(compileTask) { compileOutput in
                         XCTAssertMatch(compileOutput.stringValue, .contains("-fcas-backend"))
@@ -558,7 +566,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                     stream <<< ""
                 }
 
-                try await tester.checkBuild() { results in
+                try await tester.checkBuild(runDestination: .macOS) { results in
                     let compileTask: Task = try results.checkTask(.matchRuleType("CompileC")) { $0 }
                     results.checkTaskOutput(compileTask) { compileOutput in
                         XCTAssertMatch(compileOutput.stringValue, .contains("-fcas-backend"))
@@ -597,6 +605,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                                 "BLOCKLISTS_PATH": tmpDirPath.str,
                                 "CLANG_ENABLE_MODULES": "NO",
                                 "CLANG_ENABLE_EXPLICIT_MODULES": "NO",
+                                "EMIT_FRONTEND_COMMAND_LINES": "YES",
                             ])],
                         targets: [
                             TestStandardTarget(
@@ -622,7 +631,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                             """
                 }
 
-                try await tester.checkBuild() { results in
+                try await tester.checkBuild(runDestination: .macOS) { results in
                     results.checkTaskExists(.matchRuleType("ScanDependencies"))
                     results.checkTask(.matchRuleType("CompileC")) { compileTask in
                         results.checkTaskOutput(compileTask) { output in
@@ -656,7 +665,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                                                 buildTargets: tester.workspace.projects[0].targets.map({ BuildRequest.BuildTargetInfo(parameters: buildParameters, target: $0) }),
                                                 continueBuildingAfterErrors: true, useParallelTargets: true, useImplicitDependencies: false, useDryRun: false)
 
-                try await tester.checkBuild(buildRequest: buildRequest) { results in
+                try await tester.checkBuild(runDestination: .macOS, buildRequest: buildRequest) { results in
                     results.checkNoTask(.matchRuleType("ScanDependencies"))
                     results.checkTask(.matchRuleType("CompileC")) { compileTask in
                         results.checkTaskOutput(compileTask) { output in
@@ -726,7 +735,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 """
             }
 
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 let scanTask: Task = try results.checkTask(.matchRuleType("ScanDependencies")) { $0 }
                 let compileTask: Task = try results.checkTask(.matchRuleType("CompileC")) { $0 }
 
@@ -749,7 +758,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
             // Touch the source file to trigger a new scan.
             try await tester.fs.updateTimestamp(testWorkspace.sourceRoot.join("aProject/file.c"))
 
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 if tester.fs.fileSystemMode == .checksumOnly {
                     // Updating timestamp of aProject/file.c will not trigger "ScanDependencies" or "CompileC" tasks
                 } else {
@@ -769,9 +778,9 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
             }
 
             // Clean the build to trigger a cached build.
-            try await tester.checkBuild(buildCommand: .cleanBuildFolder(style: .regular), body: { _ in })
+            try await tester.checkBuild(runDestination: .macOS, buildCommand: .cleanBuildFolder(style: .regular), body: { _ in })
 
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 let scanTask: Task = try results.checkTask(.matchRuleType("ScanDependencies")) { $0 }
                 let compileTask: Task = try results.checkTask(.matchRuleType("CompileC")) { $0 }
 
@@ -800,7 +809,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 """
             }
 
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 let compileTask: Task = try results.checkTask(.matchRuleType("CompileC")) { $0 }
                 results.checkCompileCacheMiss(compileTask)
                 results.checkNoDiagnostics()
@@ -867,7 +876,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
             }
 
             // Clean build.
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 results.checkNoDiagnostics()
                 results.checkTasks(.matchRuleType("ScanDependencies")) { tasks in
                     #expect(tasks.count == 4)
@@ -884,7 +893,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
             try await tester.fs.writeFileContents(testWorkspace.sourceRoot.join("aProject/file1.c")) { stream in
                 stream <<< "int something = 2;"
             }
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 results.checkNoDiagnostics()
                 results.checkTasks(.matchRuleType("ScanDependencies")) { tasks in
                     #expect(tasks.count == 1)
@@ -900,7 +909,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 stream <<< "my_int something = 2;"
             }
             // Despite the low CAS size limit the PCH include-tree should not get garbage collected.
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 results.checkNoDiagnostics()
                 results.checkTasks(.matchRuleType("ScanDependencies")) { tasks in
                     #expect(tasks.count == 1)
@@ -921,7 +930,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 stream <<< "my_int something = 3;"
             }
             // The PCH and TU include-trees got removed so the scanner needs to run again.
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 results.checkNoDiagnostics()
                 results.checkTasks(.matchRuleType("ScanDependencies")) { tasks in
                     // FIXME: Since file1.c and file3.c did not change, no need to compile or scan them.
@@ -999,7 +1008,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
             }
 
             // Clean build.
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 results.checkNoDiagnostics()
                 results.checkTasks(.matchRuleType("ScanDependencies")) { tasks in
                     #expect(tasks.count == 2)
@@ -1016,7 +1025,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
             try await tester.fs.writeFileContents(testWorkspace.sourceRoot.join("aProject/file1.c")) { stream in
                 stream <<< "int something = 2;"
             }
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 results.checkNoDiagnostics()
                 results.checkTasks(.matchRuleType("ScanDependencies")) { tasks in
                     #expect(tasks.count == 1)
@@ -1035,7 +1044,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 my_int something = 2;
                 """
             }
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 results.checkNoDiagnostics()
                 results.checkTasks(.matchRuleType("ScanDependencies")) { tasks in
                     #expect(tasks.count == 1)
@@ -1060,7 +1069,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 """
             }
             // The module include-tree, PCM and diagnostics got removed; the TU include-tree got removed too.
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 results.checkNoDiagnostics()
                 results.checkNoDiagnostics()
                 // FIXME: No need to scan for file1.c, its inputs and outputs are still up-to-date.
@@ -1165,7 +1174,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
             }
 
             // Clean build.
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 results.checkNoDiagnostics()
                 results.checkTasks(.matchRuleType("ScanDependencies")) { tasks in
                     #expect(tasks.count == 4)
@@ -1188,7 +1197,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 int something = 2;
                 """
             }
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 results.checkNoDiagnostics()
                 results.checkTasks(.matchRuleType("ScanDependencies")) { tasks in
                     #expect(tasks.count == 1)
@@ -1208,7 +1217,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 """
             }
             // Despite the low CAS size limit the PCH include-tree should not get garbage collected.
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 results.checkNoDiagnostics()
                 results.checkTasks(.matchRuleType("ScanDependencies")) { tasks in
                     #expect(tasks.count == 1)
@@ -1234,7 +1243,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
             }
             // The module, PCH and TU include-trees got removed so the scanner needs to run again.
             // The module PCM got removed so the compiler needs to run again.
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 results.checkNoDiagnostics()
                 results.checkTasks(.matchRuleType("ScanDependencies")) { tasks in
                     // FIXME: Since file1.c and file3.c did not change, no need to compile or scan them.
@@ -1309,7 +1318,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 """
             }
 
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 results.checkTasks(.matchRuleType("ScanDependencies")) { tasks in
                     #expect(tasks.count == 2)
                 }
@@ -1334,7 +1343,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
             try await tester.fs.updateTimestamp(testWorkspace.sourceRoot.join("aProject/file1.c"))
             try await tester.fs.updateTimestamp(testWorkspace.sourceRoot.join("aProject/file2.cpp"))
 
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 if tester.fs.fileSystemMode == .checksumOnly {
                     // Updating timestamp will not trigger "ScanDependencies" and "CompileC" under .checksumOnly
                 } else {
@@ -1401,7 +1410,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 stream <<< "#include <stdio.h>"
             }
 
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 results.checkTasks(.matchRuleType("ScanDependencies")) { scanTasks in
                     #expect(scanTasks.count == 2)
                 }
@@ -1421,9 +1430,9 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
             }
 
             // Clean the build to trigger a cached build.
-            try await tester.checkBuild(buildCommand: .cleanBuildFolder(style: .regular), body: { _ in })
+            try await tester.checkBuild(runDestination: .macOS, buildCommand: .cleanBuildFolder(style: .regular), body: { _ in })
 
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 results.checkTasks(.matchRuleType("PrecompileModule")) { pcmTasks in
                     #expect(pcmTasks.count >= 1)
                     for pcmTask in pcmTasks {
@@ -1484,7 +1493,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 """
             }
 
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 results.checkNoTask(.matchRuleType("ScanDependencies"))
                 results.checkTask(.matchRuleType("CompileC")) { compileTask in
                     results.checkTaskOutput(compileTask) { output in
@@ -1525,6 +1534,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                                     "CLANG_ENABLE_PREFIX_MAPPING": "YES",
                                     "CLANG_OTHER_PREFIX_MAPPINGS": "\(moduleDir.str)=/^mod",
                                     "DSTROOT": tmpDirPath.join("dstroot").str,
+                                    "EMIT_FRONTEND_COMMAND_LINES": "YES",
                                 ])],
                             targets: [
                                 TestStandardTarget(
@@ -1556,10 +1566,10 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                     """
                 }
 
-                try await tester.checkBuild(persistent: true, body: body)
+                try await tester.checkBuild(runDestination: .macOS, persistent: true, body: body)
 
                 // Clean.
-                try await tester.checkBuild(buildCommand: .cleanBuildFolder(style: .regular), body: { _ in })
+                try await tester.checkBuild(runDestination: .macOS, buildCommand: .cleanBuildFolder(style: .regular), body: { _ in })
             }
 
             func checkCommandLineCommon(output: ByteString) {
@@ -1651,7 +1661,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 "COMPILATION_CACHE_LIMIT_SIZE": "100K",
             ])
 
-            try await tester.checkBuild(parameters: parameters, persistent: true) { results in
+            try await tester.checkBuild(parameters: parameters, runDestination: .macOS, persistent: true) { results in
                 // Normal build, cache persists.
                 let path = tmpDirPath.join("CCHROOT/CompilationCache.noindex")
                 #expect(tester.fs.exists(path))
@@ -1662,13 +1672,13 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
 
                 results.check(contains: .activityStarted(ruleInfo: "ClangCachingPruneData \(path.str)/builtin \(libClangPath.str)"))
                 results.check(contains: .activityEnded(ruleInfo: "ClangCachingPruneData \(path.str)/builtin \(libClangPath.str)", status: .succeeded))
-                results.checkRemark(.contains("cache miss: "))
+                results.checkNote(.contains("cache miss: "))
                 results.checkNoRemarks()
             }
 
-            try await tester.checkBuild(buildCommand: .cleanBuildFolder(style: .regular), body: { _ in })
+            try await tester.checkBuild(runDestination: .macOS, buildCommand: .cleanBuildFolder(style: .regular), body: { _ in })
 
-            try await tester.checkBuild(parameters: parametersCustom, persistent: true) { results in
+            try await tester.checkBuild(parameters: parametersCustom, runDestination: .macOS, persistent: true) { results in
                 // Normal build, cache persists.
                 let path = tmpDirPath.join("Custom")
                 #expect(tester.fs.exists(path))
@@ -1676,18 +1686,18 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 results.check(notContains: .activityEnded(ruleInfo: "CleanupCompileCache \(path.str)", status: .succeeded))
 
                 if canUseCASPruning {
-                    results.checkRemark(.regex(try Regex("cache size \\(.*\\) larger than size limit")))
+                    results.checkNote(.regex(try Regex("cache size \\(.*\\) larger than size limit")))
                 }
             }
 
-            try await tester.checkBuild(buildCommand: .cleanBuildFolder(style: .regular), body: { _ in })
+            try await tester.checkBuild(runDestination: .macOS, buildCommand: .cleanBuildFolder(style: .regular), body: { _ in })
 
             let arena = ArenaInfo.buildArena(derivedDataRoot: tmpDirPath.join("derived-data"))
             let parametersWithDerivedData =  BuildParameters(configuration: "Debug", overrides:[
                 "COMPILATION_CACHE_LIMIT_SIZE": "0",
             ], arena: arena)
 
-            try await tester.checkBuild(parameters: parametersWithDerivedData, persistent: true) { results in
+            try await tester.checkBuild(parameters: parametersWithDerivedData, runDestination: .macOS, persistent: true) { results in
                 // Normal build, cache persists.
                 let path = tmpDirPath.join("derived-data/CompilationCache.noindex")
                 #expect(tester.fs.exists(path))
@@ -1698,7 +1708,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
 
                 results.check(contains: .activityStarted(ruleInfo: "ClangCachingPruneData \(path.str)/builtin \(libClangPath.str)"))
                 results.check(contains: .activityEnded(ruleInfo: "ClangCachingPruneData \(path.str)/builtin \(libClangPath.str)", status: .succeeded))
-                results.checkRemark(.contains("cache miss: "))
+                results.checkNote(.contains("cache miss: "))
                 results.checkNoRemarks()
             }
         }
@@ -1756,7 +1766,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
                 stream <<< ""
             }
 
-            try await tester.checkBuild() { results in
+            try await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkTask(.matchRuleType("PhaseScriptExecution")) { task in
                     #expect(task.environment.bindings.contains(where: { $0 == ("COMPILATION_CACHE_KEEP_CAS_DIRECTORY", "YES") }))
                 }
@@ -1808,7 +1818,7 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
             }
 
             // Build with explicit modules scanning but without caching.
-            try await tester.checkBuild(persistent: true) { results in
+            try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
                 _ = results.checkTask(.matchRuleType("ScanDependencies")) { $0 }
                 _ = results.checkTask(.matchRuleType("CompileC")) { $0 }
                 results.checkNoErrors()
@@ -1816,22 +1826,243 @@ fileprivate struct ClangCompilationCachingTests: CoreBasedTests {
 
             // Re-build with caching enabled, make sure compilation tasks re-run.
             let parameters = BuildParameters(configuration: "Debug", overrides: ["CLANG_ENABLE_COMPILE_CACHE": "YES"])
-            try await tester.checkBuild(parameters: parameters, persistent: true) { results in
+            try await tester.checkBuild(parameters: parameters, runDestination: .macOS, persistent: true) { results in
                 _ = results.checkTask(.matchRuleType("ScanDependencies")) { $0 }
                 _ = results.checkTask(.matchRuleType("CompileC")) { $0 }
                 results.checkNoErrors()
             }
         }
     }
+
+    @Test(.requireCASValidation, .requireSDKs(.macOS), arguments: [(true, true), (false, true), (false, false)])
+    func validateCAS(usePlugin: Bool, enableCaching: Bool) async throws {
+        try await withTemporaryDirectory { tmpDirPath in
+            let casPath = tmpDirPath.join("CompilationCache")
+            var buildSettings: [String: String] = [
+                "PRODUCT_NAME": "$(TARGET_NAME)",
+                "CLANG_ENABLE_COMPILE_CACHE": enableCaching ? "YES" : "NO",
+                "CLANG_ENABLE_MODULES": "NO",
+                "COMPILATION_CACHE_CAS_PATH": casPath.str,
+            ]
+            if usePlugin {
+                buildSettings["COMPILATION_CACHE_ENABLE_PLUGIN"] = "YES"
+            }
+            let testWorkspace = TestWorkspace(
+                "Test",
+                sourceRoot: tmpDirPath.join("Test"),
+                projects: [
+                    TestProject(
+                        "aProject",
+                        groupTree: TestGroup(
+                            "Sources",
+                            children: [
+                                TestFile("file.c"),
+                            ]),
+                        buildConfigurations: [TestBuildConfiguration(
+                            "Debug",
+                            buildSettings: buildSettings)],
+                        targets: [
+                            TestStandardTarget(
+                                "Library",
+                                type: .staticLibrary,
+                                buildPhases: [
+                                    TestSourcesBuildPhase(["file.c"]),
+                                ]),
+                        ])])
+
+            let tester = try await BuildOperationTester(getCore(), testWorkspace, simulated: false)
+            try await tester.fs.writeFileContents(testWorkspace.sourceRoot.join("aProject/file.c")) { stream in
+                stream <<<
+                """
+                #include <stdio.h>
+                int something = 1;
+                """
+            }
+
+            let specificCAS = casPath.join(usePlugin ? "plugin" : "builtin")
+            let ruleInfo = "ValidateCAS \(specificCAS.str) \(try await ConditionTraitContext.shared.llvmCasToolPath.str)"
+
+            let checkBuild = { (expectedOutput: ByteString?) in
+                try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
+
+                    if enableCaching {
+                        results.check(contains: .activityStarted(ruleInfo: ruleInfo))
+                        if let expectedOutput {
+                            results.check(contains: .activityEmittedData(ruleInfo: ruleInfo, expectedOutput.bytes))
+                        }
+                        results.check(contains: .activityEnded(ruleInfo: ruleInfo, status: .succeeded))
+                    } else {
+                        results.check(notContains: .activityStarted(ruleInfo: ruleInfo))
+                    }
+                    results.checkNoDiagnostics()
+                }
+            }
+
+            // Ignore output for plugin CAS since it may not yet support validation.
+            try await checkBuild(usePlugin ? nil : "validated successfully\n")
+            // The second build should not require validation.
+            try await checkBuild("validation skipped\n")
+            // Including clean builds.
+            try await tester.checkBuild(runDestination: .macOS, buildCommand: .cleanBuildFolder(style: .regular), body: { _ in })
+            try await checkBuild("validation skipped\n")
+        }
+    }
+
+    @Test(.requireCASValidation, .requireSDKs(.macOS))
+    func validateCASRecovery() async throws {
+        try await withTemporaryDirectory { tmpDirPath in
+            let casPath = tmpDirPath.join("CompilationCache")
+            let buildSettings: [String: String] = [
+                "PRODUCT_NAME": "$(TARGET_NAME)",
+                "CLANG_ENABLE_COMPILE_CACHE": "YES",
+                "CLANG_ENABLE_MODULES": "NO",
+                "COMPILATION_CACHE_CAS_PATH": casPath.str,
+            ]
+            let testWorkspace = TestWorkspace(
+                "Test",
+                sourceRoot: tmpDirPath.join("Test"),
+                projects: [
+                    TestProject(
+                        "aProject",
+                        groupTree: TestGroup(
+                            "Sources",
+                            children: [
+                                TestFile("file.c"),
+                            ]),
+                        buildConfigurations: [TestBuildConfiguration(
+                            "Debug",
+                            buildSettings: buildSettings)],
+                        targets: [
+                            TestStandardTarget(
+                                "Library",
+                                type: .staticLibrary,
+                                buildPhases: [
+                                    TestSourcesBuildPhase(["file.c"]),
+                                ]),
+                        ])])
+
+            let tester = try await BuildOperationTester(getCore(), testWorkspace, simulated: false)
+            try await tester.fs.writeFileContents(testWorkspace.sourceRoot.join("aProject/file.c")) { stream in
+                stream <<<
+                """
+                #include <stdio.h>
+                int something = 1;
+                """
+            }
+
+            let specificCAS = casPath.join("builtin")
+            let ruleInfo = "ValidateCAS \(specificCAS.str) \(try await ConditionTraitContext.shared.llvmCasToolPath.str)"
+
+            let checkBuild = { (expectedOutput: ByteString?) in
+                try await tester.checkBuild(runDestination: .macOS, persistent: true) { results in
+                    results.check(contains: .activityStarted(ruleInfo: ruleInfo))
+                    if let expectedOutput {
+                        results.check(contains: .activityEmittedData(ruleInfo: ruleInfo, expectedOutput.bytes))
+                    }
+                    results.check(contains: .activityEnded(ruleInfo: ruleInfo, status: .succeeded))
+                    results.checkNoDiagnostics()
+                }
+            }
+
+            // Ignore output for plugin CAS since it may not yet support validation.
+            try await checkBuild("validated successfully\n")
+            // Create an error and trigger revalidation by messing with the validation data.
+            try tester.fs.move(casPath.join("builtin/v1.1/v8.data"), to: casPath.join("builtin/v1.1/v8.data.moved"))
+            try await tester.fs.writeFileContents(casPath.join("builtin/v1.validation")) { stream in
+                stream <<< "0"
+            }
+            try await checkBuild("recovered from invalid data\n")
+        }
+    }
+
+    @Test(.requireCASValidation, .requireSDKs(.macOS))
+    func validateCASMultipleExec() async throws {
+        try await withTemporaryDirectory { (tmpDirPath: Path) in
+            let casPath = tmpDirPath.join("CompilationCache")
+            let buildSettings: [String: String] = [
+                "PRODUCT_NAME": "$(TARGET_NAME)",
+                "CLANG_ENABLE_COMPILE_CACHE": "YES",
+                "CLANG_ENABLE_MODULES": "NO",
+                "COMPILATION_CACHE_CAS_PATH": casPath.str,
+            ]
+            let llvmCasExec = try await ConditionTraitContext.shared.llvmCasToolPath
+            // Create a trivially different path. If we ever canonicalize the path it will be harder to test this.
+            let llvmCasExec2 = Path("\(llvmCasExec.dirname.str)\(Path.pathSeparator)\(Path.pathSeparator)\(llvmCasExec.basename)")
+            let testWorkspace = TestWorkspace(
+                "Test",
+                sourceRoot: tmpDirPath.join("Test"),
+                projects: [
+                    TestProject(
+                        "aProject",
+                        groupTree: TestGroup(
+                            "Sources",
+                            children: [
+                                TestFile("file.c"),
+                            ]),
+                        buildConfigurations: [TestBuildConfiguration(
+                            "Debug",
+                            buildSettings: buildSettings)],
+                        targets: [
+                            TestStandardTarget(
+                                "Library1",
+                                type: .staticLibrary,
+                                buildPhases: [
+                                    TestSourcesBuildPhase(["file.c"]),
+                                ]),
+                            TestStandardTarget(
+                                "Library2",
+                                type: .staticLibrary,
+                                buildConfigurations: [TestBuildConfiguration(
+                                    "Debug",
+                                    buildSettings: [
+                                        "VALIDATE_CAS_EXEC": llvmCasExec2.str,
+                                    ])],
+                                buildPhases: [
+                                    TestSourcesBuildPhase(["file.c"]),
+                                ]),
+                        ])])
+
+            let tester = try await BuildOperationTester(getCore(), testWorkspace, simulated: false)
+            try await tester.fs.writeFileContents(testWorkspace.sourceRoot.join("aProject/file.c")) { stream in
+                stream <<<
+                """
+                #include <stdio.h>
+                int something = 1;
+                """
+            }
+
+            let specificCAS = casPath.join("builtin")
+            let parameters = BuildParameters(configuration: "Debug", activeRunDestination: .macOS)
+            let targets = tester.workspace.allTargets.map({ BuildRequest.BuildTargetInfo(parameters: parameters, target: $0) })
+
+            try await tester.checkBuild(runDestination: .macOS, buildRequest: BuildRequest(parameters: parameters, buildTargets: targets, continueBuildingAfterErrors: false, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false), persistent: true) { results in
+                for ruleInfo in ["ValidateCAS \(specificCAS.str) \(llvmCasExec.str)", "ValidateCAS \(specificCAS.str) \(llvmCasExec2.str)"] {
+                    results.check(contains: .activityStarted(ruleInfo: ruleInfo))
+                    results.check(contains: .activityEnded(ruleInfo: ruleInfo, status: .succeeded))
+                }
+                results.checkNoDiagnostics()
+            }
+        }
+    }
 }
 
 extension BuildOperationTester.BuildResults {
-    fileprivate func checkCompileCacheMiss(_ task: Task, file: StaticString = #file, line: UInt = #line) {
-        checkRemark(.contains("cache miss: "))
+    fileprivate func checkCompileCacheMiss(_ task: Task, sourceLocation: SourceLocation = #_sourceLocation) {
+        let found = (getDiagnosticMessageForTask(.contains("cache miss: "), kind: .note, task: task) != nil)
+        guard found else {
+            Issue.record("Unable to find cache miss diagnostic for task \(task)", sourceLocation: sourceLocation)
+            return
+        }
+        check(contains: .taskHadEvent(task, event: .hadOutput(contents: "Cache miss\n")), sourceLocation: sourceLocation)
     }
 
-    fileprivate func checkCompileCacheHit(_ task: Task, file: StaticString = #file, line: UInt = #line) {
-        checkRemark(.contains("cache hit: "))
-        while checkRemark(.contains("using CAS output"), failIfNotFound: false) {}
+    fileprivate func checkCompileCacheHit(_ task: Task, sourceLocation: SourceLocation = #_sourceLocation) {
+        let found = (getDiagnosticMessageForTask(.contains("cache hit: "), kind: .note, task: task) != nil)
+        guard found else {
+            Issue.record("Unable to find cache hit diagnostic for task \(task)", sourceLocation: sourceLocation)
+            return
+        }
+        while getDiagnosticMessageForTask(.contains("using CAS output"), kind: .note, task: task) != nil {}
+        check(contains: .taskHadEvent(task, event: .hadOutput(contents: "Cache hit\n")), sourceLocation: sourceLocation)
     }
 }

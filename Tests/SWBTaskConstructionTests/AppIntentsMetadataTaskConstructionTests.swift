@@ -17,6 +17,8 @@ import SWBProtocol
 import SWBTaskConstruction
 import SWBTestSupport
 import SWBUtil
+import Foundation
+import SWBTaskExecution
 
 @Suite(.requireXcode16())
 fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
@@ -79,7 +81,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
             let defaultToolchain = try #require(core.toolchainRegistry.defaultToolchain)
             let tester = try TaskConstructionTester(core, testProject)
             let SRCROOT = tester.workspace.projects[0].sourceRoot.str
-            await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(runDestination: .iOS) { results in
                 results.checkTask(.matchRuleType("ExtractAppIntentsMetadata")) { task in
                     let executableName = task.commandLine.first
                     if let executableName,
@@ -248,7 +250,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
             let defaultToolchain = try #require(core.toolchainRegistry.defaultToolchain)
             let tester = try TaskConstructionTester(core, testProject)
             let SRCROOT = tester.workspace.projects[0].sourceRoot.str
-            await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(runDestination: .iOS) { results in
                 results.checkTask(.matchRuleType("ExtractAppIntentsMetadata")) { task in
                     let executableName = task.commandLine.first
                     if let executableName,
@@ -445,7 +447,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
 
             let core = try await getCore()
             let tester = try TaskConstructionTester(core, testProject)
-            await tester.checkBuild(BuildParameters(action: .build, configuration: "Release", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(BuildParameters(action: .build, configuration: "Release"), runDestination: .iOS) { results in
                 results.checkTask(.matchRuleType("AppIntentsSSUTraining")) { task in
                     let executableName = task.commandLine.first
                     if let executableName,
@@ -455,7 +457,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
                     results.checkNoDiagnostics()
                 }
             }
-            await tester.checkBuild(BuildParameters(action: .install, configuration: "Release", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(BuildParameters(action: .install, configuration: "Release"), runDestination: .iOS) { results in
                 results.checkTask(.matchRuleType("AppIntentsSSUTraining")) { task in
                     let executableName = task.commandLine.first
                     if let executableName,
@@ -465,7 +467,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
                     results.checkNoDiagnostics()
                 }
             }
-            await tester.checkBuild(BuildParameters(action: .archive, configuration: "Release", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(BuildParameters(action: .archive, configuration: "Release"), runDestination: .iOS) { results in
                 results.checkTask(.matchRuleType("AppIntentsSSUTraining")) { task in
                     let executableName = task.commandLine.first
                     if let executableName,
@@ -531,7 +533,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
             let core = try await getCore()
             let tester = try TaskConstructionTester(core, testProject)
             let SRCROOT = tester.workspace.projects[0].sourceRoot.str
-            await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(runDestination: .iOS) { results in
                 results.checkTask(.matchRuleType("ValidateAppShortcutStringsMetadata")) { task in
                     let executableName = task.commandLine.first
                     if let executableName,
@@ -614,7 +616,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
 
             let core = try await getCore()
             let tester = try TaskConstructionTester(core, testProject)
-            await tester.checkBuild(BuildParameters(action: .installAPI, configuration: "Debug", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(BuildParameters(action: .installAPI, configuration: "Debug"), runDestination: .iOS) { results in
                 results.checkNoTask(.matchRuleType("ExtractAppIntentsMetadata"))
                 results.checkNoTask(.matchRuleType("ValidateAppShortcutStringsMetadata"))
                 results.checkNoTask(.matchRuleType("AppIntentsSSUTraining"))
@@ -673,7 +675,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
 
             let core = try await getCore()
             let tester = try TaskConstructionTester(core, testProject)
-            await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .macOS)) { results in
+            await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkWriteAuxiliaryFileTask(.matchRuleItemPattern(.suffix("LinkTest.SwiftConstValuesFileList"))) { task, contents in
                     task.checkRuleInfo(["WriteAuxiliaryFile", .suffix("LinkTest.SwiftConstValuesFileList")])
                     task.checkOutputs(contain: [.namePattern(.suffix("LinkTest.SwiftConstValuesFileList"))])
@@ -833,7 +835,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
 
             let core = try await getCore()
             let tester = try TaskConstructionTester(core, testProject)
-            await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(runDestination: .iOS) { results in
                 results.checkTask(.matchRuleType("AppIntentsSSUTraining")) { task in
                     results.checkNoDiagnostics()
                 }
@@ -842,7 +844,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
     }
 
     // Ensure SSU tasks are enabled by-default for public SDK clients,
-    // but can be overriden with 'APP_SHORTCUTS_ENABLE_FLEXIBLE_MATCHING=NO'
+    // but can be overridden with 'APP_SHORTCUTS_ENABLE_FLEXIBLE_MATCHING=NO'
     @Test(.requireSDKs(.iOS))
     func overrideSSUTasksIfPublicSDK() async throws {
         try await withTemporaryDirectory { tmpDir in
@@ -893,7 +895,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
 
             let core = try await getCore()
             let tester = try TaskConstructionTester(core, testProject)
-            await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(runDestination: .iOS) { results in
                 results.checkNoTask(.matchRuleType("AppIntentsSSUTraining"))
             }
         }
@@ -949,7 +951,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
 
             let core = try await getCore()
             let tester = try TaskConstructionTester(core, testProject)
-            await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .macOS)) { results in
+            await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkNoTask(.matchRuleType("AppIntentsSSUTraining"))
             }
         }
@@ -1005,7 +1007,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
 
             let core = try await getCore()
             let tester = try TaskConstructionTester(core, testProject)
-            await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(runDestination: .iOS) { results in
                 results.checkTask(.matchRuleType("ExtractAppIntentsMetadata")) { task in
                     let executableName = task.commandLine.first
                     if let executableName,
@@ -1068,7 +1070,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
 
             let core = try await getCore()
             let tester = try TaskConstructionTester(core, testProject)
-            await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(runDestination: .iOS) { results in
                 results.checkTask(.matchRuleType("ExtractAppIntentsMetadata")) { task in
                     let executableName = task.commandLine.first
                     if let executableName,
@@ -1127,7 +1129,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
 
             let core = try await getCore()
             let tester = try TaskConstructionTester(core, testProject)
-            await tester.checkBuild(BuildParameters(action: .installAPI, configuration: "Debug", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(BuildParameters(action: .installAPI, configuration: "Debug"), runDestination: .iOS) { results in
                 results.checkNoTask(.matchRuleType("ExtractAppIntentsMetadata"))
                 results.checkNoTask(.matchRuleType("ValidateAppShortcutStringsMetadata"))
                 results.checkNoTask(.matchRuleType("AppIntentsSSUTraining"))
@@ -1184,7 +1186,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
 
             let core = try await getCore()
             let tester = try TaskConstructionTester(core, testProject)
-            await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(runDestination: .iOS) { results in
                 results.checkTask(.matchRuleType("ExtractAppIntentsMetadata")) { task in
                     let executableName = task.commandLine.first
                     if let executableName,
@@ -1245,7 +1247,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
 
             let core = try await getCore()
             let tester = try TaskConstructionTester(core, testProject)
-            await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(runDestination: .iOS) { results in
                 results.checkTask(.matchRuleType("ExtractAppIntentsMetadata")) { task in
                     let executableName = task.commandLine.first
                     if let executableName,
@@ -1306,7 +1308,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
 
             let core = try await getCore()
             let tester = try TaskConstructionTester(core, testProject)
-            await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(runDestination: .iOS) { results in
                 results.checkTask(.matchRuleType("ExtractAppIntentsMetadata")) { task in
                     let executableName = task.commandLine.first
                     if let executableName,
@@ -1372,7 +1374,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
             let defaultToolchain = try #require(core.toolchainRegistry.defaultToolchain)
             let tester = try TaskConstructionTester(core, testProject)
             let SRCROOT = tester.workspace.projects[0].sourceRoot.str
-            await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(runDestination: .iOS) { results in
                 results.checkTask(.matchRuleType("ExtractAppIntentsMetadata")) { task in
                     let executableName = task.commandLine.first
                     if let executableName,
@@ -1572,7 +1574,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
             let core = try await getCore()
             let tester = try TaskConstructionTester(core, testProject)
             let SRCROOT = tester.workspace.projects[0].sourceRoot.str
-            await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(runDestination: .iOS) { results in
                 results.checkWriteAuxiliaryFileTask(.matchRule(["WriteAuxiliaryFile", "\(SRCROOT)/build/aProject.build/Debug-iphoneos/LinkTest.build/LinkTest.DependencyMetadataFileList"])) { task, contents in
                     let inputFiles = [
                         "\(SRCROOT)/build/Debug-iphoneos/FrameworkTargetA.framework/Metadata.appintents/extract.actionsdata",
@@ -1643,7 +1645,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
 
             let core = try await getCore()
             let tester = try TaskConstructionTester(core, testProject)
-            await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(runDestination: .iOS) { results in
                 results.checkTask(.matchRuleType("ExtractAppIntentsMetadata")) { task in
                     let executableName = task.commandLine.first
                     if let executableName,
@@ -1705,7 +1707,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
 
             let core = try await getCore()
             let tester = try TaskConstructionTester(core, testProject)
-            await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(runDestination: .iOS) { results in
                 results.checkTask(.matchRuleType("ExtractAppIntentsMetadata")) { task in
                     let executableName = task.commandLine.first
                     if let executableName,
@@ -1769,7 +1771,7 @@ fileprivate struct AppIntentsMetadataTaskConstructionTests: CoreBasedTests {
 
             let core = try await getCore()
             let tester = try TaskConstructionTester(core, testProject)
-            await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .iOS)) { results in
+            await tester.checkBuild(runDestination: .iOS) { results in
                 results.checkTask(.matchRuleType("ExtractAppIntentsMetadata")) { task in
                     let executableName = task.commandLine.first
                     if let executableName,

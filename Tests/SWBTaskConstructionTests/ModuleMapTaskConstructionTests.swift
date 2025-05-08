@@ -114,7 +114,7 @@ fileprivate struct ModuleMapTaskConstructionTests: CoreBasedTests {
                       ("ObjCAndSwift", "ModuleContents", [didNotWriteModuleMapContents]),
         ]
         for (targetName, configurationName, warnings) in builds {
-            await tester.checkBuild(BuildParameters(configuration: configurationName), targetName: targetName) { results in
+            await tester.checkBuild(BuildParameters(configuration: configurationName), runDestination: .macOS, targetName: targetName) { results in
                 results.checkTarget(targetName) { target in
                     // The build directories are hard coded to "Debug" and don't use the configuration name being built.
                     let generatedModuleMap = "\(SRCROOT)/build/Project.build/Debug/\(targetName).build/module.modulemap"
@@ -263,7 +263,7 @@ fileprivate struct ModuleMapTaskConstructionTests: CoreBasedTests {
                       ("PrivateModuleInternalSwift", true),
         ]
         for (targetName, hasPrivateModuleMap) in builds {
-            await tester.checkBuild(targetName: targetName) { results in
+            await tester.checkBuild(runDestination: .macOS, targetName: targetName) { results in
                 results.checkTarget(targetName) { target in
                     let generatedModuleMap = "\(SRCROOT)/build/Project.build/Debug/\(targetName).build/module.modulemap"
                     let installedModuleMap = "\(SRCROOT)/build/Debug/\(targetName).framework/Versions/A/Modules/module.modulemap"
@@ -426,7 +426,7 @@ fileprivate struct ModuleMapTaskConstructionTests: CoreBasedTests {
                 // There are some more tie breakers in the code but they're arbitrary and we don't
                 // really care which umbrella looking header gets used.
                 // 1. x.h is preferred over y.H.
-                // 2. When all else fails, lexigraphic order is used.
+                // 2. When all else fails, lexicographic order is used.
 
                 // Don't add Swift contents to the module if the Objective-C compatibility header isn't generated.
                 TestStandardTarget(
@@ -525,7 +525,7 @@ fileprivate struct ModuleMapTaskConstructionTests: CoreBasedTests {
                                 ("Unifdef", "Unifdef.h", false),
         ]
         for (targetName, umbrellaHeader, hasSwiftSource) in targetParameters {
-            await tester.checkBuild(targetName: targetName) { results in
+            await tester.checkBuild(runDestination: .macOS, targetName: targetName) { results in
                 results.checkTarget(targetName) { target in
                     let generatedModuleMap = "\(SRCROOT)/build/Project.build/Debug/\(targetName).build/module.modulemap"
                     let unextendedModuleMap = "\(SRCROOT)/build/Project.build/Debug/\(targetName).build/unextended-module.modulemap"
@@ -571,7 +571,7 @@ fileprivate struct ModuleMapTaskConstructionTests: CoreBasedTests {
             }
         }
 
-        await tester.checkBuild(targetName: "SwiftOnly") { results in
+        await tester.checkBuild(runDestination: .macOS, targetName: "SwiftOnly") { results in
             results.checkTarget("SwiftOnly") { target in
                 let generatedModuleMap = "\(SRCROOT)/build/Project.build/Debug/SwiftOnly.build/module.modulemap"
                 let unextendedModuleMap = "\(SRCROOT)/build/Project.build/Debug/SwiftOnly.build/unextended-module.modulemap"
@@ -609,7 +609,7 @@ fileprivate struct ModuleMapTaskConstructionTests: CoreBasedTests {
             results.checkNoDiagnostics()
         }
 
-        await tester.checkBuild(targetName: "ObjCCompatibilityHeader") { results in
+        await tester.checkBuild(runDestination: .macOS, targetName: "ObjCCompatibilityHeader") { results in
             results.checkTarget("ObjCCompatibilityHeader") { target in
                 let generatedModuleMap = "\(SRCROOT)/build/Project.build/Debug/ObjCCompatibilityHeader.build/module.modulemap"
                 let unextendedModuleMap = "\(SRCROOT)/build/Project.build/Debug/ObjCCompatibilityHeader.build/unextended-module.modulemap"
@@ -763,7 +763,7 @@ fileprivate struct ModuleMapTaskConstructionTests: CoreBasedTests {
                                 ("ObjCCompatibilityHeader", true),
         ]
         for (targetName, hasSwiftSource) in targetParameters {
-            await tester.checkBuild(targetName: targetName) { results in
+            await tester.checkBuild(runDestination: .macOS, targetName: targetName) { results in
                 results.checkTarget(targetName) { target in
                     let generatedModuleMap = "\(SRCROOT)/build/Project.build/Debug/\(targetName).build/module.modulemap"
                     let unextendedModuleMap = "\(SRCROOT)/build/Project.build/Debug/\(targetName).build/unextended-module.modulemap"
@@ -948,7 +948,7 @@ fileprivate struct ModuleMapTaskConstructionTests: CoreBasedTests {
                       ("ObjCAndSwift", "FilePublicWithPrivate", true, true, true, true, true),
         ]
         for (targetName, configurationName, copiesPublicModuleMap, hasSwiftExtension, copiesPrivateModuleMap, generatesSourceModuleMaps, copiesUseUnifdef) in builds {
-            await tester.checkBuild(BuildParameters(configuration: configurationName), targetName: targetName, fs: fs) { results in
+            await tester.checkBuild(BuildParameters(configuration: configurationName), runDestination: .macOS, targetName: targetName, fs: fs) { results in
                 results.checkTarget(targetName) { target in
                     // The build directories are hard coded to "Debug" and don't use the configuration name being built.
                     let sourceModuleMap = generatesSourceModuleMaps

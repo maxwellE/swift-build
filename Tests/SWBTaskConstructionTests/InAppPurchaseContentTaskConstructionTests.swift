@@ -14,6 +14,7 @@ import Testing
 import SWBTaskConstruction
 import SWBTestSupport
 import SWBUtil
+import SWBCore
 
 @Suite
 fileprivate struct InAppPurchaseContentTaskConstructionTests: CoreBasedTests {
@@ -72,7 +73,7 @@ fileprivate struct InAppPurchaseContentTaskConstructionTests: CoreBasedTests {
         let fs = PseudoFS()
         try await fs.writePlist(srcRoot.join("MyIAP/ContentInfo.plist"), .plDict([:]))
 
-        await tester.checkBuild(fs: fs) { results in
+        await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
             results.consumeTasksMatchingRuleTypes(["CpResource", "CreateBuildDirectory", "Gate", "MkDir", "RegisterExecutionPolicyException", "ProcessInfoPlistFile", "ProcessProductPackaging", "Touch", "WriteAuxiliaryFile"])
 
             // Notably, should not be codesigned.

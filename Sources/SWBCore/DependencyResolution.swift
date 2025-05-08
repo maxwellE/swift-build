@@ -190,7 +190,7 @@ struct SpecializationParameters: Hashable, CustomStringConvertible {
         let toolchain = effectiveToolchainOverride(originalParameters: configuredTarget.parameters, workspaceContext: workspaceContext)
         return (platform == nil || platform === settings.platform) &&
             (sdkVariant == nil || sdkVariant?.name == settings.sdkVariant?.name) &&
-            (toolchain == nil || toolchain == settings.globalScope.evaluate(BuiltinMacros.EFFECTIVE_TOOLCHAINS_DIRS)) &&
+            (toolchain == nil || toolchain == settings.globalScope.evaluate(BuiltinMacros.TOOLCHAINS)) &&
         (canonicalNameSuffix == nil || canonicalNameSuffix?.nilIfEmpty == settings.sdk?.canonicalNameSuffix)
     }
 
@@ -253,7 +253,7 @@ struct SpecializationParameters: Hashable, CustomStringConvertible {
         else {
             overridingSdk = nil
         }
-        // This seems like an unfortunate way to get from the SDK to its platform.  But SettingsBuilder.computeBoundProperties() creates a scope to evalulate the PLATFORM_NAME defined in the SDK's default properties, so maybe there isn't a clearly better way.
+        // This seems like an unfortunate way to get from the SDK to its platform.  But SettingsBuilder.computeBoundProperties() creates a scope to evaluate the PLATFORM_NAME defined in the SDK's default properties, so maybe there isn't a clearly better way.
         if let overridingSdk, let overridingPlatform = workspaceContext.core.platformRegistry.platforms.filter({ $0.sdks.contains(where: { $0.canonicalName == overridingSdk.canonicalName }) }).first {
             platformName = overridingPlatform.name
         } else {
@@ -274,7 +274,7 @@ struct SpecializationParameters: Hashable, CustomStringConvertible {
             if let suffix = try? workspaceContext.sdkRegistry.lookup(sdk, activeRunDestination: parameters.activeRunDestination)?.canonicalNameSuffix, !suffix.isEmpty {
                 sdkSuffix = suffix
             } else {
-                // Treat a run destination that uses the public SDK as one that does not express an opinion about internalness instead of one that *requires* the public SDK.
+                // Treat a run destination that uses the public SDK as one that does not express an opinion about internal-ness instead of one that *requires* the public SDK.
                 sdkSuffix = nil
             }
         } else {
@@ -472,9 +472,12 @@ extension SpecializationParameters {
         let specializationParams: SpecializationParameters
     }
 
-    /// Cached build and specialization parameters created for each platform.
-    /// This is populated only for an index build.
-    let platformBuildParameters: [PlatformBuildParameters]
+    /// Cached build and specialization parameters created for each platform. This is populated only for an index
+    /// workspace build.
+    let platformBuildParametersForIndex: [PlatformBuildParameters]
+
+    /// Cached parameters for the host platform. This is only populated for an index workspace build.
+    let hostParametersForIndex: PlatformBuildParameters?
 
     /// Targets which should build dynamically according to the build request.
     /// This is only used by Playgrounds and previews.
@@ -490,7 +493,7 @@ extension SpecializationParameters {
         self.workspaceContext = workspaceContext
         self.delegate = delegate
 
-        if buildRequest.enableIndexBuildArena {
+        if buildRequest.buildsIndexWorkspaceDescription {
             // For the index build, multiple build parameters are applied during configuration of a target (to configure for multiple platforms) and the build parameters for each target in the build request is not relevant.
             // Keep this dictionary empty so that `LinkageDependencyResolver` fallbacks to using the build parameters of the configured targets, which are the relevant ones.
             self.buildParametersByTarget = [:]
@@ -504,9 +507,12 @@ extension SpecializationParameters {
 
         self.defaultImposedParameters = SpecializationParameters.default(workspaceContext: workspaceContext, buildRequestContext: buildRequestContext, parameters: buildRequest.parameters)
 
-        if buildRequest.enableIndexBuildArena {
+        if buildRequest.buildsIndexWorkspaceDescription {
+            let hostOS = (try? workspaceContext.core.hostOperatingSystem.xcodePlatformName) ?? "unknown"
+
             // Create the build parameters for each available platform.
             var platformBuildParameters: [PlatformBuildParameters] = []
+            var hostBuildParameters: PlatformBuildParameters? = nil
             for platform in workspaceContext.core.platformRegistry.platforms {
                 // Find the corresponding SDK for this platform
                 let potentialSDKNames = [platform.sdkCanonicalName].compactMap { $0 } + workspaceContext.core.sdkRegistry.supportedSDKCanonicalNameSuffixes().compactMap {
@@ -528,11 +534,18 @@ extension SpecializationParameters {
                     let buildParams = buildRequest.parameters.replacing(activeRunDestination: runDestination, activeArchitecture: archName)
                     let specializationParams = SpecializationParameters.default(workspaceContext: workspaceContext, buildRequestContext: buildRequestContext, parameters: buildParams)
                     platformBuildParameters.append(PlatformBuildParameters(buildParams: buildParams, specializationParams: specializationParams))
+
+                    if runDestination.platform == hostOS && runDestination.sdkVariant == matchingSDK.defaultVariant?.name  {
+                        hostBuildParameters = platformBuildParameters.last
+                    }
                 }
             }
-            self.platformBuildParameters = platformBuildParameters
+
+            self.platformBuildParametersForIndex = platformBuildParameters
+            self.hostParametersForIndex = hostBuildParameters
         } else {
-            self.platformBuildParameters = []
+            self.platformBuildParametersForIndex = []
+            self.hostParametersForIndex = nil
         }
 
         self.dynamicallyBuildingTargets = Set(buildRequest.buildTargets.filter {
@@ -564,7 +577,7 @@ extension SpecializationParameters {
     func lookupTopLevelConfiguredTarget(_ targetInfo: BuildRequest.BuildTargetInfo) -> [ConfiguredTarget] {
         guard !Task.isCancelled else { return [] }
         let (target, parameters) = (targetInfo.target, targetInfo.parameters)
-        if !buildRequest.enableIndexBuildArena {
+        if !buildRequest.buildsIndexWorkspaceDescription {
             // Top-level targets get defaults imposed, in case that they are themselves using "auto" anywhere.
             return [lookupConfiguredTarget(target, parameters: parameters, imposedParameters: defaultImposedParameters, isTopLevelLookup: true)]
         }
@@ -572,17 +585,11 @@ extension SpecializationParameters {
         // Aggregate targets are only configured as dependencies.
         guard target.type != .aggregate else { return [] }
 
-        let isFromPackage = workspaceContext.workspace.project(for: target).isPackage
-        if isFromPackage {
-            // Configure top-level package targets using the run-destination of the build request.
-            return [lookupConfiguredTarget(target, parameters: parameters, imposedParameters: defaultImposedParameters, isTopLevelLookup: true)]
-        }
-
         var configuredTargets: [ConfiguredTarget] = []
         let unconfiguredSettings = buildRequestContext.getCachedSettings(targetInfo.parameters, target: target)
         let unconfiguredSupportedPlatforms = unconfiguredSettings.globalScope.evaluate(BuiltinMacros.SUPPORTED_PLATFORMS)
 
-        for platformParams in platformBuildParameters {
+        for platformParams in platformBuildParametersForIndex {
             // Before forming all new settings for this platform, do a fast check using `SUPPORTED_PLATFORMS` of `unconfiguredSettings`.
             // This significantly cuts down the work that this function is doing.
             if platformParams.buildParams.activeRunDestination?.sdkVariant == MacCatalystInfo.sdkVariantName {
@@ -597,7 +604,7 @@ extension SpecializationParameters {
                 }
             }
 
-            guard isTargetSuitableForPlatform(target, parameters: platformParams.buildParams, imposedParameters: platformParams.specializationParams) else {
+            guard isTargetSuitableForPlatformForIndex(target, parameters: platformParams.buildParams, imposedParameters: platformParams.specializationParams) else {
                 continue
             }
             // Configure the target for this platform.
@@ -607,27 +614,65 @@ extension SpecializationParameters {
         return configuredTargets
     }
 
-    nonisolated func isTargetSuitableForPlatform(_ target: Target, parameters: BuildParameters, imposedParameters: SpecializationParameters?) -> Bool {
+    /// Determines whether a target should be configured for the given platform in the index arena.
+    ///
+    /// The arena is used for two purposes:
+    ///   1. To retrieve settings for a given target
+    ///   2. To produce products of source dependencies for compilation purposes (it does not produce binaries)
+    ///
+    /// Thus, in general if a target doesn't support a platform, we don't want to configure it for that platform. If a
+    /// dependency is not supported for the platform of the dependent, presumably the dependent will not be able
+    /// to use its products for compilation purposes, since the source products will be put in a different platform
+    /// directory and/or they will not be usable by the dependent (e.g. the module will not be importable from a
+    /// different platform). If the dependency was intended to be usable from that platform for compilation purposes,
+    /// it would be a supported platform.
+    ///
+    /// There's an exception for this for a dependent host tool, which are required for compilation and must therefore
+    /// be configured (and registered as a dependency) regardless.
+    nonisolated func isTargetSuitableForPlatformForIndex(_ target: Target, parameters: BuildParameters, imposedParameters: SpecializationParameters?, dependencies: OrderedSet<ConfiguredTarget>? = nil) -> Bool {
+        if !buildRequest.enableIndexBuildArena {
+            return true
+        }
+
+        // Host tools case, always supported we'll override the parameters with that of the host regardless.
+        if target.isHostBuildTool || dependencies?.contains(where: { $0.target.isHostBuildTool }) == true {
+            return true
+        }
+
+        guard let runDestination = parameters.activeRunDestination else { return false }
+
         // Filter any overrides from the parameters, because they can shadow any original "auto" values.
         let filteredParameters = parameters.withoutOverrides
         var settings = buildRequestContext.getCachedSettings(filteredParameters, target: target)
+
         if settings.enableTargetPlatformSpecialization, let imposedParameters {
             // This is for targets that have SDKROOT set to 'auto' (like Swift Packages) and get settings "imposed" on them.
             settings = buildRequestContext.getCachedSettings(imposedParameters.imposed(on: filteredParameters, workspaceContext: workspaceContext), target: target)
         }
-        // Check that the target supports this platform.
-        guard let targetPlatform = settings.platform else { return false }
-        guard targetPlatform.name == parameters.activeRunDestination?.platform else { return false }
-        guard settings.sdkVariant == nil || settings.sdkVariant?.name == parameters.activeRunDestination?.sdkVariant else { return false }
-        let supportedPlatforms = settings.globalScope.evaluate(BuiltinMacros.SUPPORTED_PLATFORMS)
-        if supportedPlatforms.count > 0 {
-            // Without this additional check, Swift package targets would be configured for simulator platforms, even if only 'macosx' is supported.
-            guard supportedPlatforms.contains(targetPlatform.name) else { return false }
+
+        guard let targetPlatform = settings.platform else {
+            return false
         }
+        if targetPlatform.name != runDestination.platform {
+            return false
+        }
+        if settings.sdkVariant?.name != runDestination.sdkVariant {
+            return false
+        }
+
+        let supportedPlatforms = settings.globalScope.evaluate(BuiltinMacros.SUPPORTED_PLATFORMS)
+        if !supportedPlatforms.isEmpty && !supportedPlatforms.contains(targetPlatform.name) {
+            return false
+        }
+
         return true
     }
 
     func compatibleConfiguredTarget(_ dependency: Target, for parameters: BuildParameters, baseTarget: Target) -> ConfiguredTarget? {
+        guard let configuredTargetsForDependency = configuredTargetsByTarget[dependency] else {
+            return nil
+        }
+
         // Check compatibility with the `baseTarget`, so get the settings for it.
         let settings = buildRequestContext.getCachedSettings(parameters, target: baseTarget)
         let platform = Ref(settings.platform)
@@ -636,20 +681,25 @@ extension SpecializationParameters {
         let unimposedSettingsOfDependency = buildRequestContext.getCachedSettings(parameters.withoutOverrides, target: dependency)
         let dependencyHasAutoSDKRoot = unimposedSettingsOfDependency.enableTargetPlatformSpecialization
 
-        let configuredTargetsForDependency = configuredTargetsByTarget[dependency]
-        let compatibleTargets = configuredTargetsForDependency?.filter {
-            let dependencySettings = buildRequestContext.getCachedSettings($0.parameters, target: $0.target)
+        let compatibleTargets = configuredTargetsForDependency.filter { ct in
+            if ct.specializeGuidForActiveRunDestination && parameters.activeRunDestination != ct.parameters.activeRunDestination {
+                return false
+            }
+            let dependencySettings = buildRequestContext.getCachedSettings(ct.parameters, target: ct.target)
             let dependencyPlatform = dependencySettings.platform
             let dependencySdkVariant = dependencySettings.sdkVariant?.name
+            let dependencyToolchains = dependencySettings.toolchains
             guard Ref(dependencyPlatform) == platform && dependencySdkVariant == sdkVariant else { return false }
             // For dependencies with 'auto' SDKROOT, they get their SDK 'imposed', including if it is internal vs public SDK, not just what platform it is.
             // For such dependencies also confirm that the existing configured dependency matches 'internal vs public' for the SDK.
-            if dependencyHasAutoSDKRoot, let dependencySDK = dependencySettings.sdk, let dependentSDK = sdk, dependencySDK !== dependentSDK {
+            if dependencyHasAutoSDKRoot, let dependencySDK = dependencySettings.sdk, let dependentSDK = sdk, dependencySDK !== dependentSDK || settings.toolchains != dependencyToolchains {
                 return false
             }
             return true
         }
-        return compatibleTargets?.first
+
+        // Make sure the returned target is stable
+        return compatibleTargets.only ?? Array(compatibleTargets).sorted().first
     }
 
     /// Find the configured target for a build request item.
@@ -676,13 +726,21 @@ extension SpecializationParameters {
                 for previousConfiguredTarget in previousConfiguredTargets {
                     let previousSettings = buildRequestContext.getCachedSettings(previousConfiguredTarget.parameters, target: previousConfiguredTarget.target)
                     if currentSettings.platform?.displayName == previousSettings.platform?.displayName && currentSettings.sdkVariant?.name == previousSettings.sdkVariant?.name {
-                        // We do allow multiple configured targets with different SDK suffixes, this gets sorted out at the very
-                        // end of computing the dependency graph.
-                        if currentSettings.sdk?.canonicalNameSuffix == previousSettings.sdk?.canonicalNameSuffix {
-                            let data = DiagnosticData("multiple configured targets of '\(target.name)' are being created for \(currentSettings.platform?.displayName ?? "")")
-                            delegate.emit(Diagnostic(behavior: .error, location: .unknown, data: data))
-                            hasMultipleTargets = true
+                        // Allow multiple configured targets with separate run destinations (this is only the case for
+                        // the workspace build description today).
+                        if previousConfiguredTarget.specializeGuidForActiveRunDestination && parameters.activeRunDestination != previousConfiguredTarget.parameters.activeRunDestination {
+                            continue
                         }
+                        // We allow multiple configured targets with different SDK suffixes, this gets sorted out at the very
+                        // end of computing the dependency graph.
+                        if currentSettings.sdk?.canonicalNameSuffix != previousSettings.sdk?.canonicalNameSuffix {
+                            continue
+                        }
+
+                        let behavior: Diagnostic.Behavior = buildRequest.enableIndexBuildArena ? .warning : .error
+                        let data = DiagnosticData("multiple configured targets of '\(target.name)' are being created for \(currentSettings.platform?.displayName ?? "")")
+                        delegate.emit(Diagnostic(behavior: behavior, location: .unknown, data: data))
+                        hasMultipleTargets = true
                     }
                 }
 
@@ -695,7 +753,7 @@ extension SpecializationParameters {
             }
 
             // At this point we know there is not a configured target for this target and parameters in our cache, so create one and return it.
-            let configuredTarget = ConfiguredTarget(parameters: parameters, target: target, specializeGuidForActiveRunDestination: buildRequest.enableIndexBuildArena)
+            let configuredTarget = ConfiguredTarget(parameters: parameters, target: target, specializeGuidForActiveRunDestination: buildRequest.buildsIndexWorkspaceDescription)
             configuredTargetsByTarget[configuredTarget.target, default: []].insert(configuredTarget)
             addSuperimposedProperties(for: configuredTarget, superimposedProperties: superimposedProperties)
             return configuredTarget
@@ -709,6 +767,20 @@ extension SpecializationParameters {
             return lookupConfiguredTarget(forTarget, parameters: parameters, superimposedProperties: nil)
         }
 
+        var parameters = parameters
+        if buildRequest.buildsIndexWorkspaceDescription {
+            // Avoid forced propagation of "auto" overrides to targets that don't need them. If this is a host tool,
+            // force its parameters to the host platform to avoid creating duplicate configured targets after it has
+            // been specialized.
+            let platformParams: BuildParameters
+            if forTarget.isHostBuildTool {
+                platformParams = hostParametersForIndex?.buildParams ?? parameters
+            } else {
+                platformParams = parameters
+            }
+            parameters = buildRequest.parameters.replacing(activeRunDestination: platformParams.activeRunDestination, activeArchitecture: platformParams.activeArchitecture)
+        }
+
         // If we have an existing target compatible with the specialization parameters, we always return it.
         //
         // This is unfortunate, because it introduces an ordering dependency on the computation, but it is critical for correctness because we want to ensure that we only create new targets when it results in a meaningful difference, not just because the hash of the build parameters differs.
@@ -716,7 +788,7 @@ extension SpecializationParameters {
         // Checking !isTopLevelLookup prevents incorrectly returning a "compatible" target when looking up a top level target where the run destination may be influencing the platform to become iOS vs Mac Catalyst. Previously, this only worked by accident due to concurrency, where top level lookups never returned an existing target due to configuredTargetsByTarget virtually always being empty due to the thread interaction.
         if let configuredTargets = configuredTargetsByTarget[forTarget], !isTopLevelLookup {
             for ct in configuredTargets {
-                if buildRequest.enableIndexBuildArena && parameters.activeRunDestination != ct.parameters.activeRunDestination { continue }
+                if ct.specializeGuidForActiveRunDestination && parameters.activeRunDestination != ct.parameters.activeRunDestination { continue }
                 let parametersWithoutRunDestination = ct.parameters.replacing(activeRunDestination: nil, activeArchitecture: nil)
                 let settings = buildRequestContext.getCachedSettings(parametersWithoutRunDestination, target: ct.target)
                 if specialization.isCompatible(with: ct, settings: settings, workspaceContext: workspaceContext) {
@@ -728,8 +800,6 @@ extension SpecializationParameters {
             }
         }
 
-        // For index build, avoid forced propagation of "auto" overrides to targets that don't need them.
-        let parameters = buildRequest.enableIndexBuildArena ? buildRequest.parameters.replacing(activeRunDestination: parameters.activeRunDestination, activeArchitecture: parameters.activeArchitecture) : parameters
         // Filter any overrides from the parameters, because they can shadow any original "auto" values.
         let filteredParameters = parameters.withoutOverrides
 
@@ -739,19 +809,19 @@ extension SpecializationParameters {
         let shouldImposePlatform = settings.enableTargetPlatformSpecialization
 
         var imposedSupportedPlatforms: [String]?
-        let specializatonIsSupported: Bool
+        let specializationIsSupported: Bool
         if let specializedSupportedPlatforms = specialization.supportedPlatforms {
             // If `SDKROOT` is automatic, specialize supported platforms, but only if there is a non-empty intersection with the current value.
-            specializatonIsSupported = !Set(supportedPlatforms).intersection(specializedSupportedPlatforms).isEmpty
-            imposedSupportedPlatforms = specializatonIsSupported && shouldImposePlatform ? specialization.supportedPlatforms : nil
+            specializationIsSupported = !Set(supportedPlatforms).intersection(specializedSupportedPlatforms).isEmpty
+            imposedSupportedPlatforms = specializationIsSupported && shouldImposePlatform ? specialization.supportedPlatforms : nil
         } else {
             imposedSupportedPlatforms = nil
-            specializatonIsSupported = false
+            specializationIsSupported = false
         }
 
         let imposedPlatform: Platform?
         if shouldImposePlatform {
-            if specializatonIsSupported {
+            if specializationIsSupported {
                 imposedPlatform = specialization.platform
             } else {
                 // There may be an existing `SUPPORTED_PLATFORMS` override in the parameters passed down by the client, so we want to make sure to provide our own, even if it might not be strictly necessary.
@@ -797,8 +867,7 @@ extension SpecializationParameters {
             // a target which doesn't support building for that variant. This is complicated by the fact that
             // iOS targets get SUPPORTS_MACCATALYST by default, but SDKROOT=auto targets get an inconsistent view.
 
-            let isHostTool = settings.productType?.conformsTo(identifier: "com.apple.product-type.tool.host-build") == true
-            if specializatonIsSupported && !isHostTool {
+            if specializationIsSupported && !forTarget.isHostBuildTool {
                 imposedSdkVariant = specialization.sdkVariant ?? imposedPlatform?.defaultSDKVariant
             } else {
                 imposedSdkVariant = imposedPlatform?.defaultSDKVariant
@@ -814,7 +883,7 @@ extension SpecializationParameters {
             let initialFilteredSpecialization = SpecializationParameters(source: .synthesized, platform: imposedPlatform, sdkVariant: imposedSdkVariant, supportedPlatforms: imposedSupportedPlatforms, toolchain: nil, canonicalNameSuffix: nil)
             let initialSettings = buildRequestContext.getCachedSettings(initialFilteredSpecialization.imposed(on: parameters, workspaceContext: workspaceContext), target: forTarget)
             let specializationSDKOptions = initialSettings.globalScope.evaluate(BuiltinMacros.SPECIALIZATION_SDK_OPTIONS)
-            if specializatonIsSupported {
+            if specializationIsSupported {
                 // If specialization explicitly requires public, but the target itself requires internal, emit an error.
                 if let sdkSuffixFromSpecialization = specialization.canonicalNameSuffix, sdkSuffixFromSpecialization.isEmpty, !specializationSDKOptions.isEmpty {
                     let specializationSuffix: String
@@ -869,7 +938,7 @@ extension SpecializationParameters {
 
         // If we are imposing a platform, we also need to impose the toolchain, but skip it if the explicit setting already matches what we would impose.
         let imposedToolchain: [String]?
-        if shouldImposePlatform && specializatonIsSupported {
+        if shouldImposePlatform && specializationIsSupported {
             let specializationWithoutToolchainImposition = SpecializationParameters(source: .synthesized, platform: imposedPlatform, sdkVariant: imposedSdkVariant, supportedPlatforms: imposedSupportedPlatforms, toolchain: nil, canonicalNameSuffix: imposedCanonicalNameSuffix)
             let settingsWithToolchainImposition = buildRequestContext.getCachedSettings(specializationWithoutToolchainImposition.imposed(on: parameters, workspaceContext: workspaceContext), target: forTarget)
             let configuredToolchains = settingsWithToolchainImposition.toolchains.map({ $0.identifier })
@@ -1029,5 +1098,12 @@ extension Platform {
         guard let sdkCanonicalName else { return nil }
         // FIXME: Do we need a better way to find the "right" SDK here? Seems to work fine for macOS right now.
         return sdks.filter { $0.isBaseSDK && $0.canonicalName.hasPrefix(sdkCanonicalName) }.first?.defaultVariant
+    }
+}
+
+fileprivate extension Target {
+    var isHostBuildTool: Bool {
+        guard let standardTarget = self as? StandardTarget else { return false }
+        return ProductTypeIdentifier(standardTarget.productTypeIdentifier).isHostBuildTool
     }
 }

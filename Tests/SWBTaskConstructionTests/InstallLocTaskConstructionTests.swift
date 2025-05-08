@@ -17,6 +17,7 @@ import SWBTestSupport
 import SWBUtil
 
 import SWBTaskConstruction
+import SWBProtocol
 
 @Suite
 fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
@@ -60,6 +61,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "App",
+                    type: .application,
                     buildPhases: [
                         TestResourcesBuildPhase([
                             "foo.xib",
@@ -74,7 +76,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug")) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug"), runDestination: .macOS) { results in
             // Ignore all Gate tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             // Ignore all build directory tasks
@@ -104,7 +106,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
         }
 
         // INSTALLLOC_LANGUAGE set to "de" should only have de.lproj/foo.strings and not Base.lproj/foo.xib in the output.
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "de"])) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "de"]), runDestination: .macOS) { results in
             // Ignore all Gate, build directory, MkDir, and SymLink tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -125,7 +127,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
 
         // INSTALLLOC_LANGUAGE can also be set to a string list of language codes
         // These would generally contain all languages other than English, but could differ.
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "de ja"])) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "de ja"]), runDestination: .macOS) { results in
             // Ignore all Gate, build directory, MkDir, and SymLink tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -171,6 +173,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "Foo",
+                    type: .application,
                     buildPhases: [
                         TestResourcesBuildPhase([
                             "Foo.png",
@@ -187,7 +190,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug")) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug"), runDestination: .macOS) { results in
             // Ignore all Gate tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             // Ignore all build directory tasks
@@ -242,6 +245,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "Watchable",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Release",
                                                buildSettings: [
@@ -313,7 +317,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Release", overrides: ["DSTROOT": "/tmp/Root"])) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Release", overrides: ["DSTROOT": "/tmp/Root"]), runDestination: .macOS) { results in
             // Ignore all Gate, build directory, SymLink, MkDir, and WriteAuxiliaryFile tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -343,7 +347,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
         }
 
         // We shouldn't process any InfoPlist files if INSTALLLOC_LANGUAGE is set.
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Release", overrides: ["DSTROOT": "/tmp/Root", "INSTALLLOC_LANGUAGE": "zh_TW"])) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Release", overrides: ["DSTROOT": "/tmp/Root", "INSTALLLOC_LANGUAGE": "zh_TW"]), runDestination: .macOS) { results in
             // Ignore all Gate, build directory, SymLink, MkDir, and WriteAuxiliaryFile tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -368,7 +372,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
 
         // And check when INSTALLLOC_LANGUAGE is set to multiple languages.
         // Still shouldn't process any InfoPlist files.
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Release", overrides: ["DSTROOT": "/tmp/Root", "INSTALLLOC_LANGUAGE": "zh_TW fr"])) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Release", overrides: ["DSTROOT": "/tmp/Root", "INSTALLLOC_LANGUAGE": "zh_TW fr"]), runDestination: .macOS) { results in
             // Ignore all Gate, build directory, SymLink, and MkDir tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -426,6 +430,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "Bundlable",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Release",
                                                buildSettings: [
@@ -470,7 +475,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Release", activeRunDestination: .iOS, overrides: ["DSTROOT": "/tmp/Root"])) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Release", overrides: ["DSTROOT": "/tmp/Root"]), runDestination: .iOS) { results in
             // Ignore all Gate, build directory, SymLink, and MkDir tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -495,7 +500,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
         }
 
         // We shouldn't process any InfoPlist files if INSTALLLOC_LANGUAGE is set.
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Release", activeRunDestination: .iOS, overrides: ["DSTROOT": "/tmp/Root", "INSTALLLOC_LANGUAGE": "zh_TW"])) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Release", overrides: ["DSTROOT": "/tmp/Root", "INSTALLLOC_LANGUAGE": "zh_TW"]), runDestination: .iOS) { results in
             // Ignore all Gate, build directory, SymLink, and MkDir tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -516,7 +521,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
         }
 
         // And same for multiple specified languages.
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Release", activeRunDestination: .iOS, overrides: ["DSTROOT": "/tmp/Root", "INSTALLLOC_LANGUAGE": "zh_TW fr"])) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Release", overrides: ["DSTROOT": "/tmp/Root", "INSTALLLOC_LANGUAGE": "zh_TW fr"]), runDestination: .iOS) { results in
             // Ignore all Gate, build directory, SymLink, and MkDir tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -568,6 +573,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         "App",
+                        type: .application,
                         buildPhases: [
                             TestCopyFilesBuildPhase([
                                 "CoreFoo.framework",
@@ -586,7 +592,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
                 languageLprojPathPairs += [(lang, path)]
             }
 
-            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", activeRunDestination: .iOS), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug"), runDestination: .iOS, fs: fs) { results in
                 // Ignore all Gate, build directory, SymLink, and MkDir tasks.
                 results.checkTasks(.matchRuleType("Gate")) { _ in }
                 results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -605,7 +611,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             }
 
             // INSTALLLOC_LANGUAGE set to "ja"
-            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", activeRunDestination: .iOS, overrides: ["INSTALLLOC_LANGUAGE": "ja"]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja"]), runDestination: .iOS, fs: fs) { results in
                 // Ignore all Gate, build directory, MkDir, and SymLink tasks.
                 results.checkTasks(.matchRuleType("Gate")) { _ in }
                 results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -626,7 +632,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
 
             // INSTALLLOC_LANGUAGE set to "ja"
             let specificLangs = ["zh_TW", "ja"]
-            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", activeRunDestination: .iOS, overrides: ["INSTALLLOC_LANGUAGE": specificLangs.joined(separator: " ")]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": specificLangs.joined(separator: " ")]), runDestination: .iOS, fs: fs) { results in
                 // Ignore all Gate, build directory, MkDir, and SymLink tasks.
                 results.checkTasks(.matchRuleType("Gate")) { _ in }
                 results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -672,6 +678,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "App",
+                    type: .application,
                     buildPhases: [
                         TestCopyFilesBuildPhase([
                             "CoreFoo.framework",
@@ -682,7 +689,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", activeRunDestination: .iOS)) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug"), runDestination: .iOS) { results in
             // Ignore all Gate, build directory, SymLink, and MkDir tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -730,7 +737,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
         // When installing Japanese, we should only get Japanese content.
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", activeRunDestination: .iOS, overrides: ["INSTALLLOC_LANGUAGE": "ja"])) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja"]), runDestination: .iOS) { results in
             // Ignore all Gate, build directory, SymLink, and MkDir tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -746,7 +753,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
         }
 
         // When a language is not specified, we should get all localizable content.
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", activeRunDestination: .iOS)) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug"), runDestination: .iOS) { results in
             // Ignore all Gate, build directory, SymLink, and MkDir tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -765,7 +772,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
         }
 
         // Or with multiple languages
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", activeRunDestination: .iOS, overrides: ["INSTALLLOC_LANGUAGE": "ja zh_TW"])) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja zh_TW"]), runDestination: .iOS) { results in
             // Ignore all Gate, build directory, SymLink, and MkDir tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -807,6 +814,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "App",
+                    type: .application,
                     buildPhases: [
                         TestCopyFilesBuildPhase([
                             "CoreFoo.framework",
@@ -831,7 +839,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", activeRunDestination: .iOS)) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug"), runDestination: .iOS) { results in
             // Ignore all Gate, build directory, SymLink, and MkDir tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -854,7 +862,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             results.checkNoDiagnostics()
         }
 
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", activeRunDestination: .iOS, overrides: ["INSTALLLOC_LANGUAGE": "ja"])) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja"]), runDestination: .iOS) { results in
             // Ignore all Gate, build directory, SymLink, and MkDir tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -874,7 +882,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             results.checkNoDiagnostics()
         }
 
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", activeRunDestination: .iOS, overrides: ["INSTALLLOC_LANGUAGE": "ja zh_TW"])) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja zh_TW"]), runDestination: .iOS) { results in
             // Ignore all Gate, build directory, SymLink, and MkDir tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -917,6 +925,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         "App",
+                        type: .application,
                         buildPhases: [
                             TestCopyFilesBuildPhase([
                                 "CoreFoo.framework",
@@ -963,11 +972,11 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
         ])
         let tester = try await TaskConstructionTester(getCore(), testWorkspace)
 
-        let buildParameters = BuildParameters(action: .installLoc, configuration: "Debug", activeRunDestination: .iOS)
+        let buildParameters = BuildParameters(action: .installLoc, configuration: "Debug")
         let target = tester.workspace.projects[0].targets.map({ BuildRequest.BuildTargetInfo(parameters: buildParameters, target: $0) })
         let buildRequest = BuildRequest(parameters: buildParameters, buildTargets: target, continueBuildingAfterErrors: true, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
 
-        await tester.checkBuild(buildParameters, buildRequest: buildRequest) { results in
+        await tester.checkBuild(buildParameters, runDestination: .iOS, buildRequest: buildRequest) { results in
             // Ignore all Gate, build directory, SymLink, and MkDir tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -990,11 +999,11 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             results.checkNoDiagnostics()
         }
 
-        let japaneseBuildParameters = BuildParameters(action: .installLoc, configuration: "Debug", activeRunDestination: .iOS, overrides: ["INSTALLLOC_LANGUAGE": "ja"])
+        let japaneseBuildParameters = BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja"])
         let japaneseTarget = tester.workspace.projects[0].targets.map({ BuildRequest.BuildTargetInfo(parameters: japaneseBuildParameters, target: $0) })
         let japaneseBuildRequest = BuildRequest(parameters: japaneseBuildParameters, buildTargets: japaneseTarget, continueBuildingAfterErrors: true, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
 
-        await tester.checkBuild(japaneseBuildParameters, buildRequest: japaneseBuildRequest) { results in
+        await tester.checkBuild(japaneseBuildParameters, runDestination: .iOS, buildRequest: japaneseBuildRequest) { results in
             // Ignore all Gate, build directory, SymLink, and MkDir tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -1014,11 +1023,11 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             results.checkNoDiagnostics()
         }
 
-        let multiLangBuildParameters = BuildParameters(action: .installLoc, configuration: "Debug", activeRunDestination: .iOS, overrides: ["INSTALLLOC_LANGUAGE": "ja zh_TW"])
+        let multiLangBuildParameters = BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja zh_TW"])
         let multiLangTarget = tester.workspace.projects[0].targets.map({ BuildRequest.BuildTargetInfo(parameters: multiLangBuildParameters, target: $0) })
         let multiLangBuildRequest = BuildRequest(parameters: multiLangBuildParameters, buildTargets: multiLangTarget, continueBuildingAfterErrors: true, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
 
-        await tester.checkBuild(multiLangBuildParameters, buildRequest: multiLangBuildRequest) { results in
+        await tester.checkBuild(multiLangBuildParameters, runDestination: .iOS, buildRequest: multiLangBuildRequest) { results in
             // Ignore all Gate, build directory, SymLink, and MkDir tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -1064,6 +1073,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         "App",
+                        type: .application,
                         buildPhases: [
                             TestResourcesBuildPhase([
                                 "Settings.bundle"
@@ -1080,7 +1090,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
                 languageLprojPathPairs += [(lang, path)]
             }
 
-            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug"), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug"), runDestination: .macOS, fs: fs) { results in
                 // Ignore all Gate, build directory, SymLink, and MkDir tasks.
                 results.checkTasks(.matchRuleType("Gate")) { _ in }
                 results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -1099,7 +1109,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             }
 
             // INSTALLLOC_LANGUAGE set to "ja"
-            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja"]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja"]), runDestination: .macOS, fs: fs) { results in
                 // Ignore all Gate, build directory, MkDir, and SymLink tasks.
                 results.checkTasks(.matchRuleType("Gate")) { _ in }
                 results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -1120,7 +1130,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
 
             // INSTALLLOC_LANGUAGE set to "ja fr"
             let langs = ["ja", "fr"]
-            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": langs.joined(separator: " ")]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": langs.joined(separator: " ")]), runDestination: .macOS, fs: fs) { results in
                 // Ignore all Gate, build directory, MkDir, and SymLink tasks.
                 results.checkTasks(.matchRuleType("Gate")) { _ in }
                 results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -1165,6 +1175,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         "App",
+                        type: .application,
                         buildPhases: [
                             TestCopyFilesBuildPhase(["Settings.bundle"], destinationSubfolder: .resources, onlyForDeployment: false),
                         ])
@@ -1179,7 +1190,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
                 languageLprojPathPairs += [(lang, path)]
             }
 
-            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug"), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug"), runDestination: .macOS, fs: fs) { results in
                 // Ignore all Gate, build directory, SymLink, and MkDir tasks.
                 results.checkTasks(.matchRuleType("Gate")) { _ in }
                 results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -1198,7 +1209,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             }
 
             // INSTALLLOC_LANGUAGE set to "ja"
-            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja"]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja"]), runDestination: .macOS, fs: fs) { results in
                 // Ignore all Gate, build directory, MkDir, and SymLink tasks.
                 results.checkTasks(.matchRuleType("Gate")) { _ in }
                 results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -1219,7 +1230,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
 
             // INSTALLLOC_LANGUAGE set to "ja"
             let langs = ["ja", "de"]
-            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": langs.joined(separator: " ")]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": langs.joined(separator: " ")]), runDestination: .macOS, fs: fs) { results in
                 // Ignore all Gate, build directory, MkDir, and SymLink tasks.
                 results.checkTasks(.matchRuleType("Gate")) { _ in }
                 results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -1264,6 +1275,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         "App",
+                        type: .application,
                         buildPhases: [
                             TestResourcesBuildPhase([
                                 "ReleaseSettings.bundle"
@@ -1276,7 +1288,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             try fs.createDirectory(path, recursive: true)
             try fs.write(path.join("Root.strings"), contents: "LocTest")
 
-            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug"), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug"), runDestination: .macOS, fs: fs) { results in
                 // Ignore all Gate, build directory, SymLink, and MkDir tasks.
                 results.checkTasks(.matchRuleType("Gate")) { _ in }
                 results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -1294,7 +1306,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             }
 
             // INSTALLLOC_LANGUAGE set to "ja"
-            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja"]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja"]), runDestination: .macOS, fs: fs) { results in
                 // Ignore all Gate, build directory, MkDir, and SymLink tasks.
                 results.checkTasks(.matchRuleType("Gate")) { _ in }
                 results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -1313,7 +1325,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             }
 
             // INSTALLLOC_LANGUAGE set to "ja fr"
-            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja fr"]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja fr"]), runDestination: .macOS, fs: fs) { results in
                 // Ignore all Gate, build directory, MkDir, and SymLink tasks.
                 results.checkTasks(.matchRuleType("Gate")) { _ in }
                 results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -1341,6 +1353,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "App",
+                    type: .application,
                     buildPhases: [
                         TestShellScriptBuildPhase(name: "", shellPath: "/bin/bash", originalObjectID: "abc", contents: "env | sort", onlyForDeployment: false, emitEnvironment: true, alwaysOutOfDate: true)
                     ]
@@ -1348,7 +1361,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug")) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug"), runDestination: .macOS) { results in
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
             results.checkTasks(.matchRuleType("WriteAuxiliaryFile")) { _ in }
@@ -1361,7 +1374,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
         }
 
         // Shell Script tasks should be generated for an installloc build only if INSTALLLOC_SCRIPT_PHASE is enabled.
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_SCRIPT_PHASE": "YES"])) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_SCRIPT_PHASE": "YES"]), runDestination: .macOS) { results in
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
             results.checkTasks(.matchRuleType("WriteAuxiliaryFile")) { _ in }
@@ -1413,7 +1426,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
 
         // For localization builds, we expect all the necessary directories and localizable files to be created.
         // However, we should not generate the expected SymLink tasks for a FrameworkProductTypeSpec.
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Release", overrides: ["INSTALLLOC_LANGUAGE": "ja"])) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Release", overrides: ["INSTALLLOC_LANGUAGE": "ja"]), runDestination: .macOS) { results in
 
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -1434,7 +1447,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
         }
 
         // Same if multiple languages are specified as in _Loc_All builds.
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Release", overrides: ["INSTALLLOC_LANGUAGE": "ja it"])) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Release", overrides: ["INSTALLLOC_LANGUAGE": "ja it"]), runDestination: .macOS) { results in
 
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -1456,7 +1469,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
         }
 
         // Verify that an install build still creates the SymLinks we want to ignore in the installloc build.
-        await tester.checkBuild(BuildParameters(action: .install, configuration: "Release")) { results in
+        await tester.checkBuild(BuildParameters(action: .install, configuration: "Release"), runDestination: .macOS) { results in
             results.checkTarget("FrameworkTarget") { target in
                 results.checkTasks(.matchTarget(target), .matchRule(["SymLink", "/tmp/Test/aProject/build/Release/FrameworkTarget.framework", "../../../../aProject.dst/Library/Frameworks/FrameworkTarget.framework"])) { _ in }
                 results.checkTasks(.matchTarget(target), .matchRule(["SymLink", "/tmp/aProject.dst/Library/Frameworks/FrameworkTarget.framework/Versions/Current", "A"])) { _ in }
@@ -1496,6 +1509,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "App",
+                    type: .application,
                     buildPhases: [
                         TestCopyFilesBuildPhase([
                             "CoreFoo.framework",
@@ -1527,7 +1541,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", activeRunDestination: .iOS)) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug"), runDestination: .iOS) { results in
             // Ignore all Gate, build directory, SymLink, and MkDir tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -1551,7 +1565,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             results.checkNoDiagnostics()
         }
 
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", activeRunDestination: .iOS, overrides: ["INSTALLLOC_LANGUAGE": "ja"])) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja"]), runDestination: .iOS) { results in
             // Ignore all Gate, build directory, SymLink, and MkDir tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -1572,7 +1586,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             results.checkNoDiagnostics()
         }
 
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", activeRunDestination: .iOS, overrides: ["INSTALLLOC_LANGUAGE": "ja zh_TW"])) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja zh_TW"]), runDestination: .iOS) { results in
             // Ignore all Gate, build directory, SymLink, and MkDir tasks.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("CreateBuildDirectory")) { _ in }
@@ -1671,7 +1685,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
         try await fs.writePlist(baselineDir.join("Some-Test-Data.plist"), .plDict([:]))
 
         // Run installLoc on project
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja"]), fs: fs) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja"]), runDestination: .macOS, fs: fs) { results in
 
             // Ignore all Gate, SymLink and CreateBuildDirectory tasks, as they are not relevant for this case
             results.checkTasks(.matchRuleType("Gate")) { _ in }
@@ -1764,7 +1778,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja"])) { results in
+        await tester.checkBuild(BuildParameters(action: .installLoc, configuration: "Debug", overrides: ["INSTALLLOC_LANGUAGE": "ja"]), runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkTarget("app") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("Copy"), .matchRuleItemBasename("FOO.bundle")) { task in
@@ -1816,6 +1830,7 @@ fileprivate struct InstallLocTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "App",
+                    type: .application,
                     buildPhases: [
                         TestResourcesBuildPhase([
                             "AppShortcuts.strings",

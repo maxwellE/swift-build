@@ -233,17 +233,17 @@ public extension String {
         return result
     }
 
-    /// Transform the receiver to a legal C identifer and return it.  This will replace characters which are not legal in a C identifier with underscores ('`_`').  C identifiers allow underscores, but not periods or dashes.
+    /// Transform the receiver to a legal C identifier and return it.  This will replace characters which are not legal in a C identifier with underscores ('`_`').  C identifiers allow underscores, but not periods or dashes.
     var asLegalCIdentifier: String {
         return asIdentifierOfType(.c)
     }
 
-    /// Transform the receiver to a legal RFC 1034 identifer and return it.  This will replace characters which are not legal in an RFC 1034 identifier with dashes ('`-`').  RFC 1034 identifiers allow dashes but not periods or underscores.
+    /// Transform the receiver to a legal RFC 1034 identifier and return it.  This will replace characters which are not legal in an RFC 1034 identifier with dashes ('`-`').  RFC 1034 identifiers allow dashes but not periods or underscores.
     var asLegalRfc1034Identifier: String {
         return asIdentifierOfType(.rfc1034)
     }
 
-    /// Transform the receiver to a legal bundle identifer and return it.  This will replace characters which are not legal in a bundle identifier with underscores ('`_`').  Bundle identifiers allow periods and dashes but not underscores.
+    /// Transform the receiver to a legal bundle identifier and return it.  This will replace characters which are not legal in a bundle identifier with underscores ('`_`').  Bundle identifiers allow periods and dashes but not underscores.
     var asLegalBundleIdentifier: String {
         return asIdentifierOfType(.bundle)
     }
@@ -378,7 +378,7 @@ fileprivate extension Unicode.Scalar {
     }
 }
 
-// MARK: Quoted String List Represenatation
+// MARK: Quoted String List Representation
 
 /// Extension of String for quoted string list representation.  This isn't exactly the same as shell script quoting.
 public extension String {
@@ -694,7 +694,7 @@ public func ==<T: Collection>(lhs: T, rhs: String) -> Bool where T.Iterator.Elem
 extension String {
     /// Returns MD5 hex string representation.
     public func md5() -> String {
-        let context = MD5Context()
+        let context = InsecureHashContext()
         context.add(string: self)
         return context.signature.asString
     }
@@ -768,7 +768,7 @@ fileprivate struct BinaryDataIterator<C, T: UnsignedInteger & FixedWidthInteger>
     }
 }
 
-#if canImport(CoreFoundation)
+#if canImport(Darwin)
 public import class CoreFoundation.CFString
 public import enum CoreFoundation.CFStringBuiltInEncodings
 public import func CoreFoundation.CFStringCreateWithCString

@@ -14,6 +14,7 @@ import Testing
 import SWBTaskConstruction
 import SWBTestSupport
 import SWBUtil
+import SWBCore
 
 @Suite
 fileprivate struct ShellScriptTaskConstructionTests: CoreBasedTests {
@@ -38,6 +39,12 @@ fileprivate struct ShellScriptTaskConstructionTests: CoreBasedTests {
     func shellScriptDeploymentTargetPruning_watchOS() async throws {
         try await testShellScriptDeploymentTargetPruning(sdkroot: "watchos", expectedDeploymentTargetPrefix: "WATCHOS")
         try await testShellScriptDeploymentTargetPruning(sdkroot: "watchsimulator", expectedDeploymentTargetPrefix: "WATCHOS")
+    }
+
+    @Test(.requireSDKs(.xrOS))
+    func shellScriptDeploymentTargetPruning_visionOS() async throws {
+        try await testShellScriptDeploymentTargetPruning(sdkroot: "xros", expectedDeploymentTargetPrefix: "XROS")
+        try await testShellScriptDeploymentTargetPruning(sdkroot: "xrsimulator", expectedDeploymentTargetPrefix: "XROS")
     }
 
     @Test(.requireSDKs(.driverKit))

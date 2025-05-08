@@ -15,7 +15,7 @@ import SWBLibc
 import SWBUtil
 import Foundation
 import struct SWBProtocol.BuildOperationMetrics
-
+import Synchronization
 
 fileprivate func executableFileNameMatchesSwiftRuntimeLibPattern(_ fileName: String) -> Bool {
     return fileName.hasPrefix("libswift") && fileName.hasSuffix(".dylib")
@@ -140,6 +140,7 @@ public final class EmbedSwiftStdLibTaskAction: TaskAction {
         var shouldPrint = false
         var shouldCopy = false
 
+        // Bitcode is no longer supported, but some old libraries may contain bitcode, so we continue to strip it when directed.
         var shouldStripBitcode = false
         var bitcodeStripPath: Path? = nil
 
@@ -525,7 +526,7 @@ public final class EmbedSwiftStdLibTaskAction: TaskAction {
             }
 
             guard !failed else {
-                throw RunProcessNonZeroExitError(args: args, workingDirectory: task.workingDirectory.str, environment: effectiveEnvironment, status: {
+                throw RunProcessNonZeroExitError(args: args, workingDirectory: task.workingDirectory.str, environment: .init(effectiveEnvironment), status: {
                     if case let .exit(exitStatus, _) = processDelegate.outputDelegate.result {
                         return exitStatus
                     }

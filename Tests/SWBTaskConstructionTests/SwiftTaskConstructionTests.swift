@@ -18,6 +18,7 @@ import SWBTestSupport
 @_spi(Testing) import SWBUtil
 
 import SWBTaskConstruction
+import Foundation
 
 /// Task construction tests related to Swift compilation.
 @Suite
@@ -46,6 +47,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration(
                             "Debug"
@@ -62,7 +64,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
-        await tester.checkBuild { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkWarning(StringPattern(stringLiteral: "The Swift file \"\(SRCROOT)/main.swift\" cannot be processed by a Copy Bundle Resources build phase (in target 'AppTarget' from project 'aProject')"))
         }
     }
@@ -126,11 +128,15 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                         "SWIFT_VERSION": swiftVersion,
                         "MACOSX_DEPLOYMENT_TARGET": deploymentTargetVersion,
                         "SWIFT_EMIT_MODULE_INTERFACE": "YES",
+                        "SWIFT_ENABLE_EXPLICIT_MODULES": "YES",
+                        "SWIFT_INCLUDE_PATHS": "/tmp/include",
+                        "SWIFT_SYSTEM_INCLUDE_PATHS": "/tmp/system/include",
                         "TAPI_EXEC": tapiToolPath.str,
                     ])],
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug",
                                                buildSettings: [
@@ -168,7 +174,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         // Create a fake codesign_allocate tool so it can be found in the executable search paths.
         let fs = PseudoFS()
         try await fs.writeFileContents(swiftCompilerPath) { $0 <<< "binary" }
-        try await fs.writeFileContents(core.developerPath.join("Toolchains/XcodeDefault.xctoolchain/usr/bin/codesign_allocate")) { $0 <<< "binary" }
+        try await fs.writeFileContents(core.developerPath.path.join("Toolchains/XcodeDefault.xctoolchain/usr/bin/codesign_allocate")) { $0 <<< "binary" }
 
         // NOTE: The toolchain cannot be set normally and must be passed in as an override.
         var overrides = ["TOOLCHAINS": toolchainIdentifier]
@@ -179,7 +185,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         let effectiveToolchain = core.toolchainRegistry.lookup(toolchainIdentifier) ?? defaultToolchain
 
         // Check the debug build.
-        await tester.checkBuild(parameters, fs: fs) { results in
+        await tester.checkBuild(parameters, runDestination: .macOS, fs: fs) { results in
             results.checkTarget("AppTarget") { target in
                 // There should be a WriteAuxiliaryFile task to create the versioning file.
                 results.checkWriteAuxiliaryFileTask(.matchTarget(target), .matchRule(["WriteAuxiliaryFile", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/DerivedSources/AppTarget_vers.c"])) { task, contents in
@@ -208,7 +214,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
 
                 results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
                     task.checkRuleInfo(["SwiftDriver Compilation", target.target.name, "normal", "x86_64", "com.apple.xcode.tools.swift.compiler"])
-                    task.checkCommandLineContains([swiftCompilerPath.str, "-module-name", "AppTarget", "-O", "@\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.SwiftFileList", "-sdk", core.loadSDK(.macOS).path.str, "-target", "x86_64-apple-macos\(MACOSX_DEPLOYMENT_TARGET)", /* options from the xcspec which sometimes change appear here */ "-swift-version", swiftVersion, "-I", "\(SRCROOT)/build/Debug", "-F", "\(SRCROOT)/build/Debug", "-c", "-j\(compilerParallelismLevel)", "-incremental", "-output-file-map", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-OutputFileMap.json", "-serialize-diagnostics", "-emit-dependencies", "-emit-module", "-emit-module-path", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.swiftmodule", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/swift-overrides.hmap", "-Xcc", "-iquote", "-Xcc", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/AppTarget-generated-files.hmap", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/AppTarget-own-target-headers.hmap", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/AppTarget-all-target-headers.hmap", "-Xcc", "-iquote", "-Xcc", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/AppTarget-project-headers.hmap", "-Xcc", "-I\(SRCROOT)/build/Debug/include", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/DerivedSources-normal/x86_64", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/DerivedSources", "-emit-objc-header", "-emit-objc-header-path", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-Swift.h", "-working-directory", SRCROOT])
+                    task.checkCommandLineContains([swiftCompilerPath.str, "-module-name", "AppTarget", "-O", "@\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.SwiftFileList", "-sdk", core.loadSDK(.macOS).path.str, "-target", "x86_64-apple-macos\(MACOSX_DEPLOYMENT_TARGET)", /* options from the xcspec which sometimes change appear here */ "-swift-version", swiftVersion, "-I", "\(SRCROOT)/build/Debug", "-I", "/tmp/include", "-Isystem", "/tmp/system/include", "-F", "\(SRCROOT)/build/Debug", "-c", "-j\(compilerParallelismLevel)", "-incremental", "-output-file-map", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-OutputFileMap.json", "-serialize-diagnostics", "-emit-dependencies", "-emit-module", "-emit-module-path", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.swiftmodule", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/swift-overrides.hmap", "-Xcc", "-iquote", "-Xcc", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/AppTarget-generated-files.hmap", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/AppTarget-own-target-headers.hmap", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/AppTarget-all-target-headers.hmap", "-Xcc", "-iquote", "-Xcc", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/AppTarget-project-headers.hmap", "-Xcc", "-I\(SRCROOT)/build/Debug/include", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/DerivedSources-normal/x86_64", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/DerivedSources", "-emit-objc-header", "-emit-objc-header-path", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-Swift.h", "-working-directory", SRCROOT])
 
                     task.checkInputs([
                         .path("\(SRCROOT)/main.swift"),
@@ -241,7 +247,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
 
                 results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation Requirements")) { task in
                     task.checkRuleInfo(["SwiftDriver Compilation Requirements", target.target.name, "normal", "x86_64", "com.apple.xcode.tools.swift.compiler"])
-                    task.checkCommandLineContains([swiftCompilerPath.str, "-module-name", "AppTarget", "-O", "@\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.SwiftFileList", "-sdk", core.loadSDK(.macOS).path.str, "-target", "x86_64-apple-macos\(MACOSX_DEPLOYMENT_TARGET)", /* options from the xcspec which sometimes change appear here */ "-swift-version", swiftVersion, "-I", "\(SRCROOT)/build/Debug", "-F", "\(SRCROOT)/build/Debug", "-c", "-j\(compilerParallelismLevel)", "-incremental", "-output-file-map", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-OutputFileMap.json", "-serialize-diagnostics", "-emit-dependencies", "-emit-module", "-emit-module-path", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.swiftmodule", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/swift-overrides.hmap", "-Xcc", "-iquote", "-Xcc", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/AppTarget-generated-files.hmap", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/AppTarget-own-target-headers.hmap", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/AppTarget-all-target-headers.hmap", "-Xcc", "-iquote", "-Xcc", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/AppTarget-project-headers.hmap", "-Xcc", "-I\(SRCROOT)/build/Debug/include", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/DerivedSources-normal/x86_64", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/DerivedSources", "-emit-objc-header", "-emit-objc-header-path", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-Swift.h", "-working-directory", SRCROOT])
+                    task.checkCommandLineContains([swiftCompilerPath.str, "-module-name", "AppTarget", "-O", "@\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.SwiftFileList", "-sdk", core.loadSDK(.macOS).path.str, "-target", "x86_64-apple-macos\(MACOSX_DEPLOYMENT_TARGET)", /* options from the xcspec which sometimes change appear here */ "-swift-version", swiftVersion, "-I", "\(SRCROOT)/build/Debug", "-I", "/tmp/include", "-Isystem", "/tmp/system/include", "-F", "\(SRCROOT)/build/Debug", "-c", "-j\(compilerParallelismLevel)", "-incremental", "-output-file-map", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-OutputFileMap.json", "-serialize-diagnostics", "-emit-dependencies", "-emit-module", "-emit-module-path", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.swiftmodule", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/swift-overrides.hmap", "-Xcc", "-iquote", "-Xcc", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/AppTarget-generated-files.hmap", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/AppTarget-own-target-headers.hmap", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/AppTarget-all-target-headers.hmap", "-Xcc", "-iquote", "-Xcc", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/AppTarget-project-headers.hmap", "-Xcc", "-I\(SRCROOT)/build/Debug/include", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/DerivedSources-normal/x86_64", "-Xcc", "-I\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/DerivedSources", "-emit-objc-header", "-emit-objc-header-path", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-Swift.h", "-working-directory", SRCROOT])
 
                     task.checkInputs([
                         .path("\(SRCROOT)/main.swift"),
@@ -263,6 +269,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                     task.checkOutputs([
                         .path("\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget Swift Compilation Requirements Finished"),
                         .path("\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.swiftmodule"),
+                        .path("\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-linker-args.resp"),
                         .path("\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.swiftsourceinfo"),
                         .path("\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.abi.json"),
                         .path("\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.swiftinterface"),
@@ -295,10 +302,11 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                     // Check the global dictionary.
                     if let globalDict = dict[""] {
                         XCTAssertEqualPropertyListItems(globalDict, .plDict([
-                            "swift-dependencies": .plString("\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-master.swiftdeps"),
-                            "diagnostics": .plString("\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-master.dia"),
-                            "emit-module-diagnostics": .plString("\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-master-emit-module.dia"),
-                            "emit-module-dependencies": .plString("\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-master-emit-module.d"),
+                            "swift-dependencies": .plString("\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-primary.swiftdeps"),
+                            "diagnostics": .plString("\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-primary.dia"),
+                            "emit-module-diagnostics": .plString("\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-primary-emit-module.dia"),
+                            "emit-module-dependencies": .plString("\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-primary-emit-module.d"),
+                            "pch": .plString("\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-primary-Bridging-header.pch"),
                         ]))
                     }
                     else {
@@ -372,7 +380,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                     task.checkCommandLine(([
                         ["clang", "-Xlinker", "-reproducible", "-target", "x86_64-apple-macos\(MACOSX_DEPLOYMENT_TARGET)", "-isysroot", core.loadSDK(.macOS).path.str, "-Os", "-L\(SRCROOT)/build/EagerLinkingTBDs/Debug", "-L\(SRCROOT)/build/Debug", "-F\(SRCROOT)/build/EagerLinkingTBDs/Debug", "-F\(SRCROOT)/build/Debug", "-filelist", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.LinkFileList"],
                         shouldEmitSwiftRPath ? ["-Xlinker", "-rpath", "-Xlinker", "/usr/lib/swift"] : [],
-                        ["-Xlinker", "-dependency_info", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget_dependency_info.dat", "-fobjc-link-runtime", "-L\(core.developerPath.str)/Toolchains/\(toolchain).xctoolchain/usr/lib/swift/macosx", "-L/usr/lib/swift", "-framework", "FwkTarget", "-o", "\(SRCROOT)/build/Debug/AppTarget.app/Contents/MacOS/AppTarget"]
+                        ["-Xlinker", "-dependency_info", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget_dependency_info.dat", "-fobjc-link-runtime", "-L\(core.developerPath.path.str)/Toolchains/\(toolchain).xctoolchain/usr/lib/swift/macosx", "-L/usr/lib/swift", "-framework", "FwkTarget", "-o", "\(SRCROOT)/build/Debug/AppTarget.app/Contents/MacOS/AppTarget"]
                     ] as [[String]]).reduce([], +))
 
                     task.checkInputs([
@@ -390,9 +398,6 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                         .namePattern(.prefix("Linked Binary \(SRCROOT)/build/Debug/AppTarget.app/Contents/MacOS/AppTarget")),
                         .path("\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget_dependency_info.dat"),
                     ])
-
-                    // We used to pass the deployment target to the linker in the environment, but this is supposedly no longer necessary.
-                    task.checkEnvironment([:], exact: true)
                 }
 
                 // There should be a task to embed the Swift standard libraries.
@@ -411,8 +416,8 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                         .name("CopySwiftStdlib \(SRCROOT)/build/Debug/AppTarget.app"),])
 
                     task.checkEnvironment([
-                        "CODESIGN_ALLOCATE":    .equal(core.developerPath.join("Toolchains/XcodeDefault.xctoolchain/usr/bin/codesign_allocate").str),
-                        "DEVELOPER_DIR":        .equal(core.developerPath.str),
+                        "CODESIGN_ALLOCATE":    .equal(core.developerPath.path.join("Toolchains/XcodeDefault.xctoolchain/usr/bin/codesign_allocate").str),
+                        "DEVELOPER_DIR":        .equal(core.developerPath.path.str),
                         "SDKROOT":              .equal(core.loadSDK(.macOS).path.str),
                         // This is coming from our overrides in unit test infrastructure.
                         "TOOLCHAINS": .equal(toolchainIdentifier),
@@ -549,7 +554,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             ])
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .iOSSimulator)) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .iOSSimulator) { results in
             results.checkTask(.matchRuleType("Ld"), .matchRuleItem("/tmp/Test/Test/build/Debug-iphonesimulator/Executable.app/Executable")) { task in
                 task.checkCommandLineNoMatch([.equal("-Xlinker"), .equal("-rpath"), .equal("-Xlinker"), .equal("/usr/lib/swift")])
             }
@@ -595,7 +600,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug")) { results in
+        await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug"), runDestination: .macOS) { results in
             // Check the actual module map.
             results.checkWriteAuxiliaryFileTask(.matchRule(["WriteAuxiliaryFile", "/tmp/Test/aProject/build/aProject.build/Debug/CoreFoo.build/module.modulemap"])) { task, contents in
                 #expect(contents == (OutputByteStream()
@@ -640,6 +645,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                                                 "SWIFT_VERSION": swiftVersion,
                                                 "SWIFT_PACKAGE_NAME": "FooPkg",
                                                 "SWIFT_EMIT_MODULE_INTERFACE": "YES",
+                                                "SWIFT_ENABLE_EXPLICIT_MODULES": "YES",
                                                ]),
                     ],
                     buildPhases: [
@@ -658,7 +664,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         try await fs.writeFileContents(swiftCompilerPath) { $0 <<< "binary" }
 
         // We intentionally check an install build here, to ensure the unextended module map contents are rewritten appropriately.
-        await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug"), fs: fs) { results in
+        await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug"), runDestination: .macOS, fs: fs) { results in
             results.checkTarget("CoreFoo") { target in
                 let _ = results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
                     task.checkRuleInfo(["SwiftDriver Compilation", "CoreFoo", "normal", "x86_64", "com.apple.xcode.tools.swift.compiler"])
@@ -764,6 +770,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                     task.checkOutputs([
                         .path("\(SRCROOT)/build/aProject.build/Debug/CoreFoo.build/Objects-normal/x86_64/CoreFoo Swift Compilation Requirements Finished"),
                         .path("\(SRCROOT)/build/aProject.build/Debug/CoreFoo.build/Objects-normal/x86_64/CoreFoo.swiftmodule"),
+                        .path("\(SRCROOT)/build/aProject.build/Debug/CoreFoo.build/Objects-normal/x86_64/CoreFoo-linker-args.resp"),
                         .path("\(SRCROOT)/build/aProject.build/Debug/CoreFoo.build/Objects-normal/x86_64/CoreFoo.swiftsourceinfo"),
                         .path("\(SRCROOT)/build/aProject.build/Debug/CoreFoo.build/Objects-normal/x86_64/CoreFoo.abi.json"),
                         .path("\(SRCROOT)/build/aProject.build/Debug/CoreFoo.build/Objects-normal/x86_64/CoreFoo.swiftinterface"),
@@ -811,6 +818,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                         "CODE_SIGN_IDENTITY": "",
                         "PRODUCT_NAME": "$(TARGET_NAME)",
                         "GCC_GENERATE_DEBUGGING_SYMBOLS": "NO",
+                        "SWIFT_ENABLE_EXPLICIT_MODULES": "YES",
                     ]),
             ],
             targets: [
@@ -843,7 +851,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         try await fs.writeFileContents(swiftCompilerPath) { $0 <<< "binary" }
 
         // We intentionally check an install build here, to ensure the unextended module map contents are rewritten appropriately.
-        try await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug"), fs: fs) { results in
+        try await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug"), runDestination: .macOS, fs: fs) { results in
             try results.checkTarget("CoreFoo") { target in
                 let swiftCompilationRequirementsTask: any PlannedTask = try results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
                     task.checkRuleInfo(["SwiftDriver Compilation", "CoreFoo", "normal", "x86_64", "com.apple.xcode.tools.swift.compiler"])
@@ -1005,6 +1013,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                     task.checkOutputs([
                         .path("\(SRCROOT)/build/aProject.build/Debug/CoreFoo.build/Objects-normal/x86_64/CoreFoo Swift Compilation Requirements Finished"),
                         .path("\(SRCROOT)/build/aProject.build/Debug/CoreFoo.build/Objects-normal/x86_64/CoreFoo.swiftmodule"),
+                        .path("\(SRCROOT)/build/aProject.build/Debug/CoreFoo.build/Objects-normal/x86_64/CoreFoo-linker-args.resp"),
                         .path("\(SRCROOT)/build/aProject.build/Debug/CoreFoo.build/Objects-normal/x86_64/CoreFoo.swiftsourceinfo"),
                         .path("\(SRCROOT)/build/aProject.build/Debug/CoreFoo.build/Objects-normal/x86_64/CoreFoo.abi.json"),
                         .path("\(SRCROOT)/build/aProject.build/Debug/CoreFoo.build/Objects-normal/x86_64/CoreFoo.swiftinterface"),
@@ -1147,6 +1156,67 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
     }
 
     @Test(.requireSDKs(.macOS))
+    func swiftModuleCacheFlags() async throws {
+        let swiftCompilerPath = try await self.swiftCompilerPath
+        let swiftVersion = try await self.swiftVersion
+        let testProject = TestProject(
+            "aProject",
+            groupTree: TestGroup(
+                "SomeFiles", path: "Sources",
+                children: [
+                    TestFile("Foo.swift"),
+                ]),
+            buildConfigurations: [
+                TestBuildConfiguration(
+                    "Debug",
+                    buildSettings: [
+                        "CODE_SIGN_IDENTITY": "",
+                        "PRODUCT_NAME": "$(TARGET_NAME)",
+                        "GCC_GENERATE_DEBUGGING_SYMBOLS": "NO",
+                        "SWIFT_ENABLE_EXPLICIT_MODULES": "YES",
+                        "SWIFT_EXPLICIT_MODULES_OUTPUT_PATH": "/path/to/ExplicitModules",
+                    ]),
+            ],
+            targets: [
+                TestStandardTarget(
+                    "CoreFoo", type: .framework,
+                    buildConfigurations: [
+                        TestBuildConfiguration("Debug",
+                                               buildSettings: [
+                                                "SDKROOT": "macosx",
+                                                "SWIFT_VERSION": swiftVersion,
+                                               ]),
+                    ],
+                    buildPhases: [
+                        TestSourcesBuildPhase([
+                            "Foo.swift",
+                        ]),
+                    ])
+            ])
+        let core = try await getCore()
+        let tester = try TaskConstructionTester(core, testProject)
+
+        let fs = PseudoFS()
+
+        try await fs.writeFileContents(swiftCompilerPath) { $0 <<< "binary" }
+        let arena = ArenaInfo(derivedDataPath: Path("/path/to/DerivedData"), buildProductsPath: Path.root, buildIntermediatesPath: Path.root, pchPath: Path.root, indexRegularBuildProductsPath: nil, indexRegularBuildIntermediatesPath: nil, indexPCHPath: Path.root, indexDataStoreFolderPath: nil, indexEnableDataStore: false)
+        await tester.checkBuild(BuildParameters(configuration: "Debug", arena: arena), runDestination: .macOS, fs: fs) { results in
+            results.checkTarget("CoreFoo")  { target in
+                results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
+                    task.checkCommandLineContains(["-module-cache-path", "/path/to/ExplicitModules"])
+                    if LibSwiftDriver.supportsDriverFlag(spelled: "-clang-scanner-module-cache-path") {
+                        task.checkCommandLineContains(["-clang-scanner-module-cache-path", "/path/to/DerivedData/ModuleCache.noindex"])
+                    }
+                    if LibSwiftDriver.supportsDriverFlag(spelled: "-sdk-module-cache-path") {
+                        task.checkCommandLineContains(["-sdk-module-cache-path", "/path/to/DerivedData/ModuleCache.noindex"])
+                    }
+                }
+            }
+            results.checkNoDiagnostics()
+        }
+    }
+
+    @Test(.requireSDKs(.macOS))
     func swiftLTO() async throws {
         let testProject = try await TestProject(
             "aProject",
@@ -1185,7 +1255,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         let fs = PseudoFS()
         try await fs.writeFileContents(swiftCompilerPath) { $0 <<< "binary" }
         for ltoSetting in ["YES", "YES_THIN"] {
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_LTO": ltoSetting]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_LTO": ltoSetting]), runDestination: .macOS, fs: fs) { results in
                 results.checkNoDiagnostics()
                 results.checkTarget("Bar") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { compileTask in
@@ -1385,7 +1455,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         try fs.createDirectory(SRCROOT, recursive: true)
         try fs.write(SRCROOT.join("Foo.modulemap"), contents: [])
 
-        await tester.checkBuild(fs: fs) { results in
+        await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
             results.checkTarget("CoreFoo") { target in
                 // Check the Swift planning.
                 results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
@@ -1437,7 +1507,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget("Exec") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation Requirements")) { task in
                     task.checkCommandLineContains(["-explicit-module-build"])
@@ -1446,7 +1516,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             results.checkNoDiagnostics()
         }
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_OBJC_INTEROP_MODE": "objcxx"])) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_OBJC_INTEROP_MODE": "objcxx"]), runDestination: .macOS) { results in
             results.checkTarget("Exec") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation Requirements")) { task in
                     task.checkCommandLineDoesNotContain("-explicit-module-build")
@@ -1455,10 +1525,148 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             results.checkNoDiagnostics()
         }
 
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["OTHER_SWIFT_FLAGS": "-cxx-interoperability-mode=default"])) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["OTHER_SWIFT_FLAGS": "-cxx-interoperability-mode=default"]), runDestination: .macOS) { results in
             results.checkTarget("Exec") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation Requirements")) { task in
                     task.checkCommandLineDoesNotContain("-explicit-module-build")
+                }
+            }
+            results.checkNoDiagnostics()
+        }
+    }
+
+    @Test(.requireSDKs(.macOS), .enabled(if: LibSwiftDriver.supportsDriverFlag(spelled: "-incremental-dependency-scan")))
+    func optOutIncrementalScanning() async throws {
+        let testProject = try await TestProject(
+            "aProject",
+            groupTree: TestGroup(
+                "SomeFiles", path: "Sources",
+                children: [
+                    TestFile("main.swift"),
+                ]),
+            buildConfigurations: [
+                TestBuildConfiguration(
+                    "Debug",
+                    buildSettings: [
+                        "PRODUCT_NAME": "$(TARGET_NAME)",
+                        "SWIFT_ENABLE_EXPLICIT_MODULES": "YES",
+                    ]),
+            ],
+            targets: [
+                TestStandardTarget(
+                    "Exec", type: .commandLineTool,
+                    buildConfigurations: [
+                        TestBuildConfiguration("Debug",
+                                               buildSettings: [
+                                                "SWIFT_EXEC": swiftCompilerPath.str,
+                                                "SWIFT_VERSION": swiftVersion,
+                                               ]),
+                    ],
+                    buildPhases: [
+                        TestSourcesBuildPhase([
+                            "main.swift",
+                        ]),
+                    ])
+            ])
+        let tester = try await TaskConstructionTester(getCore(), testProject)
+
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_ENABLE_INCREMENTAL_SCAN": "YES"]), runDestination: .macOS) { results in
+            results.checkTarget("Exec") { target in
+                results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation Requirements")) { task in
+                    task.checkCommandLineContains(["-explicit-module-build"])
+                    task.checkCommandLineContains(["-incremental"])
+                    task.checkCommandLineContains(["-incremental-dependency-scan"])
+                }
+            }
+            results.checkNoDiagnostics()
+        }
+
+        await tester.checkBuild(runDestination: .macOS) { results in
+            results.checkTarget("Exec") { target in
+                results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation Requirements")) { task in
+                    task.checkCommandLineContains(["-explicit-module-build"])
+                    task.checkCommandLineContains(["-incremental"])
+                    task.checkCommandLineDoesNotContain("-incremental-dependency-scan")
+                }
+            }
+            results.checkNoDiagnostics()
+        }
+    }
+
+    @Test(.requireSDKs(.macOS))
+    func swift4DisablesExplicitModules() async throws {
+        let testProject = try await TestProject(
+            "aProject",
+            groupTree: TestGroup(
+                "SomeFiles", path: "Sources",
+                children: [
+                    TestFile("main.swift"),
+                ]),
+            buildConfigurations: [
+                TestBuildConfiguration(
+                    "Debug",
+                    buildSettings: [
+                        "PRODUCT_NAME": "$(TARGET_NAME)",
+                        "SWIFT_ENABLE_EXPLICIT_MODULES": "YES",
+                    ]),
+            ],
+            targets: [
+                TestStandardTarget(
+                    "Exec", type: .commandLineTool,
+                    buildConfigurations: [
+                        TestBuildConfiguration("Debug",
+                                               buildSettings: [
+                                                "SWIFT_EXEC": swiftCompilerPath.str,
+                                               ]),
+                    ],
+                    buildPhases: [
+                        TestSourcesBuildPhase([
+                            "main.swift",
+                        ]),
+                    ])
+            ])
+        let tester = try await TaskConstructionTester(getCore(), testProject)
+
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_VERSION": "6.0"]), runDestination: .macOS) { results in
+            results.checkTarget("Exec") { target in
+                results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation Requirements")) { task in
+                    task.checkCommandLineContains(["-explicit-module-build"])
+                }
+            }
+            results.checkNoDiagnostics()
+        }
+
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_VERSION": "5.0"]), runDestination: .macOS) { results in
+            results.checkTarget("Exec") { target in
+                results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation Requirements")) { task in
+                    task.checkCommandLineContains(["-explicit-module-build"])
+                }
+            }
+            results.checkNoDiagnostics()
+        }
+
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_VERSION": "4.0"]), runDestination: .macOS) { results in
+            results.checkTarget("Exec") { target in
+                results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation Requirements")) { task in
+                    task.checkCommandLineDoesNotContain("-explicit-module-build")
+                }
+            }
+            results.checkNoDiagnostics()
+        }
+
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_VERSION": "4.2"]), runDestination: .macOS) { results in
+            results.checkTarget("Exec") { target in
+                results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation Requirements")) { task in
+                    task.checkCommandLineDoesNotContain("-explicit-module-build")
+                }
+            }
+            results.checkNoDiagnostics()
+        }
+
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_VERSION": "4.2", "_SWIFT_EXPLICIT_MODULES_ALLOW_BEFORE_SWIFT_5": "YES"]), runDestination: .macOS) { results in
+            results.checkTarget("Exec") { target in
+                results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation Requirements")) { task in
+                    task.checkCommandLineContains(["-explicit-module-build"])
                 }
             }
             results.checkNoDiagnostics()
@@ -1503,7 +1711,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
 
         let fs = PseudoFS()
 
-        await tester.checkBuild(fs: fs) { results in
+        await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
             results.checkTarget("Exec") { target in
                 // Check the Swift compile.
                 results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation Requirements")) { task in
@@ -1564,7 +1772,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         let bridgeHeader = SRCROOT.join("swift-bridge-header.h")
         try fs.write(bridgeHeader, contents: [])
 
-        await tester.checkBuild(fs: fs) { results in
+        await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
             results.checkTarget("FooApp") { target in
                 // Check the Swift compile.
                 results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
@@ -1625,7 +1833,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         let bridgeHeader = SRCROOT.join("swift-bridge-header.h")
         try fs.write(bridgeHeader, contents: [])
 
-        await tester.checkBuild(fs: fs) { results in
+        await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
             results.checkTarget("FooApp") { target in
                 // Check the Swift compile.
                 results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
@@ -1850,7 +2058,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
-        await tester.checkBuild() { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget("TestTarget") { target in
                 // Check the compilation command-line effects
                 results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
@@ -1935,7 +2143,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             ])
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkTarget("TestTarget") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
@@ -1943,7 +2151,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 }
             }
         }
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_MODULES_AUTOLINK": "NO"])) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_MODULES_AUTOLINK": "NO"]), runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkTarget("TestTarget") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
@@ -1951,7 +2159,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 }
             }
         }
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_SKIP_AUTOLINKING_ALL_FRAMEWORKS": "YES"])) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_SKIP_AUTOLINKING_ALL_FRAMEWORKS": "YES"]), runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkTarget("TestTarget") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
@@ -1959,7 +2167,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 }
             }
         }
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_SKIP_AUTOLINKING_FRAMEWORKS": "Foundation"])) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_SKIP_AUTOLINKING_FRAMEWORKS": "Foundation"]), runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkTarget("TestTarget") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
@@ -1967,7 +2175,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 }
             }
         }
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_SKIP_AUTOLINKING_LIBRARIES": "Bar"])) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_SKIP_AUTOLINKING_LIBRARIES": "Bar"]), runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkTarget("TestTarget") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
@@ -2013,7 +2221,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
         let params = BuildParameters(action: .installAPI, configuration: "Debug")
-        await tester.checkBuild(params) { results in
+        await tester.checkBuild(params, runDestination: .macOS) { results in
             results.checkTarget("TargetName") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation Requirements")) { task in
                     task.checkCommandLineContains(["-emit-tbd-path"])
@@ -2023,7 +2231,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             }
         }
 
-        await tester.checkBuild() { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTarget("TargetName") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation Requirements")) { task in
                     task.checkCommandLineContains(["-emit-tbd-path"])
@@ -2070,7 +2278,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
     @Test(.requireSDKs(.macOS))
     func emptySwiftVersion() async throws {
         let tester = try await createTester(swiftVersion: "")
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkError(.prefix("SWIFT_VERSION \'\' is unsupported"))
         }
     }
@@ -2078,7 +2286,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
     @Test(.requireSDKs(.macOS))
     func unsupportedSwiftVersion() async throws {
         let tester = try await createTester(swiftVersion: "1.1")
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkError(.prefix("SWIFT_VERSION \'1.1\' is unsupported"))
         }
     }
@@ -2086,7 +2294,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
     @Test(.requireSDKs(.macOS))
     func unparseableSwiftVersion() async throws {
         let tester = try await createTester(swiftVersion: "test")
-        await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkError(.prefix("SWIFT_VERSION \'test\' is unsupported"))
         }
     }
@@ -2094,7 +2302,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
     @Test(.requireSDKs(.macOS))
     func minorSwiftVersions() async throws {
         let tester = try await createTester(swiftVersion: "4.1")
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["GENERATE_INFOPLIST_FILE": "YES"])) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["GENERATE_INFOPLIST_FILE": "YES"]), runDestination: .macOS) { results in
             results.checkNoDiagnostics()
         }
     }
@@ -2143,7 +2351,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             ])
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
-        await tester.checkBuild { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkTarget("Executable") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
@@ -2230,7 +2438,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             ])
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .iOSSimulator)) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .iOSSimulator) { results in
             results.checkNoDiagnostics()
             results.checkTarget("Executable") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
@@ -2281,6 +2489,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug",
                                                buildSettings: [
@@ -2299,7 +2508,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
         // Check the debug build.
-        try await tester.checkBuild() { results in
+        try await tester.checkBuild(runDestination: .macOS) { results in
             results.checkWriteAuxiliaryFileTask(.matchRule(["WriteAuxiliaryFile", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.SwiftFileList"])) { task, contents in task.checkOutputs([.pathPattern(.suffix("Objects-normal/x86_64/AppTarget.SwiftFileList"))])
 
                 #expect(contents.asString.components(separatedBy: .newlines).dropLast().sorted() == ["\(SRCROOT)/bar.swift", "\(SRCROOT)/foo.swift", "\(SRCROOT)/main.swift"])
@@ -2369,6 +2578,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug",
                                                buildSettings: [
@@ -2387,7 +2597,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
         // Check the debug build.
-        try await tester.checkBuild() { results in
+        try await tester.checkBuild(runDestination: .macOS) { results in
             try results.checkTask(.matchRule(["SwiftDriver Compilation Requirements", "AppTarget", "normal", "x86_64", "com.apple.xcode.tools.swift.compiler"])) { task in
 
                 // Test full info.
@@ -2487,6 +2697,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug",
                                                buildSettings: [
@@ -2500,7 +2711,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
 
         do {
             let tester = try await TaskConstructionTester(getCore(), testProject)
-            try await tester.checkBuild() { results in
+            try await tester.checkBuild(runDestination: .macOS) { results in
                 try results.checkTask(.matchRule(["SwiftDriver Compilation Requirements", "AppTarget", "normal", "x86_64", "com.apple.xcode.tools.swift.compiler"])) { task in
 
                     let indexingInfo = task.generateIndexingInfo(input: .fullInfo).sorted(by: { (lhs, rhs) in lhs.path < rhs.path })
@@ -2515,7 +2726,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
 
         try await UserDefaults.withEnvironment(["EnableFixFor23297285": "0"]) {
             let tester = try await TaskConstructionTester(getCore(), testProject)
-            try await tester.checkBuild() { results in
+            try await tester.checkBuild(runDestination: .macOS) { results in
                 try results.checkTask(.matchRule(["SwiftDriver Compilation Requirements", "AppTarget", "normal", "x86_64", "com.apple.xcode.tools.swift.compiler"])) { task in
 
                     let indexingInfo = task.generateIndexingInfo(input: .fullInfo).sorted(by: { (lhs, rhs) in lhs.path < rhs.path })
@@ -2553,6 +2764,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug",
                                                buildSettings: [
@@ -2564,7 +2776,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                     ])
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
-        await tester.checkBuild() { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkError("The path for Swift input file list cannot be empty. (in target 'AppTarget' from project 'aProject')")
             results.checkNoDiagnostics()
         }
@@ -2594,6 +2806,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug",
                                                buildSettings: [
@@ -2605,7 +2818,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                     ])
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
-        await tester.checkBuild() { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkNoDiagnostics()
         }
     }
@@ -2635,6 +2848,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug",
                                                buildSettings: [
@@ -2647,7 +2861,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
         let srcroot = tester.workspace.projects[0].sourceRoot
-        await tester.checkBuild() { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
 
             results.checkWriteAuxiliaryFileTask(.matchRuleItemPattern(.suffix("AppTarget.SwiftFileList"))) { task, contents in
                 task.checkRuleInfo(["WriteAuxiliaryFile", .suffix("AppTarget.SwiftFileList")])
@@ -2686,6 +2900,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                         "PRODUCT_NAME": "$(TARGET_NAME)",
                         "SUPPORTED_PLATFORMS": "$(AVAILABLE_PLATFORMS)",
                         "SUPPORTS_MACCATALYST": "YES",
+                        "SWIFT_ENABLE_EXPLICIT_MODULES": "YES",
                         "SWIFT_EXEC": swiftCompilerPath.str,
                         "SWIFT_VERSION": swiftVersion,
                     ]
@@ -2694,6 +2909,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration(
                             "Debug"
@@ -2712,9 +2928,9 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         let tester = try TaskConstructionTester(core, testProject)
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .macOS)) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .macOS) { results in
             results.checkTask(.matchRuleType("Ld")) { task in
-                task.checkCommandLine(["clang", "-Xlinker", "-reproducible", "-target", "x86_64-apple-macos\(core.loadSDK(.macOS).defaultDeploymentTarget)", "-isysroot", "\(core.loadSDK(.macOS).path.str)", "-Os", "-L\(SRCROOT)/build/EagerLinkingTBDs/Debug", "-L\(SRCROOT)/build/Debug", "-F\(SRCROOT)/build/EagerLinkingTBDs/Debug", "-F\(SRCROOT)/build/Debug", "-filelist", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.LinkFileList", "-Xlinker", "-object_path_lto", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget_lto.o", "-Xlinker", "-dependency_info", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget_dependency_info.dat", "-fobjc-link-runtime", "-L\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx", "-L/usr/lib/swift", "-Xlinker", "-add_ast_path", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.swiftmodule", "-o", "\(SRCROOT)/build/Debug/AppTarget.app/Contents/MacOS/AppTarget"])
+                task.checkCommandLine(["clang", "-Xlinker", "-reproducible", "-target", "x86_64-apple-macos\(core.loadSDK(.macOS).defaultDeploymentTarget)", "-isysroot", "\(core.loadSDK(.macOS).path.str)", "-Os", "-L\(SRCROOT)/build/EagerLinkingTBDs/Debug", "-L\(SRCROOT)/build/Debug", "-F\(SRCROOT)/build/EagerLinkingTBDs/Debug", "-F\(SRCROOT)/build/Debug", "-filelist", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.LinkFileList", "-Xlinker", "-object_path_lto", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget_lto.o", "-Xlinker", "-dependency_info", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget_dependency_info.dat", "-fobjc-link-runtime", "-L\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx", "-L/usr/lib/swift", "-Xlinker", "-add_ast_path", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.swiftmodule", "@\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-linker-args.resp", "-o", "\(SRCROOT)/build/Debug/AppTarget.app/Contents/MacOS/AppTarget"])
             }
             results.checkNoDiagnostics()
         }
@@ -2723,23 +2939,39 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         let catalystVariant = try #require(macosBaseSDK.variant(for: MacCatalystInfo.sdkVariantName), "unable to find catalyst SDKVariant")
         let catalystVersion = try #require(catalystVariant.defaultDeploymentTarget, "unable to load defaultDeploymentTarget for iosmac SDKVariant")
 
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .macCatalyst)) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .macCatalyst) { results in
             results.checkTask(.matchRuleType("Ld")) { task in
-                task.checkCommandLine(["clang", "-Xlinker", "-reproducible", "-target", "x86_64-apple-ios\(catalystVersion.description)-macabi", "-isysroot", "\(core.loadSDK(.macOS).path.str)", "-Os", "-L\(SRCROOT)/build/EagerLinkingTBDs/Debug-maccatalyst", "-L\(SRCROOT)/build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)", "-L\(core.loadSDK(.macOS).path.str)/System/iOSSupport/usr/lib", "-L\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/maccatalyst", "-L\(core.loadSDK(.macOS).path.str)/System/iOSSupport/usr/lib", "-L\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/maccatalyst", "-F\(SRCROOT)/build/EagerLinkingTBDs/Debug-maccatalyst", "-F\(SRCROOT)/build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)", "-iframework", "\(core.loadSDK(.macOS).path.str)/System/iOSSupport/System/Library/Frameworks", "-iframework", "\(core.loadSDK(.macOS).path.str)/System/iOSSupport/System/Library/Frameworks", "-filelist", "\(SRCROOT)/build/aProject.build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.build/Objects-normal/x86_64/AppTarget.LinkFileList", "-Xlinker", "-rpath", "-Xlinker", "@loader_path/../Frameworks", "-Xlinker", "-object_path_lto", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.build/Objects-normal/x86_64/AppTarget_lto.o", "-Xlinker", "-dependency_info", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.build/Objects-normal/x86_64/AppTarget_dependency_info.dat", "-fobjc-link-runtime", "-L\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx", "-L/System/iOSSupport/usr/lib/swift", "-L/usr/lib/swift", "-Xlinker", "-add_ast_path", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.build/Objects-normal/x86_64/AppTarget.swiftmodule", "-o", "\(SRCROOT)/build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.app/Contents/MacOS/AppTarget"])
+                let containsSubFrameworksPath = task.commandLineAsStrings.contains("\(core.loadSDK(.macOS).path.str)/System/iOSSupport/System/Library/SubFrameworks")
+                let expectedCommandLine: [String] = [
+                    ["clang", "-Xlinker", "-reproducible", "-target", "x86_64-apple-ios\(catalystVersion.description)-macabi", "-isysroot", "\(core.loadSDK(.macOS).path.str)", "-Os", "-L\(SRCROOT)/build/EagerLinkingTBDs/Debug-maccatalyst", "-L\(SRCROOT)/build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)", "-L\(core.loadSDK(.macOS).path.str)/System/iOSSupport/usr/lib", "-L\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/maccatalyst", "-L\(core.loadSDK(.macOS).path.str)/System/iOSSupport/usr/lib", "-L\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/maccatalyst", "-F\(SRCROOT)/build/EagerLinkingTBDs/Debug-maccatalyst", "-F\(SRCROOT)/build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)", "-iframework", "\(core.loadSDK(.macOS).path.str)/System/iOSSupport/System/Library/Frameworks"],
+                    (containsSubFrameworksPath ? ["-iframework", "\(core.loadSDK(.macOS).path.str)/System/iOSSupport/System/Library/SubFrameworks"] : []),
+                    ["-iframework", "\(core.loadSDK(.macOS).path.str)/System/iOSSupport/System/Library/Frameworks"],
+                    (containsSubFrameworksPath ? ["-iframework", "\(core.loadSDK(.macOS).path.str)/System/iOSSupport/System/Library/SubFrameworks"] : []),
+                    ["-filelist", "\(SRCROOT)/build/aProject.build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.build/Objects-normal/x86_64/AppTarget.LinkFileList", "-Xlinker", "-rpath", "-Xlinker", "@loader_path/../Frameworks", "-Xlinker", "-object_path_lto", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.build/Objects-normal/x86_64/AppTarget_lto.o", "-Xlinker", "-dependency_info", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.build/Objects-normal/x86_64/AppTarget_dependency_info.dat", "-fobjc-link-runtime", "-L\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx", "-L/System/iOSSupport/usr/lib/swift", "-L/usr/lib/swift", "-Xlinker", "-add_ast_path", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.build/Objects-normal/x86_64/AppTarget.swiftmodule", "@\(SRCROOT)/build/aProject.build/Debug-maccatalyst/AppTarget.build/Objects-normal/x86_64/AppTarget-linker-args.resp", "-o", "\(SRCROOT)/build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.app/Contents/MacOS/AppTarget"],
+                ].reduce([], +)
+                task.checkCommandLine(expectedCommandLine)
             }
             results.checkNoDiagnostics()
         }
 
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .macOS, overrides: ["IS_ZIPPERED": "YES"])) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", overrides: ["IS_ZIPPERED": "YES"]), runDestination: .macOS) { results in
             results.checkTask(.matchRuleType("Ld")) { task in
-                task.checkCommandLine(["clang", "-Xlinker", "-reproducible", "-target", "x86_64-apple-macos\(core.loadSDK(.macOS).defaultDeploymentTarget)", "-isysroot", "\(core.loadSDK(.macOS).path.str)", "-Os", "-L\(SRCROOT)/build/EagerLinkingTBDs/Debug", "-L\(SRCROOT)/build/Debug", "-F\(SRCROOT)/build/EagerLinkingTBDs/Debug", "-F\(SRCROOT)/build/Debug", "-filelist", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.LinkFileList", "-Xlinker", "-object_path_lto", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget_lto.o", "-Xlinker", "-dependency_info", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget_dependency_info.dat", "-fobjc-link-runtime", "-L\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx", "-L/usr/lib/swift", "-Xlinker", "-add_ast_path", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.swiftmodule", "-o", "\(SRCROOT)/build/Debug/AppTarget.app/Contents/MacOS/AppTarget"])
+                task.checkCommandLine(["clang", "-Xlinker", "-reproducible", "-target", "x86_64-apple-macos\(core.loadSDK(.macOS).defaultDeploymentTarget)", "-isysroot", "\(core.loadSDK(.macOS).path.str)", "-Os", "-L\(SRCROOT)/build/EagerLinkingTBDs/Debug", "-L\(SRCROOT)/build/Debug", "-F\(SRCROOT)/build/EagerLinkingTBDs/Debug", "-F\(SRCROOT)/build/Debug", "-filelist", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.LinkFileList", "-Xlinker", "-object_path_lto", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget_lto.o", "-Xlinker", "-dependency_info", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget_dependency_info.dat", "-fobjc-link-runtime", "-L\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx", "-L/usr/lib/swift", "-Xlinker", "-add_ast_path", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget.swiftmodule", "@\(SRCROOT)/build/aProject.build/Debug/AppTarget.build/Objects-normal/x86_64/AppTarget-linker-args.resp", "-o", "\(SRCROOT)/build/Debug/AppTarget.app/Contents/MacOS/AppTarget"])
             }
             results.checkNoDiagnostics()
         }
 
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .macCatalyst, overrides: ["IS_ZIPPERED": "YES"])) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", overrides: ["IS_ZIPPERED": "YES"]), runDestination: .macCatalyst) { results in
             results.checkTask(.matchRuleType("Ld")) { task in
-                task.checkCommandLine(["clang", "-Xlinker", "-reproducible", "-target", "x86_64-apple-ios\(catalystVersion.description)-macabi", "-isysroot", "\(core.loadSDK(.macOS).path.str)", "-Os", "-L\(SRCROOT)/build/EagerLinkingTBDs/Debug-maccatalyst", "-L\(SRCROOT)/build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)", "-L\(core.loadSDK(.macOS).path.str)/System/iOSSupport/usr/lib", "-L\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/maccatalyst", "-L\(core.loadSDK(.macOS).path.str)/System/iOSSupport/usr/lib", "-L\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/maccatalyst", "-F\(SRCROOT)/build/EagerLinkingTBDs/Debug-maccatalyst", "-F\(SRCROOT)/build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)", "-iframework", "\(core.loadSDK(.macOS).path.str)/System/iOSSupport/System/Library/Frameworks", "-iframework", "\(core.loadSDK(.macOS).path.str)/System/iOSSupport/System/Library/Frameworks", "-filelist", "\(SRCROOT)/build/aProject.build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.build/Objects-normal/x86_64/AppTarget.LinkFileList", "-Xlinker", "-rpath", "-Xlinker", "@loader_path/../Frameworks", "-Xlinker", "-object_path_lto", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.build/Objects-normal/x86_64/AppTarget_lto.o", "-Xlinker", "-dependency_info", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.build/Objects-normal/x86_64/AppTarget_dependency_info.dat", "-fobjc-link-runtime", "-L\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx", "-L/usr/lib/swift", "-Xlinker", "-add_ast_path", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.build/Objects-normal/x86_64/AppTarget.swiftmodule", "-o", "\(SRCROOT)/build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.app/Contents/MacOS/AppTarget"])
+                let containsSubFrameworksPath = task.commandLineAsStrings.contains("\(core.loadSDK(.macOS).path.str)/System/iOSSupport/System/Library/SubFrameworks")
+                let expectedCommandLine: [String] = [
+                    ["clang", "-Xlinker", "-reproducible", "-target", "x86_64-apple-ios\(catalystVersion.description)-macabi", "-isysroot", "\(core.loadSDK(.macOS).path.str)", "-Os", "-L\(SRCROOT)/build/EagerLinkingTBDs/Debug-maccatalyst", "-L\(SRCROOT)/build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)", "-L\(core.loadSDK(.macOS).path.str)/System/iOSSupport/usr/lib", "-L\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/maccatalyst", "-L\(core.loadSDK(.macOS).path.str)/System/iOSSupport/usr/lib", "-L\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/maccatalyst", "-F\(SRCROOT)/build/EagerLinkingTBDs/Debug-maccatalyst", "-F\(SRCROOT)/build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)", "-iframework", "\(core.loadSDK(.macOS).path.str)/System/iOSSupport/System/Library/Frameworks"],
+                    (containsSubFrameworksPath ? ["-iframework", "\(core.loadSDK(.macOS).path.str)/System/iOSSupport/System/Library/SubFrameworks"] : []),
+                    ["-iframework", "\(core.loadSDK(.macOS).path.str)/System/iOSSupport/System/Library/Frameworks"],
+                    (containsSubFrameworksPath ? ["-iframework", "\(core.loadSDK(.macOS).path.str)/System/iOSSupport/System/Library/SubFrameworks"] : []),
+                    ["-filelist", "\(SRCROOT)/build/aProject.build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.build/Objects-normal/x86_64/AppTarget.LinkFileList", "-Xlinker", "-rpath", "-Xlinker", "@loader_path/../Frameworks", "-Xlinker", "-object_path_lto", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.build/Objects-normal/x86_64/AppTarget_lto.o", "-Xlinker", "-dependency_info", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.build/Objects-normal/x86_64/AppTarget_dependency_info.dat", "-fobjc-link-runtime", "-L\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx", "-L/usr/lib/swift", "-Xlinker", "-add_ast_path", "-Xlinker", "\(SRCROOT)/build/aProject.build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.build/Objects-normal/x86_64/AppTarget.swiftmodule", "@\(SRCROOT)/build/aProject.build/Debug-maccatalyst/AppTarget.build/Objects-normal/x86_64/AppTarget-linker-args.resp", "-o", "\(SRCROOT)/build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.app/Contents/MacOS/AppTarget"],
+                ].reduce([], +)
+                task.checkCommandLine(expectedCommandLine)
             }
             results.checkNoDiagnostics()
         }
@@ -2789,8 +3021,8 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             try fs.write(Path("/Users/whoever/Library/MobileDevice/Provisioning Profiles/8db0e92c-592c-4f06-bfed-9d945841b78d.mobileprovision"), contents: "profile")
 
             let tester = try await TaskConstructionTester(getCore(), project)
-            let parameters = BuildParameters(configuration: "Debug", activeRunDestination: .iOS)
-            await tester.checkBuild(parameters, fs: fs) { results in
+            let parameters = BuildParameters(configuration: "Debug")
+            await tester.checkBuild(parameters, runDestination: .iOS, fs: fs) { results in
                 results.checkTask(.matchRuleItemPattern(.contains("swift-generated-headers"))) { gateTask in
                     results.checkTaskFollows(gateTask, .matchRuleItemPattern(.suffix("Target-Swift.h")))
                 }
@@ -2833,7 +3065,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild() { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTask(.matchRuleType("SwiftDriver Compilation")) { task in
                 task.checkCommandLineDoesNotContain("-customflag")
             }
@@ -2873,7 +3105,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        try await tester.checkBuild() { results in
+        try await tester.checkBuild(runDestination: .macOS) { results in
             try results.checkTask(.matchRuleType("SwiftDriver Compilation Requirements")) { task in
                 try task.checkTaskAction(toolIdentifier: "swift-driver-compilation-requirement")
             }
@@ -2898,6 +3130,8 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                         "SWIFT_EXEC": swiftCompilerPath.str,
                         "SWIFT_VERSION": swiftVersion,
                         "SWIFT_USE_INTEGRATED_DRIVER": "NO",
+                        "SWIFT_ENABLE_EXPLICIT_MODULES": "NO",
+                        "_EXPERIMENTAL_SWIFT_EXPLICIT_MODULES": "NO",
                     ]),
             ],
             targets: [
@@ -2912,7 +3146,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        try await tester.checkBuild() { results in
+        try await tester.checkBuild(runDestination: .macOS) { results in
             try results.checkTask(.matchRuleType("CompileSwiftSources")) { task in
                 try task.checkTaskAction(toolIdentifier: nil)
             }
@@ -2953,14 +3187,14 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        let buildParameters = BuildParameters(configuration: "Debug", overrides: ["SWIFT_USE_INTEGRATED_DRIVER": "NO"])
-        await tester.checkBuild(buildParameters) { results in
+        let buildParameters = BuildParameters(configuration: "Debug", overrides: ["SWIFT_USE_INTEGRATED_DRIVER": "NO", "SWIFT_ENABLE_EXPLICIT_MODULES": "NO", "_EXPERIMENTAL_SWIFT_EXPLICIT_MODULES": "NO"])
+        await tester.checkBuild(buildParameters, runDestination: .macOS) { results in
             results.checkNoTask(.matchRuleType("SwiftDriver"))
 
             results.checkNoErrors()
         }
 
-        try await tester.checkBuild { results in
+        try await tester.checkBuild(runDestination: .macOS) { results in
             try results.checkTask(.matchRuleType("SwiftDriver Compilation Requirements")) { task in
                 try task.checkTaskAction(toolIdentifier: "swift-driver-compilation-requirement")
                 task.checkCommandLineMatches(["builtin-Swift-Compilation-Requirements"])
@@ -2985,6 +3219,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                     "SWIFT_EXEC": swiftCompilerPath.str,
                     "SWIFT_VERSION": swiftVersion,
                     "SWIFT_USE_INTEGRATED_DRIVER": "YES",
+                    "SWIFT_ENABLE_EXPLICIT_MODULES": "YES",
                     "GENERATE_INFOPLIST_FILE": "YES",
                 ])],
             buildPhases: [
@@ -3006,11 +3241,12 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testWorkspace)
 
         // If eager compilation is on, the tbd file is an output of the compilation requirements (module emission) step
-        await tester.checkBuild { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkTask(.matchRuleType("SwiftDriver Compilation Requirements")) { moduleTask in
                 moduleTask.checkOutputs([.pathPattern(.suffix("Core Swift Compilation Requirements Finished")),
                                          .pathPattern(.suffix("Swift-API.tbd")),
                                          .pathPattern(.suffix("Core.swiftmodule")),
+                                         .pathPattern(.suffix("Core-linker-args.resp")),
                                          .pathPattern(.suffix("Core.swiftsourceinfo")),
                                          .pathPattern(.suffix("Core.abi.json")),
                                          .pathPattern(.suffix("Core-Swift.h")),
@@ -3028,7 +3264,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         }
 
         // If eager compilation is off, everything is an output of CompileSwiftSources.
-        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_USE_INTEGRATED_DRIVER": "NO"])) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_USE_INTEGRATED_DRIVER": "NO","SWIFT_ENABLE_EXPLICIT_MODULES": "NO", "_EXPERIMENTAL_SWIFT_EXPLICIT_MODULES": "NO",]), runDestination: .macOS) { results in
             results.checkTask(.matchRuleType("CompileSwiftSources")) { moduleTask in
                 moduleTask.checkOutputs([.pathPattern(.suffix("foo.o")),
                                          .pathPattern(.suffix("foo.swiftconstvalues")),
@@ -3091,14 +3327,14 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             try fs.write(existingFile, contents: "# nothing")
 
             // Test with no SWIFT_ACCESS_NOTES_PATH
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: [:]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: [:]), runDestination: .macOS, fs: fs) { results in
                 results.checkTask(.matchRuleType("SwiftDriver Compilation")) { task in
                     task.checkCommandLineDoesNotContain("-access-notes-path")
                 }
             }
 
             // Test with SWIFT_ACCESS_NOTES_PATH pointing to missing file
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_ACCESS_NOTES_PATH": missingFile.str]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_ACCESS_NOTES_PATH": missingFile.str]), runDestination: .macOS, fs: fs) { results in
                 results.checkTask(.matchRuleType("SwiftDriver Compilation")) { task in
                     task.checkCommandLineDoesNotContain("-access-notes-path")
                     task.checkNoInputs(contain: [.path(missingFile.str)])
@@ -3106,7 +3342,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             }
 
             // Test with SWIFT_ACCESS_NOTES_PATH pointing to extant file
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_ACCESS_NOTES_PATH": existingFile.str]), fs: fs) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_ACCESS_NOTES_PATH": existingFile.str]), runDestination: .macOS, fs: fs) { results in
                 results.checkTask(.matchRuleType("SwiftDriver Compilation")) { task in
                     task.checkCommandLineContains(["-access-notes-path", existingFile.str])
                     task.checkInputs(contain: [.path(existingFile.str)])
@@ -3166,7 +3402,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 ])
 
             let tester = try await TaskConstructionTester(getCore(), testProject)
-            await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug")) { results in
+            await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug"), runDestination: .macOS) { results in
                 results.checkTarget("AppWithoutRegex") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
                         task.checkCommandLineDoesNotContain("-enable-bare-slash-regex")
@@ -3268,7 +3504,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 ])
 
             let tester = try await TaskConstructionTester(getCore(), testProject)
-            await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug")) { results in
+            await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug"), runDestination: .macOS) { results in
                 results.checkTarget("Default") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
                         task.checkCommandLineNoMatch([.prefix("-strict-concurrency")])
@@ -3295,7 +3531,95 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         }
     }
 
-    // Test frontend flag -library-level inferrence from the INSTALL_PATH.
+    @Test(.requireSDKs(.macOS))
+    func defaultIsolationFlag() async throws {
+        try await withTemporaryDirectory { tmpDir in
+            let srcRoot = tmpDir.join("srcroot")
+            let testProject = try await TestProject(
+                "ProjectName",
+                sourceRoot: srcRoot,
+                groupTree: TestGroup(
+                    "SomeFiles", path: "Sources",
+                    children: [
+                        TestFile("File1.swift"),
+                        TestFile("File2.swift"),
+                        TestFile("File3.swift"),
+                    ]),
+                targets: [
+                    TestStandardTarget(
+                        "Default",
+                        type: .framework,
+                        buildConfigurations: [
+                            TestBuildConfiguration("Debug", buildSettings: [
+                                "GENERATE_INFOPLIST_FILE": "YES",
+                                "PRODUCT_NAME": "$(TARGET_NAME)",
+                                "SWIFT_EXEC": swiftCompilerPath.str,
+                                "SWIFT_VERSION": "5.0",
+                            ]),
+                        ],
+                        buildPhases: [
+                            TestSourcesBuildPhase([
+                                TestBuildFile("File1.swift"),
+                            ]),
+                        ], dependencies: ["Nonisolated", "MainActor"]),
+                    TestStandardTarget(
+                        "Nonisolated",
+                        type: .framework,
+                        buildConfigurations: [
+                            TestBuildConfiguration("Debug", buildSettings: [
+                                "GENERATE_INFOPLIST_FILE": "YES",
+                                "PRODUCT_NAME": "$(TARGET_NAME)",
+                                "SWIFT_EXEC": swiftCompilerPath.str,
+                                "SWIFT_VERSION": "5.0",
+                                "SWIFT_DEFAULT_ACTOR_ISOLATION": "nonisolated",
+                            ]),
+                        ],
+                        buildPhases: [
+                            TestSourcesBuildPhase([
+                                TestBuildFile("File2.swift"),
+                            ]),
+                        ]),
+                    TestStandardTarget(
+                        "MainActor",
+                        type: .framework,
+                        buildConfigurations: [
+                            TestBuildConfiguration("Debug", buildSettings: [
+                                "GENERATE_INFOPLIST_FILE": "YES",
+                                "PRODUCT_NAME": "$(TARGET_NAME)",
+                                "SWIFT_EXEC": swiftCompilerPath.str,
+                                "SWIFT_VERSION": "5.0",
+                                "SWIFT_DEFAULT_ACTOR_ISOLATION": "MainActor",
+                            ]),
+                        ],
+                        buildPhases: [
+                            TestSourcesBuildPhase([
+                                TestBuildFile("File3.swift"),
+                            ]),
+                        ]),
+                ])
+
+            let tester = try await TaskConstructionTester(getCore(), testProject)
+            await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug"), runDestination: .macOS) { results in
+                results.checkTarget("Default") { target in
+                    results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
+                        task.checkCommandLineNoMatch([.prefix("-default-isolation")])
+                    }
+                }
+                results.checkTarget("Nonisolated") { target in
+                    results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
+                        task.checkCommandLineNoMatch([.prefix("-default-isolation")])
+                    }
+                }
+                results.checkTarget("MainActor") { target in
+                    results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
+                        task.checkCommandLineContains(["-default-isolation=MainActor"])
+                    }
+                }
+            }
+        }
+    }
+
+    // Test frontend flag -library-level inference from the INSTALL_PATH.
     @Test(.requireSDKs(.macOS))
     func libraryLevel() async throws {
         if try await !swiftFeatures.has(.libraryLevel) {
@@ -3422,7 +3746,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 ])
 
             let tester = try await TaskConstructionTester(getCore(), testProject)
-            await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug")) { results in
+            await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug"), runDestination: .macOS) { results in
                 results.checkTarget("TargetName") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation"), body: body)
                 }
@@ -3462,7 +3786,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 ])
 
             let tester = try await TaskConstructionTester(getCore(), testProject)
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_VALIDATE_CLANG_MODULES_ONCE_PER_BUILD_SESSION":"YES"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_VALIDATE_CLANG_MODULES_ONCE_PER_BUILD_SESSION":"YES"]), runDestination: .macOS) { results in
                 results.checkTarget("TargetName") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
                         task.checkCommandLineContains(["-validate-clang-modules-once", "-clang-build-session-file"])
@@ -3470,7 +3794,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 }
             }
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_VALIDATE_CLANG_MODULES_ONCE_PER_BUILD_SESSION":"NO"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_VALIDATE_CLANG_MODULES_ONCE_PER_BUILD_SESSION":"NO"]), runDestination: .macOS) { results in
                 results.checkTarget("TargetName") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
                         task.checkCommandLineDoesNotContain("-validate-clang-modules-once")
@@ -3513,7 +3837,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 ])
 
             let tester = try await TaskConstructionTester(getCore(), testProject)
-            await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+            await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkTarget("TargetName") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation Requirements")) { task in
                         task.checkOutputs(contain: [.namePattern(.suffix(".abi.json"))])
@@ -3522,7 +3846,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 }
             }
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_INSTALL_MODULE_ABI_DESCRIPTOR": "NO"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_INSTALL_MODULE_ABI_DESCRIPTOR": "NO"]), runDestination: .macOS) { results in
                 results.checkTarget("TargetName") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation Requirements")) { task in
                         task.checkNoOutputs(contain: [.namePattern(.suffix(".abi.json"))])
@@ -3565,7 +3889,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 ])
 
             let tester = try await TaskConstructionTester(getCore(), testProject)
-            await tester.checkBuild(BuildParameters(configuration: "Debug")) { results in
+            await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkTarget("TargetName") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
                         task.checkCommandLineContains(["-working-directory", srcRoot.str])
@@ -3574,7 +3898,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 }
             }
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["COMPILER_WORKING_DIRECTORY": "/foo/bar"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["COMPILER_WORKING_DIRECTORY": "/foo/bar"]), runDestination: .macOS) { results in
                 results.checkTarget("TargetName") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
                         task.checkCommandLineContains(["-working-directory", "/foo/bar"])
@@ -3620,7 +3944,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                     ])
 
                 let tester = try await TaskConstructionTester(getCore(), testProject)
-                await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug")) { results in
+                await tester.checkBuild(BuildParameters(action: .install, configuration: "Debug"), runDestination: .macOS) { results in
                     results.checkTarget("TargetName") { target in
                         results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation"), body: body)
                     }
@@ -3688,7 +4012,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
 
         try await withTemporaryDirectory { tmpDir in
             let tester = try await setupInteropTest(tmpDir, enableInterop: true)
-            await tester.checkBuild() { results in
+            await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkTask(.matchRuleType("SwiftDriver Compilation")) { task in
                     task.checkCommandLineContainsUninterrupted(["-Xcc", "-std=gnu++20"])
                 }
@@ -3699,7 +4023,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         // importer.
         try await withTemporaryDirectory { tmpDir in
             let tester = try await setupInteropTest(tmpDir, enableInterop: true, cxxLangStandard: "gnu++14")
-            await tester.checkBuild() { results in
+            await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkTask(.matchRuleType("SwiftDriver Compilation")) { task in
                     task.checkCommandLineNoMatch([.prefix("-std=")])
                 }
@@ -3710,7 +4034,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         // interoperability is disabled.
         try await withTemporaryDirectory { tmpDir in
             let tester = try await setupInteropTest(tmpDir, enableInterop: false)
-            await tester.checkBuild() { results in
+            await tester.checkBuild(runDestination: .macOS) { results in
                 results.checkTask(.matchRuleType("SwiftDriver Compilation")) { task in
                     task.checkCommandLineNoMatch([.prefix("-std=")])
                 }
@@ -3761,7 +4085,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
             ])
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
-        await tester.checkBuild { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkTarget("Framework") { target in
                 results.checkTask(.matchTarget(target), .matchRuleType("Ld")) { task in
@@ -3802,7 +4126,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 ])
 
             let tester = try await TaskConstructionTester(getCore(), testProject)
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_VERSION": "5.0"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_VERSION": "5.0"]), runDestination: .macOS) { results in
                 results.checkTarget("TargetName") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
                         task.checkCommandLineContains(["-enable-upcoming-feature", "ConciseMagicFile"])
@@ -3810,7 +4134,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 }
             }
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_VERSION": "6.0"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_VERSION": "6.0"]), runDestination: .macOS) { results in
                 results.checkTarget("TargetName") { target in
 
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
@@ -3852,7 +4176,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 ])
 
             let tester = try await TaskConstructionTester(getCore(), testProject)
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_ENABLE_LAYOUT_STRING_VALUE_WITNESSES": "NO"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_ENABLE_LAYOUT_STRING_VALUE_WITNESSES": "NO"]), runDestination: .macOS) { results in
                 results.checkTarget("TargetName") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
                         task.checkCommandLineDoesNotContain("LayoutStringValueWitnesses")
@@ -3863,7 +4187,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 }
             }
 
-            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_ENABLE_LAYOUT_STRING_VALUE_WITNESSES": "YES"])) { results in
+            await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_ENABLE_LAYOUT_STRING_VALUE_WITNESSES": "YES"]), runDestination: .macOS) { results in
                 results.checkTarget("TargetName") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
                         task.checkCommandLineContainsUninterrupted(["-enable-experimental-feature", "LayoutStringValueWitnesses"])
@@ -3876,7 +4200,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
         }
     }
     @Test(.requireSDKs(.host))
-    func nonConformantPathsCauseDiganostics() async throws {
+    func nonConformantPathsCauseDiagnostics() async throws {
         let destination: RunDestinationInfo = .host
         let testFilename = (destination == .windows) ? "main\t\n.swift": "main\u{0}.swift"
         let testProject = try await TestProject(
@@ -3911,7 +4235,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                     ])
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
-        await tester.checkBuild(BuildParameters(configuration: "Debug"), runDestination: .host) { results in
+        await tester.checkBuild(runDestination: .host) { results in
             results.checkError(.regex(#/Input .* is non-conformant to path conventions on this platform/#))
             results.checkError(.regex(#/Response file input .* is non-conformant to path conventions on this platform/#))
             results.checkNoDiagnostics()
@@ -3932,12 +4256,13 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         "TargetName",
-                        type: .framework,
+                        type: .dynamicLibrary,
                         buildConfigurations: [
                             TestBuildConfiguration("Debug", buildSettings: [
                                 "SWIFT_WARNINGS_AS_WARNINGS_GROUPS": "Unsafe DeprecatedDeclaration",
                                 "SWIFT_EXEC": swiftCompilerPath.str,
-                                "CODE_SIGN_IDENTITY": ""
+                                "SDKROOT": "$(HOST_PLATFORM)",
+                                "SUPPORTED_PLATFORMS": "$(HOST_PLATFORM)",
                             ]),
                         ],
                         buildPhases: [
@@ -3949,7 +4274,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
 
             let tester = try await TaskConstructionTester(getCore(), testProject)
 
-            try await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_VERSION": swiftVersion])) { results in
+            try await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_VERSION": swiftVersion]), runDestination: .host) { results in
                 results.checkTarget("TargetName") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
                         task.checkCommandLineContains([
@@ -3976,12 +4301,13 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         "TargetName",
-                        type: .framework,
+                        type: .dynamicLibrary,
                         buildConfigurations: [
                             TestBuildConfiguration("Debug", buildSettings: [
                                 "SWIFT_WARNINGS_AS_ERRORS_GROUPS": "UnknownWarningGroup PreconcurrencyImport",
                                 "SWIFT_EXEC": swiftCompilerPath.str,
-                                "CODE_SIGN_IDENTITY": ""
+                                "SDKROOT": "$(HOST_PLATFORM)",
+                                "SUPPORTED_PLATFORMS": "$(HOST_PLATFORM)",
                             ]),
                         ],
                         buildPhases: [
@@ -3993,7 +4319,7 @@ fileprivate struct SwiftTaskConstructionTests: CoreBasedTests {
 
             let tester = try await TaskConstructionTester(getCore(), testProject)
 
-            try await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_VERSION": swiftVersion])) { results in
+            try await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["SWIFT_VERSION": swiftVersion]), runDestination: .host) { results in
                 results.checkTarget("TargetName") { target in
                     results.checkTask(.matchTarget(target), .matchRuleType("SwiftDriver Compilation")) { task in
                         task.checkCommandLineContains([

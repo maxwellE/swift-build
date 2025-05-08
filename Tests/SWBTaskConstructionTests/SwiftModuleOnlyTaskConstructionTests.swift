@@ -632,7 +632,7 @@ fileprivate struct SwiftModuleOnlyTaskConstructionTests: CoreBasedTests {
                                       }
 
                                       // Check the dependency data.
-                                      #expect(task.dependencyData == .makefileIgnoringSubsequentOutputs(archBuildDir.join("\(tpc.targetName)\(platformSuffix)-master-emit-module.d")))
+                                      #expect(task.dependencyData == .makefileIgnoringSubsequentOutputs(archBuildDir.join("\(tpc.targetName)\(platformSuffix)-primary-emit-module.d")))
                                   }
     }
 
@@ -683,10 +683,11 @@ fileprivate struct SwiftModuleOnlyTaskConstructionTests: CoreBasedTests {
             let globalDict = try #require(dict[""])
 
             XCTAssertEqualPropertyListItems(globalDict, .plDict([
-                "swift-dependencies": .plString(archBuildDir.join("\(tpc.targetName)\(platformSuffix)-master.swiftdeps").str),
-                "diagnostics": .plString(archBuildDir.join("\(tpc.targetName)\(platformSuffix)-master.dia").str),
-                "emit-module-diagnostics": .plString(archBuildDir.join("\(tpc.targetName)\(platformSuffix)-master-emit-module.dia").str),
-                "emit-module-dependencies": .plString(archBuildDir.join("\(tpc.targetName)\(platformSuffix)-master-emit-module.d").str),
+                "swift-dependencies": .plString(archBuildDir.join("\(tpc.targetName)\(platformSuffix)-primary.swiftdeps").str),
+                "diagnostics": .plString(archBuildDir.join("\(tpc.targetName)\(platformSuffix)-primary.dia").str),
+                "emit-module-diagnostics": .plString(archBuildDir.join("\(tpc.targetName)\(platformSuffix)-primary-emit-module.dia").str),
+                "emit-module-dependencies": .plString(archBuildDir.join("\(tpc.targetName)\(platformSuffix)-primary-emit-module.d").str),
+                "pch": .plString(archBuildDir.join("\(tpc.targetName)\(platformSuffix)-primary-Bridging-header.pch").str),
             ]))
         }
 
@@ -700,7 +701,6 @@ fileprivate struct SwiftModuleOnlyTaskConstructionTests: CoreBasedTests {
             }
 
             #expect(fileDict["object"] == nil)
-            #expect(fileDict["llvm-bc"] == nil)
 
             #expect(fileDict.count == 4)
             #expect(fileDict["diagnostics"]?.stringValue == archBuildDir.join("\(basename)\(platformSuffix).dia").str)
@@ -747,11 +747,9 @@ fileprivate struct SwiftModuleOnlyTaskConstructionTests: CoreBasedTests {
         let tester = try await TaskConstructionTester(getCore(), testProject)
         let sourceRoot = tester.workspace.projects[0].sourceRoot
 
-        let buildParameters = BuildParameters(
-            configuration: tpc.buildConfiguration,
-            activeRunDestination: tpc.activeRunDestination)
+        let buildParameters = BuildParameters(configuration: tpc.buildConfiguration)
 
-        try await tester.checkBuild(buildParameters) { results in
+        try await tester.checkBuild(buildParameters, runDestination: tpc.activeRunDestination) { results in
             do {
                 // Match tasks we know we're not interested in.
                 results.consumeTasksMatchingRuleTypes([
@@ -845,11 +843,9 @@ fileprivate struct SwiftModuleOnlyTaskConstructionTests: CoreBasedTests {
         let infoLookup = try await getCore()
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
-        let buildParameters = BuildParameters(
-            configuration: tpc.buildConfiguration,
-            activeRunDestination: tpc.activeRunDestination)
+        let buildParameters = BuildParameters(configuration: tpc.buildConfiguration)
 
-        try await tester.checkBuild(buildParameters) { results in
+        try await tester.checkBuild(buildParameters, runDestination: tpc.activeRunDestination) { results in
             // Match tasks we know we're not interested in.
             results.consumeTasksMatchingRuleTypes([
                 "CompileSwift",
@@ -923,11 +919,9 @@ fileprivate struct SwiftModuleOnlyTaskConstructionTests: CoreBasedTests {
         let testProject = try await buildTestProject(testProjectConfig: tpc)
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
-        let buildParameters = BuildParameters(
-            configuration: tpc.buildConfiguration,
-            activeRunDestination: tpc.activeRunDestination)
+        let buildParameters = BuildParameters(configuration: tpc.buildConfiguration)
 
-        await tester.checkBuild(buildParameters) { results in
+        await tester.checkBuild(buildParameters, runDestination: tpc.activeRunDestination) { results in
             // Match tasks we know we're not interested in.
             results.consumeTasksMatchingRuleTypes([
                 "CompileSwift",

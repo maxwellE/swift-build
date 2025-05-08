@@ -15,6 +15,7 @@ import SWBTaskExecution
 import SWBUtil
 import Foundation
 private import SWBLLBuild
+import SWBTaskConstruction
 
 /// Convenience enum to encode whether a task is the beginning or end of a target, or something else.
 /// "End of a target" in this case is a task which tasks in other targets may be directly depending on, and so can mark the point at which we cross a target boundary.
@@ -502,8 +503,8 @@ struct DependencyCycleFormatter {
                             suffix = " because the scheme has implicit dependencies enabled and the Target '\(lastTargetsName)' references the file '\(filename)' in the build phase '\(buildPhase)'"
                         case let .implicitBuildSettingLinkage(settingName, options)?:
                             suffix = " because the scheme has implicit dependencies enabled and the Target '\(lastTargetsName)' defines the options '\(options.joined(separator: " "))' in the build setting '\(settingName)'"
-                        case let .impliedByTransitiveDependencyViaRemovedTargets(intermediateTargetName: intermdiateTargetName):
-                            suffix = " via its transitive dependency through '\(intermdiateTargetName)'"
+                        case let .impliedByTransitiveDependencyViaRemovedTargets(intermediateTargetName: intermediateTargetName):
+                            suffix = " via its transitive dependency through '\(intermediateTargetName)'"
                         case nil:
                             if !buildDescription.targetsBuildInParallel {
                                 suffix = " due to target order in a “Target Dependencies” build phase" + (buildRequest.schemeCommand != nil ? " or the scheme" : "")

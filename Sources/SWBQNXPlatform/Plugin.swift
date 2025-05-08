@@ -16,23 +16,37 @@ import SWBMacro
 import Foundation
 
 @PluginExtensionSystemActor public func initializePlugin(_ manager: PluginManager) {
+    let plugin = QNXPlugin()
     manager.register(QNXPlatformSpecsExtension(), type: SpecificationsExtensionPoint.self)
-    manager.register(QNXEnvironmentExtension(), type: EnvironmentExtensionPoint.self)
+    manager.register(QNXEnvironmentExtension(plugin: plugin), type: EnvironmentExtensionPoint.self)
     manager.register(QNXPlatformExtension(), type: PlatformInfoExtensionPoint.self)
-    manager.register(QNXSDKRegistryExtension(), type: SDKRegistryExtensionPoint.self)
-    manager.register(QNXToolchainRegistryExtension(), type: ToolchainRegistryExtensionPoint.self)
+    manager.register(QNXSDKRegistryExtension(plugin: plugin), type: SDKRegistryExtensionPoint.self)
+    manager.register(QNXToolchainRegistryExtension(plugin: plugin), type: ToolchainRegistryExtensionPoint.self)
+}
+
+final class QNXPlugin: Sendable {
+    private let qnxInstallations = AsyncCache<OperatingSystem, [QNXSDP]>()
+
+    func cachedQNXSDPInstallations(host: OperatingSystem) async throws -> [QNXSDP] {
+        try await qnxInstallations.value(forKey: host) {
+            // Always pass localFS because this will be cached, and executes a process on the host system so there's no reason to pass in any proxy.
+            try await QNXSDP.findInstallations(host: host, fs: localFS)
+        }
+    }
 }
 
 struct QNXPlatformSpecsExtension: SpecificationsExtension {
-    func specificationFiles() -> Bundle? {
-        .module
+    func specificationFiles(resourceSearchPaths: [Path]) -> Bundle? {
+        findResourceBundle(nameWhenInstalledInToolchain: "SwiftBuild_SWBQNXPlatform", resourceSearchPaths: resourceSearchPaths, defaultBundle: Bundle.module)
     }
 }
 
 struct QNXEnvironmentExtension: EnvironmentExtension {
-    func additionalEnvironmentVariables(fs: any FSProxy) async throws -> [String : String] {
-        if let latest = try await QNXSDP.findInstallations(fs: fs).first {
-            return latest.environment
+    let plugin: QNXPlugin
+
+    func additionalEnvironmentVariables(context: any EnvironmentExtensionAdditionalEnvironmentVariablesContext) async throws -> [String : String] {
+        if let latest = try await plugin.cachedQNXSDPInstallations(host: context.hostOperatingSystem).first {
+            return .init(latest.environment)
         }
         return [:]
     }
@@ -43,7 +57,7 @@ struct QNXPlatformExtension: PlatformInfoExtension {
         ["QNX_DEPLOYMENT_TARGET"]
     }
 
-    func additionalPlatforms() -> [(path: Path, data: [String: PropertyListItem])] {
+    func additionalPlatforms(context: any PlatformInfoExtensionAdditionalPlatformsContext) throws -> [(path: Path, data: [String: PropertyListItem])] {
         [
             (.root, [
                 "Type": .plString("Platform"),
@@ -59,12 +73,14 @@ struct QNXPlatformExtension: PlatformInfoExtension {
 }
 
 struct QNXSDKRegistryExtension: SDKRegistryExtension {
-    func additionalSDKs(platformRegistry: PlatformRegistry) async -> [(path: Path, platform: SWBCore.Platform?, data: [String : PropertyListItem])] {
-        guard let qnxPlatform = platformRegistry.lookup(name: "qnx") else {
+    let plugin: QNXPlugin
+
+    func additionalSDKs(context: any SDKRegistryExtensionAdditionalSDKsContext) async throws -> [(path: Path, platform: SWBCore.Platform?, data: [String : PropertyListItem])] {
+        guard let qnxPlatform = context.platformRegistry.lookup(name: "qnx") else {
             return []
         }
 
-        guard let qnxSdk = try? await QNXSDP.findInstallations(fs: localFS).first else {
+        guard let qnxSdk = try? await plugin.cachedQNXSDPInstallations(host: context.hostOperatingSystem).first else {
             return []
         }
 
@@ -123,11 +139,28 @@ struct QNXSDKRegistryExtension: SDKRegistryExtension {
 }
 
 struct QNXToolchainRegistryExtension: ToolchainRegistryExtension {
-    func additionalToolchains(fs: any FSProxy) async -> [Toolchain] {
-        guard let toolchainPath = try? await QNXSDP.findInstallations(fs: fs).first?.hostPath else {
+    let plugin: QNXPlugin
+
+    func additionalToolchains(context: any ToolchainRegistryExtensionAdditionalToolchainsContext) async throws -> [Toolchain] {
+        guard let toolchainPath = try? await plugin.cachedQNXSDPInstallations(host: context.hostOperatingSystem).first?.hostPath else {
             return []
         }
 
-        return [Toolchain("qnx", "QNX", Version(0, 0, 0), [], toolchainPath, [], [], [:], [:], [:], executableSearchPaths: [toolchainPath.join("usr").join("bin")], fs: fs)]
+        return [
+            Toolchain(
+                identifier: "qnx",
+                displayName: "QNX",
+                version: Version(0, 0, 0),
+                aliases: [],
+                path: toolchainPath,
+                frameworkPaths: [],
+                libraryPaths: [],
+                defaultSettings: [:],
+                overrideSettings: [:],
+                defaultSettingsWhenPrimary: [:],
+                executableSearchPaths: [toolchainPath.join("usr").join("bin")],
+                testingLibraryPlatformNames: [],
+                fs: context.fs)
+        ]
     }
 }

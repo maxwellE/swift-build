@@ -62,8 +62,10 @@ extension ProcessInfo {
         var capacity = UNLEN + 1
         let pointer = UnsafeMutablePointer<CInterop.PlatformChar>.allocate(capacity: Int(capacity))
         defer { pointer.deallocate() }
-        GetUserNameW(pointer, &capacity)
-        return String(platformString: pointer)
+        if GetUserNameW(pointer, &capacity) {
+            return String(platformString: pointer)
+        }
+        return ""
         #else
         let uid = geteuid().orIfZero(getuid())
         return (getpwuid(uid)?.pointee.pw_name).map { String(cString: $0) } ?? String(uid)
@@ -108,6 +110,8 @@ extension ProcessInfo {
                 return .tvOS(simulator: simulatorRoot != nil)
             case "Watch OS":
                 return .watchOS(simulator: simulatorRoot != nil)
+            case "xrOS":
+                return .visionOS(simulator: simulatorRoot != nil)
             default:
                 break
             }
@@ -198,6 +202,15 @@ extension ImageFormat {
             return true
         case .pe:
             return false
+        }
+    }
+
+    public var requiresSwiftModulewrap: Bool {
+        switch self {
+        case .macho:
+            return false
+        default:
+            return true
         }
     }
 }

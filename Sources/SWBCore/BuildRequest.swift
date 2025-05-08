@@ -248,6 +248,15 @@ public final class BuildRequest: CustomStringConvertible, Sendable {
         return parameters.action == .indexBuild
     }
 
+    /// Whether or not this request is for building the index workspace description (as opposed to the target or
+    /// package description).
+    ///
+    /// Note that this is only valid when *building* the description, subsequent requests that use it will have a run
+    /// destination set (and thus return false).
+    public var buildsIndexWorkspaceDescription: Bool {
+        return enableIndexBuildArena && parameters.activeRunDestination == nil
+    }
+
     /// The quality-of-service to use for this request.
     public let qos: SWBQoS
 
@@ -323,7 +332,7 @@ extension BuildRequest {
         case .buildRequest:
             dependencyScope = .buildRequest
         }
-        try self.init(parameters: parameters, buildTargets: payload.configuredTargets.map{ try BuildRequest.BuildTargetInfo(from: $0, defaultParameters: parameters, workspace: workspace) }, dependencyScope: dependencyScope, continueBuildingAfterErrors: payload.continueBuildingAfterErrors, hideShellScriptEnvironment: payload.hideShellScriptEnvironment, useParallelTargets: payload.useParallelTargets, useImplicitDependencies: payload.useImplicitDependencies, useDryRun: payload.useDryRun, showNonLoggedProgress: payload.showNonLoggedProgress, recordBuildBacktraces: payload.recordBuildBacktraces, generatePrecompiledModulesReport: payload.generatePrecompiledModulesReport, buildDescriptionID: payload.buildDescriptionID.map(BuildDescriptionID.init), qos: qos, buildPlanDiagnosticsDirPath: payload.buildPlanDiagnosticsDirPath, buildCommand: buildCommand, schemeCommand: payload.schemeCommand?.coreRepresentation, containerPath: payload.containerPath, jsonRepresentation: payload.jsonRepresentation)
+        try self.init(parameters: parameters, buildTargets: payload.configuredTargets.map{ try BuildRequest.BuildTargetInfo(from: $0, defaultParameters: parameters, workspace: workspace) }, dependencyScope: dependencyScope, continueBuildingAfterErrors: payload.continueBuildingAfterErrors, hideShellScriptEnvironment: payload.hideShellScriptEnvironment, useParallelTargets: payload.useParallelTargets, useImplicitDependencies: payload.useImplicitDependencies, useDryRun: payload.useDryRun, enableStaleFileRemoval: nil, showNonLoggedProgress: payload.showNonLoggedProgress, recordBuildBacktraces: payload.recordBuildBacktraces, generatePrecompiledModulesReport: payload.generatePrecompiledModulesReport, buildDescriptionID: payload.buildDescriptionID.map(BuildDescriptionID.init), qos: qos, buildPlanDiagnosticsDirPath: payload.buildPlanDiagnosticsDirPath, buildCommand: buildCommand, schemeCommand: payload.schemeCommand?.coreRepresentation, containerPath: payload.containerPath, jsonRepresentation: payload.jsonRepresentation)
     }
 
     /// Whether the build request _explicitly_ contains the specified `target`.

@@ -18,6 +18,7 @@ import SWBCore
 import SWBUtil
 
 import SWBTaskConstruction
+import SWBProtocol
 
 @Suite
 fileprivate struct GenerateAppPlaygroundAssetCatalogTaskConstructionTests: CoreBasedTests {
@@ -43,6 +44,7 @@ fileprivate struct GenerateAppPlaygroundAssetCatalogTaskConstructionTests: CoreB
             targets: [
                 TestStandardTarget(
                     "Foo",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug", buildSettings: [:]),
                     ],
@@ -55,7 +57,7 @@ fileprivate struct GenerateAppPlaygroundAssetCatalogTaskConstructionTests: CoreB
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .macOS)) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkNoTask(.matchTargetName("Foo"), .matchRuleType("GenerateAppPlaygroundAssetCatalog"))
             results.checkNoTask(.matchTargetName("Foo"), .matchRuleType("CompileAssetCatalog"))
@@ -85,6 +87,7 @@ fileprivate struct GenerateAppPlaygroundAssetCatalogTaskConstructionTests: CoreB
             targets: [
                 TestStandardTarget(
                     "Foo",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug", buildSettings: [:]),
                     ],
@@ -97,7 +100,7 @@ fileprivate struct GenerateAppPlaygroundAssetCatalogTaskConstructionTests: CoreB
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .macOS)) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkNoTask(.matchTargetName("Foo"), .matchRuleType("GenerateAppPlaygroundAssetCatalog"))
             results.checkNoTask(.matchTargetName("Foo"), .matchRuleType("CompileAssetCatalog"))
@@ -132,6 +135,7 @@ fileprivate struct GenerateAppPlaygroundAssetCatalogTaskConstructionTests: CoreB
             targets: [
                 TestStandardTarget(
                     "Foo",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug", buildSettings: [:]),
                     ],
@@ -144,7 +148,7 @@ fileprivate struct GenerateAppPlaygroundAssetCatalogTaskConstructionTests: CoreB
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .macOS)) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkTask(.matchTargetName("Foo"), .matchRuleType("GenerateAppPlaygroundAssetCatalog")) { task in
                 task.checkNoInputs(contain: [.pathPattern(.suffix(".xcassets"))])
@@ -191,6 +195,7 @@ fileprivate struct GenerateAppPlaygroundAssetCatalogTaskConstructionTests: CoreB
             targets: [
                 TestStandardTarget(
                     "Foo",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug", buildSettings: [:]),
                     ],
@@ -204,7 +209,7 @@ fileprivate struct GenerateAppPlaygroundAssetCatalogTaskConstructionTests: CoreB
 
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .macOS)) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkTask(.matchTargetName("Foo"), .matchRuleType("GenerateAppPlaygroundAssetCatalog")) { task in
                 task.checkInputs(contain: [.pathPattern(.suffix("Assets.xcassets"))])

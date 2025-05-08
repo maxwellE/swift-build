@@ -41,6 +41,7 @@ import Foundation
                     TestFile("libFoo.dylib"),
                     TestFile("libBar.a"),
                     TestFile("libBaz.a"),
+                    TestFile("libQux.tbd"),
                 ]),
             buildConfigurations: [
                 TestBuildConfiguration(
@@ -124,6 +125,7 @@ import Foundation
                         TestFrameworksBuildPhase([
                             "Foundation.framework",
                             "libBar.a",
+                            "libQux.tbd",
                         ])
                     ]
                 ),
@@ -221,6 +223,10 @@ import Foundation
                     #expect(input.inputType == .library)
                     #expect(input.linkType == .searchPath)
                 }
+                results.checkTargetInputName(target, .name("libQux.tbd")) { input in
+                    #expect(input.inputType == .library)
+                    #expect(input.linkType == .searchPath)
+                }
                 results.checkNoMoreTargetInputs(target)
 
                 results.checkTargetOutputPath(target, "/usr/local/lib/libDylibTarget.dylib")
@@ -307,6 +313,7 @@ import Foundation
                                     "-merge_framework MergeFwk",
                                     "-no_merge_framework NoMergeFwk",
                                     "-lazy_framework LazyFwk",
+                                    "-upward_framework UpwardFwk",
 
                                     // Apparently both of these uses of -Xlinker are valid
                                     "-Xlinker -reexport_framework -Xlinker XlinkXlinkFwk",
@@ -322,9 +329,12 @@ import Foundation
                                     "-merge-lMergeLib",
                                     "-no_merge-lNoMergeLib",
                                     "-lazy-lLazyLib",
+                                    "-upward-lUpwardLib",
 
                                     "-Xlinker -reexport-lXlinkerLib",
                                     "-Wl,-reexport-lQuoteLib",
+
+                                    // TODO: we should support positional arguments as well but that requires a complete understanding of all possible linker args, will come back to this
                                 ].joined(separator: " ")
                             ]),
                     ],
@@ -389,6 +399,15 @@ import Foundation
                     }
                 }
 
+                // Check upward framework
+                for fwkStem in ["UpwardFwk"] {
+                    results.checkTargetInputName(target, .stem(fwkStem)) { input in
+                        #expect(input.inputType == .framework)
+                        #expect(input.linkType == .searchPath)
+                        #expect(input.libraryType == .upward)
+                    }
+                }
+
                 // Check library linkage
                 for fwkStem in ["Lib", "WeakLib", "ReexportLib", "MergeLib", "NoMergeLib", "LazyLib"] {
                     results.checkTargetInputName(target, .stem(fwkStem)) { input in
@@ -402,6 +421,15 @@ import Foundation
                     results.checkTargetInputName(target, .stem(fwkStem)) { input in
                         #expect(input.inputType == .library)
                         #expect(input.linkType == .searchPath)
+                    }
+                }
+
+                // Check upward library
+                for fwkStem in ["UpwardLib"] {
+                    results.checkTargetInputName(target, .stem(fwkStem)) { input in
+                        #expect(input.inputType == .library)
+                        #expect(input.linkType == .searchPath)
+                        #expect(input.libraryType == .upward)
                     }
                 }
 

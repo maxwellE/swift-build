@@ -10,7 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#if canImport(CoreFoundation)
+#if canImport(Darwin)
 import class CoreFoundation.CFBoolean
 import func CoreFoundation.CFBooleanGetTypeID
 import func CoreFoundation.CFBooleanGetValue
@@ -68,7 +68,7 @@ extension PropertyListConversionError: CustomStringConvertible {
 }
 
 public struct OpaquePropertyListItem: Equatable, Hashable, @unchecked Sendable {
-#if canImport(CoreFoundation)
+#if canImport(Darwin)
     fileprivate var wrappedValue: CFTypeRef
 
     fileprivate init(_ wrappedValue: CFTypeRef) {
@@ -639,7 +639,7 @@ extension PropertyListItem: Equatable {
 
 private func convertToPropertyListItem(_ item: Any) -> PropertyListItem {
     switch(item) {
-#if canImport(CoreFoundation)
+#if canImport(Darwin)
     case let asBool as CFBoolean where CFGetTypeID(asBool) == CFBooleanGetTypeID():
         return .plBool(CFBooleanGetValue(asBool))
 
@@ -658,7 +658,12 @@ private func convertToPropertyListItem(_ item: Any) -> PropertyListItem {
         // Expected these to fall into the NSNumber/CFNumber case (except on non-Darwin), but leaving this here in case that implicit conversion changes unexpectedly.
         return .plDouble(asDouble)
 
-    case let asString as String:
+    case var asString as String:
+        // It is likely that property list decoding has produced a string that
+        // is not contiguous UTF-8. While this doesn't break anything, it is a
+        // performance footgun for most clients. Eagerly convert it to a native
+        // representation to ensure they hit the String fast paths.
+        asString.makeContiguousUTF8()
         return .plString(asString)
 
     case let asData as Data:
@@ -678,7 +683,7 @@ private func convertToPropertyListItem(_ item: Any) -> PropertyListItem {
         }
         return .plDict(result)
 
-#if canImport(CoreFoundation)
+#if canImport(Darwin)
     case let asCFType as CFTypeRef:
         return .plOpaque(.init(asCFType))
 #else
@@ -925,7 +930,7 @@ extension PropertyListSerialization {
 
         /// This is a shim NSDictionary implementation which we use to vend a stable (sorted key order) view of an underlying dictionary.
         ///
-        /// This is *NOT* intended to be a general purpose NSDictionary subclass, it is only intended to be used with property list serialiation.
+        /// This is *NOT* intended to be a general purpose NSDictionary subclass, it is only intended to be used with property list serialization.
         final class SWBStablePropertyListDictionary: NSDictionary {
             private var dictionary = NSDictionary()
             private var orderedKeys = NSArray()

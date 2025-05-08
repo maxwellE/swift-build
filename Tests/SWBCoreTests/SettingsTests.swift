@@ -90,7 +90,7 @@ import SWBMacro
         #expect(settings.tableForTesting.lookupMacro(BuiltinMacros.OutputPath) === nil)
 
         // Verify that the computed path defaults were added.
-        #expect(settings.tableForTesting.lookupMacro(BuiltinMacros.DEVELOPER_DIR)?.expression.stringRep == core.developerPath.str)
+        #expect(settings.tableForTesting.lookupMacro(BuiltinMacros.DEVELOPER_DIR)?.expression.stringRep == core.developerPath.path.str)
         #expect(settings.tableForTesting.lookupMacro(BuiltinMacros.AVAILABLE_PLATFORMS)?.expression.stringRep.contains("macosx") == true)
 
         // Verify that the CACHE_ROOT was added.
@@ -252,6 +252,7 @@ import SWBMacro
                                                                             ])],
                                                                          targets: [
                                                                             TestStandardTarget("Target1",
+                                                                                               type: .application,
                                                                                                buildConfigurations: [
                                                                                                 TestBuildConfiguration("Config1", buildSettings: [
                                                                                                     "BUILD_VARIANTS": "normal other",
@@ -262,16 +263,14 @@ import SWBMacro
                                                                                                     "USER_TARGET_SETTING": "USER_TARGET_VALUE"])],
                                                                                                buildPhases: [TestSourcesBuildPhase(["Mock.cpp"])])])]).load(core)
             let context = try await contextForTestData(testWorkspace,
-                                                       environment: [
-                                                        "ENABLE_BITCODE": "YES",
-                                                       ],
-                                                       files: [
-                                                        core.loadSDK(.macOS).path.join("Cocoa.pch"): "",
-                                                        core.loadSDK(.macOS).path.join("System/Library/Frameworks/mock.txt"): "",
-                                                        core.loadSDK(.macOS).path.join("usr/include/mock.txt"): "",
-                                                        additionalSDKPath.join("Applications/Xcode.app/mock.txt"): "",
-                                                        additionalSDKPath.join("usr/mock.txt"): "",
-                                                       ])
+                files: [
+                    core.loadSDK(.macOS).path.join("Cocoa.pch"): "",
+                    core.loadSDK(.macOS).path.join("System/Library/Frameworks/mock.txt"): "",
+                    core.loadSDK(.macOS).path.join("usr/include/mock.txt"): "",
+                    additionalSDKPath.join("Applications/Xcode.app/mock.txt"): "",
+                    additionalSDKPath.join("usr/mock.txt"): "",
+                ]
+            )
             let buildRequestContext = BuildRequestContext(workspaceContext: context)
             let testProject = context.workspace.projects[0]
             let testTarget = testProject.targets[0]
@@ -433,6 +432,7 @@ import SWBMacro
                                                                      groupTree: TestGroup("SomeFiles", children: [TestFile("Mock.cpp")]),
                                                                      targets: [
                                                                         TestStandardTarget("Target1",
+                                                                                           type: .application,
                                                                                            buildConfigurations: [
                                                                                             TestBuildConfiguration("Debug",
                                                                                                                    buildSettings: [
@@ -479,6 +479,7 @@ import SWBMacro
                                                                            groupTree: TestGroup("SomeFiles", children: [TestFile("Mock.cpp")]),
                                                                            targets: [
                                                                             TestStandardTarget("Target1",
+                                                                                               type: .application,
                                                                                                buildConfigurations: [
                                                                                                 TestBuildConfiguration("Debug",
                                                                                                                        buildSettings: [
@@ -509,6 +510,7 @@ import SWBMacro
                                                                      ]),
                                                                      targets: [
                                                                         TestStandardTarget("macOSTarget",
+                                                                                           type: .application,
                                                                                            buildConfigurations: [
                                                                                             TestBuildConfiguration("Debug",
                                                                                                                    buildSettings: [
@@ -518,6 +520,7 @@ import SWBMacro
                                                                                                                    ])],
                                                                                            buildPhases: [TestSourcesBuildPhase(["Mock.cpp"])]),
                                                                         TestStandardTarget("iOSTarget",
+                                                                                           type: .application,
                                                                                            buildConfigurations: [
                                                                                             TestBuildConfiguration("Debug",
                                                                                                                    buildSettings: [
@@ -586,14 +589,14 @@ import SWBMacro
         // Aggregate targets' settings are substantially similar to standard targets, but it is common for certain values to not be defined for aggregate targets.
         #expect(settings.tableForTesting.lookupMacro(BuiltinMacros.TARGET_NAME)?.expression.stringRep == "AggregateTarget1")
 
-        #expect(settings.tableForTesting.lookupMacro(BuiltinMacros.SDKROOT)?.expression.stringRep.hasPrefix(try context.fs.realpath(core.developerPath).str) == true)
+        #expect(settings.tableForTesting.lookupMacro(BuiltinMacros.SDKROOT)?.expression.stringRep.hasPrefix(try context.fs.realpath(core.developerPath.path).str) == true)
 
         #expect(settings.tableForTesting.lookupMacro(BuiltinMacros.TARGET_BUILD_DIR)?.expression.stringRep == "$(UNINSTALLED_PRODUCTS_DIR)$(TARGET_BUILD_SUBPATH)")
         // Subsequent definitions will have overwritten the previous definition.
         #expect(settings.tableForTesting.lookupMacro(BuiltinMacros.TARGET_BUILD_DIR)?.next?.next?.expression.stringRep == "$(CONFIGURATION_BUILD_DIR)$(TARGET_BUILD_SUBPATH)")
         #expect(settings.tableForTesting.lookupMacro(BuiltinMacros.CONFIGURATION_TEMP_DIR)?.next?.next?.expression.stringRep == nil)
 
-        // This setting is always overriden by the project defaults.
+        // This setting is always overridden by the project defaults.
         #expect(settings.tableForTesting.lookupMacro(BuiltinMacros.CONFIGURATION_BUILD_DIR)?.next?.next?.expression.stringRep == nil)
 
         // Check that the correct build system defaults are exported (should be the native ones).
@@ -626,17 +629,17 @@ import SWBMacro
         }
 
         // Check we can find clang in the toolchain.
-        #expect(settings.executableSearchPaths.lookup(Path("clang")) == core.developerPath.join("Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"))
+        #expect(settings.executableSearchPaths.lookup(Path("clang")) == core.developerPath.path.join("Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"))
 
         // Check that we find ibtool outside the toolchain.
-        #expect(settings.executableSearchPaths.lookup(Path("ibtool")) == core.developerPath.join("usr/bin/ibtool"))
+        #expect(settings.executableSearchPaths.lookup(Path("ibtool")) == core.developerPath.path.join("usr/bin/ibtool"))
 
         // Check the paths directly.
         let paths = settings.executableSearchPaths.paths
-        let toolchainPathIndex = paths.firstIndex(of: core.developerPath.join("Toolchains/XcodeDefault.xctoolchain/usr/bin")) ?? Int.max
-        let platformPathIndex = paths.firstIndex(of: core.developerPath.join("Platforms/MacOSX.platform/usr/bin")) ?? Int.max
-        let developerLocalBinIndex = paths.firstIndex(of: core.developerPath.join("usr/local/bin")) ?? Int.max
-        let developerBinIndex = paths.firstIndex(of: core.developerPath.join("usr/bin")) ?? Int.max
+        let toolchainPathIndex = paths.firstIndex(of: core.developerPath.path.join("Toolchains/XcodeDefault.xctoolchain/usr/bin")) ?? Int.max
+        let platformPathIndex = paths.firstIndex(of: core.developerPath.path.join("Platforms/MacOSX.platform/usr/bin")) ?? Int.max
+        let developerLocalBinIndex = paths.firstIndex(of: core.developerPath.path.join("usr/local/bin")) ?? Int.max
+        let developerBinIndex = paths.firstIndex(of: core.developerPath.path.join("usr/bin")) ?? Int.max
         #expect(toolchainPathIndex < platformPathIndex)
         #expect(platformPathIndex < developerBinIndex)
         #expect(developerBinIndex < developerLocalBinIndex)
@@ -698,7 +701,7 @@ import SWBMacro
         }
     }
 
-    @Test(.skipHostOS(.windows, "Path handling needs work for windows"))
+    @Test
     func settingsOverridesDevelopmentAssets() async throws {
         func test(buildSettings: [String: String], action: BuildAction = .install, overrides: [String: String] = [:], extraFiles: [Path: String] = [:], configuration: String = "Debug", baseConfig: String? = nil, expectedExcludedFileNames: [String] = [], sourceLocation: SourceLocation = #_sourceLocation) async throws {
             let testWorkspace = try await TestWorkspace("Workspace", projects: [
@@ -727,25 +730,25 @@ import SWBMacro
             #expect(settings.errors.isEmpty, "Expect to not produce any errors", sourceLocation: sourceLocation)
 
             let scope = settings.globalScope
-            #expect(scope.evaluate(BuiltinMacros.EXCLUDED_SOURCE_FILE_NAMES) == expectedExcludedFileNames)
+            #expect(scope.evaluate(BuiltinMacros.EXCLUDED_SOURCE_FILE_NAMES) == expectedExcludedFileNames,  sourceLocation: sourceLocation)
         }
 
         // Specifying DEVELOPMENT_ASSET_PATHS and EXCLUDED_SOURCE_FILE_NAMES should merge them
         try await test(buildSettings: ["DEVELOPMENT_ASSET_PATHS": "'AppTarget/Preview Resources'",
                                        "EXCLUDED_SOURCE_FILE_NAMES": "$(inherited) docs/*"],
-                       expectedExcludedFileNames: ["docs/*", "/tmp/Workspace/aProject/AppTarget/Preview Resources/*"])
+                       expectedExcludedFileNames: ["docs/*", Path.root.join("tmp/Workspace/aProject/AppTarget/Preview Resources/*").str])
 
         // Specifying DEVELOPMENT_ASSET_PATHS which are absolute should work as well
-        try await test(buildSettings: ["DEVELOPMENT_ASSET_PATHS": "'/tmp/Workspace/aProject/AppTarget/Preview Resources'",
+        try await test(buildSettings: ["DEVELOPMENT_ASSET_PATHS": "'\(Path.root.join("tmp/Workspace/aProject/AppTarget/Preview Resources").strWithPosixSlashes)'",
                                        "EXCLUDED_SOURCE_FILE_NAMES": "$(inherited) docs/*"],
-                       expectedExcludedFileNames: ["docs/*", "/tmp/Workspace/aProject/AppTarget/Preview Resources/*"])
+                       expectedExcludedFileNames: ["docs/*", Path.root.join("tmp/Workspace/aProject/AppTarget/Preview Resources/*").str])
 
         // Specifying DEVELOPMENT_ASSET_PATHS which are absolute that are not part of SRCROOT should work as well
-        try await test(buildSettings: ["DEVELOPMENT_ASSET_PATHS": "'/tmp/Workspace/bProject/AppTarget/Preview Resources'",
+        try await test(buildSettings: ["DEVELOPMENT_ASSET_PATHS": "'\(Path.root.join("tmp/Workspace/bProject/AppTarget/Preview Resources").strWithPosixSlashes)'",
                                        "EXCLUDED_SOURCE_FILE_NAMES": "$(inherited) docs/*"],
                        // the directory needs to exist (for /* at the end), so we write a mock file here
                        extraFiles: [.root.join("tmp/Workspace/bProject/AppTarget/Preview Resources/afile.txt"): ""],
-                       expectedExcludedFileNames: ["docs/*", "/tmp/Workspace/bProject/AppTarget/Preview Resources/*"])
+                       expectedExcludedFileNames: ["docs/*", Path.root.join("tmp/Workspace/bProject/AppTarget/Preview Resources/*").str])
 
         // Not specifying DEVELOPMENT_ASSET_PATHS should not affect EXCLUDED_SOURCE_FILE_NAMES
         try await test(buildSettings: ["EXCLUDED_SOURCE_FILE_NAMES": "$(inherited) docs/*"],
@@ -753,19 +756,19 @@ import SWBMacro
 
         // Not specifying EXCLUDED_SOURCE_FILE_NAMES but DEVELOPMENT_ASSET_PATHS should create a list with DEVELOPMENT_ASSET_PATHS' contents
         try await test(buildSettings: ["DEVELOPMENT_ASSET_PATHS": "'AppTarget/Preview Resources'"],
-                       expectedExcludedFileNames: ["/tmp/Workspace/aProject/AppTarget/Preview Resources/*"])
+                       expectedExcludedFileNames: [Path.root.join("tmp/Workspace/aProject/AppTarget/Preview Resources/*").str])
 
         // If the specified directory does not exist, we expect to not receive an error during Settings creation
         // Since the directory does not exist, it gets added as a file (without '*')
         try await test(buildSettings: ["DEVELOPMENT_ASSET_PATHS": "'AppTarget/Does Not Exist'"],
-                       expectedExcludedFileNames: ["/tmp/Workspace/aProject/AppTarget/Does Not Exist"])
+                       expectedExcludedFileNames: [Path.root.join("tmp/Workspace/aProject/AppTarget/Does Not Exist").str])
 
         // If the build action is install, development resources should be excluded
         for action in [BuildAction.install, .installAPI, .installHeaders, .installLoc, .installSource, .archive] {
             try await test(buildSettings: ["DEVELOPMENT_ASSET_PATHS": "'AppTarget/Preview Resources'",
                                            "EXCLUDED_SOURCE_FILE_NAMES": "$(inherited) docs/*"],
                            action: action,
-                           expectedExcludedFileNames: ["docs/*", "/tmp/Workspace/aProject/AppTarget/Preview Resources/*"])
+                           expectedExcludedFileNames: ["docs/*", Path.root.join("tmp/Workspace/aProject/AppTarget/Preview Resources/*").str])
         }
 
         // If the build action is anything else but install (and DEPLOYMENT_POSTPROCESSING is not specified), we don't exclude
@@ -787,10 +790,10 @@ import SWBMacro
                                            "EXCLUDED_SOURCE_FILE_NAMES": "$(inherited) docs/*"],
                            action: action,
                            overrides: ["DEPLOYMENT_POSTPROCESSING": "YES"],
-                           expectedExcludedFileNames: ["docs/*", "/tmp/Workspace/aProject/AppTarget/Preview Resources/*"])
+                           expectedExcludedFileNames: ["docs/*", Path.root.join("tmp/Workspace/aProject/AppTarget/Preview Resources/*").str])
         }
 
-        // However, if DEPLOYMENT_LOCATION is explicitely set to NO, development assets should not be excluded
+        // However, if DEPLOYMENT_LOCATION is explicitly set to NO, development assets should not be excluded
         for action in [BuildAction.analyze, .clean, .build] {
             try await test(buildSettings: ["DEVELOPMENT_ASSET_PATHS": "'AppTarget/Preview Resources'",
                                            "EXCLUDED_SOURCE_FILE_NAMES": "$(inherited) docs/*"],
@@ -802,7 +805,7 @@ import SWBMacro
         // Exclude directories and files
         try await test(buildSettings: ["DEVELOPMENT_ASSET_PATHS": "'AppTarget/Preview Resources' 'AppTarget/DevelopmentResourceFile.txt'",
                                        "EXCLUDED_SOURCE_FILE_NAMES": "$(inherited) docs/*"],
-                       expectedExcludedFileNames: ["docs/*", "/tmp/Workspace/aProject/AppTarget/Preview Resources/*", "/tmp/Workspace/aProject/AppTarget/DevelopmentResourceFile.txt"])
+                       expectedExcludedFileNames: ["docs/*", Path.root.join("tmp/Workspace/aProject/AppTarget/Preview Resources/*").str, Path.root.join("tmp/Workspace/aProject/AppTarget/DevelopmentResourceFile.txt").str])
 
         let baseConfigFiles: [Path: String] = [
             .root.join("tmp/Workspace/aProject/Test.xcconfig"): "EXCLUDED_SOURCE_FILE_NAMES[config=Debug] = 'debug/files/*'"
@@ -814,7 +817,7 @@ import SWBMacro
                        extraFiles: baseConfigFiles,
                        configuration: "Debug",
                        baseConfig: "Test.xcconfig",
-                       expectedExcludedFileNames: ["debug/files/*", "/tmp/Workspace/aProject/AppTarget/Preview Resources/*"])
+                       expectedExcludedFileNames: ["debug/files/*", Path.root.join("tmp/Workspace/aProject/AppTarget/Preview Resources/*").str])
 
         // If the condition set states debug, but we build release, we should only have dev assets in the value
         try await test(buildSettings: ["DEVELOPMENT_ASSET_PATHS": "'AppTarget/Preview Resources'"],
@@ -822,7 +825,7 @@ import SWBMacro
                        extraFiles: baseConfigFiles,
                        configuration: "Release",
                        baseConfig: "Test.xcconfig",
-                       expectedExcludedFileNames: ["/tmp/Workspace/aProject/AppTarget/Preview Resources/*"])
+                       expectedExcludedFileNames: [Path.root.join("tmp/Workspace/aProject/AppTarget/Preview Resources/*").str])
     }
 
     @Test
@@ -950,6 +953,7 @@ import SWBMacro
                                                                  ],
                                                                  targets: [
                                                                     TestStandardTarget("Target1",
+                                                                                       type: .application,
                                                                                        buildConfigurations: [
                                                                                         TestBuildConfiguration("Debug", buildSettings: [:]
                                                                                                               )],
@@ -1090,7 +1094,7 @@ import SWBMacro
         let arch32 = try #require(Architecture.host.as32bit.stringValue)
         let arch64 = try #require(Architecture.host.as64bit.stringValue)
 
-        let destinations: [RunDestinationInfo] = [.macOS, .macCatalyst, .iOS, .iOSSimulator, .tvOS, .tvOSSimulator, .watchOS, .watchOSSimulator, .linux].filter { core.sdkRegistry.lookup($0.sdk) != nil }
+        let destinations: [RunDestinationInfo] = [.macOS, .macCatalyst, .iOS, .iOSSimulator, .tvOS, .tvOSSimulator, .watchOS, .watchOSSimulator, .xrOS, .xrOSSimulator, .linux].filter { core.sdkRegistry.lookup($0.sdk) != nil }
 
         for destination in destinations {
             let parameters = BuildParameters(action: .build, configuration: "Debug", activeRunDestination: destination, overrides: ["SDKROOT": destination.sdk, "SDK_VARIANT": destination.sdkVariant ?? ""])
@@ -1140,7 +1144,7 @@ import SWBMacro
         let project = context.workspace.projects[0]
         let target = project.targets[0]
 
-        let destinations: [RunDestinationInfo] = [.macOS, .macCatalyst, .iOS, .iOSSimulator, .tvOS, .tvOSSimulator, .watchOS, .watchOSSimulator, .driverKit, .linux].filter { core.sdkRegistry.lookup($0.sdk) != nil }
+        let destinations: [RunDestinationInfo] = [.macOS, .macCatalyst, .iOS, .iOSSimulator, .tvOS, .tvOSSimulator, .watchOS, .watchOSSimulator, .xrOS, .xrOSSimulator, .driverKit, .linux].filter { core.sdkRegistry.lookup($0.sdk) != nil }
 
         for destination in destinations {
             let parameters = BuildParameters(action: .build, configuration: "Debug", activeRunDestination: destination, overrides: ["SDKROOT": destination.sdk, "SDK_VARIANT": destination.sdkVariant ?? ""])
@@ -1164,6 +1168,8 @@ import SWBMacro
                 #expect(try scope.evaluate(scope.namespace.declareStringMacro("RECOMMENDED_TVOS_DEPLOYMENT_TARGET")) == "15.0")
             case .watchOS, .watchOSSimulator:
                 #expect(try scope.evaluate(scope.namespace.declareStringMacro("RECOMMENDED_WATCHOS_DEPLOYMENT_TARGET")) == "8.0")
+            case .xrOS, .xrOSSimulator:
+                #expect(try scope.evaluate(scope.namespace.declareStringMacro("RECOMMENDED_XROS_DEPLOYMENT_TARGET")) == "1.0")
             case .driverKit:
                 #expect(try scope.evaluate(scope.namespace.declareStringMacro("RECOMMENDED_DRIVERKIT_DEPLOYMENT_TARGET")) == "20.0")
             case .linux:
@@ -1231,6 +1237,7 @@ import SWBMacro
                                                                     groupTree: TestGroup("SomeFiles", children: [TestFile("Mock.cpp")]),
                                                                     targets: [
                                                                         TestStandardTarget("Target1",
+                                                                                           type: .application,
                                                                                            buildConfigurations: [
                                                                                             TestBuildConfiguration("Debug",
                                                                                                                    buildSettings: [
@@ -1331,6 +1338,44 @@ import SWBMacro
         }
     }
 
+    /// Validate that setting `VALID_ARCHS` to `arm64` doesn't remove `arm64e` from `ARCHS` because `arm64` is marked as a compatibility architecture of `arm64e`. This only occurs if `__POPULATE_COMPATIBILITY_ARCH_MAP` is on.
+    @Test(.requireSDKs(.iOS))
+    func compatArchs() async throws {
+        let core = try await getCore()
+
+        let testWorkspace = try TestWorkspace(
+            "Workspace",
+            projects: [
+                TestProject(
+                    "aProject",
+                    groupTree: TestGroup(
+                        "SomeFiles",
+                        children: []),
+                    buildConfigurations: [
+                        TestBuildConfiguration(
+                            "Config1", buildSettings: [
+                                "ARCHS": "arm64 arm64e",
+                                "SDKROOT": "iphoneos",
+                                "VALID_ARCHS": "arm64",
+                                "__POPULATE_COMPATIBILITY_ARCH_MAP": "YES",
+                            ])
+                    ],
+                    targets: [TestStandardTarget("Target", type: .application)]
+                )
+            ]
+        ).load(core)
+
+        let context = try await contextForTestData(testWorkspace, core: core)
+        let buildRequestContext = BuildRequestContext(workspaceContext: context)
+        let testProject = context.workspace.projects[0]
+
+        let parameters = BuildParameters(action: .build, configuration: "Debug")
+        let settings = Settings(workspaceContext: context, buildRequestContext: buildRequestContext, parameters: parameters, project: testProject, target: testProject.targets[0])
+
+        // If arm64e didn't have arm64 in its CompatibilityArchitectures list in the xcspecs, this would only return arm64 due to the VALID_ARCHS build setting in the test project above.
+        #expect(settings.globalScope.evaluate(BuiltinMacros.ARCHS).sorted() == ["arm64", "arm64e"])
+    }
+
     func testArchPointerAuthentication(platform: String) async throws {
         func test(buildSettings: [String: String], expectedARCHS_STANDARD: [String], expectedErrors: [String] = [], sourceLocation: SourceLocation = #_sourceLocation) async throws {
             let workspace = try await TestWorkspace("Workspace",
@@ -1338,6 +1383,7 @@ import SWBMacro
                                                                            groupTree: TestGroup("SomeFiles", children: [TestFile("Mock.cpp")]),
                                                                            targets: [
                                                                             TestStandardTarget("Target1",
+                                                                                               type: .application,
                                                                                                buildConfigurations: [
                                                                                                 TestBuildConfiguration("Debug",
                                                                                                                        buildSettings: buildSettings)],
@@ -1376,7 +1422,7 @@ import SWBMacro
                                        "ENABLE_POINTER_AUTHENTICATION": "YES"],
                        expectedARCHS_STANDARD: ["arm64", "arm64e"])
 
-        // explicitely opting out of pointer authentication does not add arm64e
+        // explicitly opting out of pointer authentication does not add arm64e
         try await test(buildSettings: ["SDKROOT": platform,
                                        "ENABLE_POINTER_AUTHENTICATION": "NO"],
                        expectedARCHS_STANDARD: ["arm64"])
@@ -1568,6 +1614,7 @@ import SWBMacro
                                                                            groupTree: TestGroup("SomeFiles", children: [TestFile("Mock.cpp")]),
                                                                            targets: [
                                                                             TestStandardTarget("Target1",
+                                                                                               type: .application,
                                                                                                buildConfigurations: [
                                                                                                 TestBuildConfiguration("Debug",
                                                                                                                        buildSettings: [
@@ -1608,6 +1655,7 @@ import SWBMacro
                                                                            groupTree: TestGroup("SomeFiles", children: [TestFile("Mock.cpp")]),
                                                                            targets: [
                                                                             TestStandardTarget("Target1",
+                                                                                               type: .application,
                                                                                                buildConfigurations: [
                                                                                                 TestBuildConfiguration("Debug",
                                                                                                                        buildSettings: [
@@ -1724,7 +1772,7 @@ import SWBMacro
         #expect(!core.platformRegistry.platforms.isEmpty)
         for developmentTeam in ["ABCDWXYZ", ""] {
             for platform in core.platformRegistry.platforms {
-                if ["android", "linux", "windows"].contains(platform.name) {
+                if ["android", "linux", "qnx", "windows"].contains(platform.name) {
                     continue
                 }
                 for sdk in platform.sdks {
@@ -1856,14 +1904,14 @@ import SWBMacro
     }
 
     /// Check the behavior of user defined settings, especially w.r.t. quoting rules.
-    @Test(.requireSDKs(.macOS))
+    @Test(.requireSDKs(.host))
     func userDefinedSettings() async throws {
         // Set up a trivial iOS project.
         let testWorkspace = try await TestWorkspace("Workspace",
                                                     projects: [TestProject("aProject",
                                                                            groupTree: TestGroup("SomeFiles", children: []),
                                                                            targets: [
-                                                                            TestStandardTarget("Target1",
+                                                                            TestStandardTarget("Target1", type: .commandLineTool,
                                                                                                buildConfigurations: [
                                                                                                 TestBuildConfiguration("Debug",
                                                                                                                        buildSettings: [
@@ -1890,14 +1938,14 @@ import SWBMacro
     }
 
     // Test that we correctly normalize path of some special macros.
-    @Test(.requireSDKs(.macOS))
+    @Test(.requireSDKs(.host))
     func macroPathNormalization() async throws {
         let testWorkspace = try await TestWorkspace("Workspace",
                                                     projects: [
                                                         TestProject("aProject",
                                                                     groupTree: TestGroup("SomeFiles", children: []),
                                                                     targets: [
-                                                                        TestStandardTarget("Target1", buildConfigurations: [
+                                                                        TestStandardTarget("Target1", type: .commandLineTool, buildConfigurations: [
                                                                             TestBuildConfiguration("Debug", buildSettings: [
                                                                                 "SYMROOT": "./build",
                                                                                 "DSTROOT": "build/foo/bar/something/../dst",
@@ -1919,8 +1967,8 @@ import SWBMacro
         }
 
         let scope = settings.globalScope
-        #expect(scope.evaluate(BuiltinMacros.SYMROOT) == Path("/tmp/Workspace/aProject/build"))
-        #expect(scope.evaluate(BuiltinMacros.DSTROOT) == Path("/tmp/Workspace/aProject/build/foo/bar/dst"))
+        #expect(scope.evaluate(BuiltinMacros.SYMROOT) == Path.root.join("tmp/Workspace/aProject/build"))
+        #expect(scope.evaluate(BuiltinMacros.DSTROOT) == Path.root.join("tmp/Workspace/aProject/build/foo/bar/dst"))
     }
 
     @Test(.requireSDKs(.tvOS))
@@ -1958,6 +2006,7 @@ import SWBMacro
                     targets: [
                         TestStandardTarget(
                             "Target",
+                            type: .application,
                             buildConfigurations: [
                                 TestBuildConfiguration(
                                     "Debug",
@@ -1993,7 +2042,7 @@ import SWBMacro
     func toolchainBuildSettings() async throws {
         let fs = localFS
         try await withTemporaryDirectory(fs: fs) { toolchainsDir in
-            try await withEnvironment(["EXTERNAL_TOOLCHAINS_DIR": toolchainsDir.str]) {
+            try await withEnvironment([.externalToolchainsDir: toolchainsDir.str]) {
                 // Add in our custom toolchain.
                 try fs.createDirectory(toolchainsDir.join("org.swift.testoss.xctoolchain"), recursive: true)
                 try await fs.writePlist(toolchainsDir.join("org.swift.testoss.xctoolchain").join("Info.plist"), .plDict([
@@ -2034,6 +2083,7 @@ import SWBMacro
                             targets: [
                                 TestStandardTarget(
                                     "Target1",
+                                    type: .application,
                                     buildConfigurations: [
                                         TestBuildConfiguration(
                                             "Debug",
@@ -2237,6 +2287,7 @@ import SWBMacro
                                                                          ],
                                                                          targets: [
                                                                             TestStandardTarget("Target1",
+                                                                                               type: .application,
                                                                                                buildConfigurations: [
                                                                                                 TestBuildConfiguration("Debug", buildSettings: [
                                                                                                     "SDKROOT": "macosx",
@@ -2370,6 +2421,7 @@ import SWBMacro
                                                                      ],
                                                                      targets: [
                                                                         TestStandardTarget("Target1",
+                                                                                           type: .application,
                                                                                            buildConfigurations: [
                                                                                             TestBuildConfiguration("Debug", buildSettings: [
                                                                                                 "SDKROOT": "linuxB",
@@ -2473,6 +2525,7 @@ import SWBMacro
                                                                          ],
                                                                          targets: [
                                                                             TestStandardTarget("Target1",
+                                                                                               type: .application,
                                                                                                buildConfigurations: [
                                                                                                 TestBuildConfiguration("Debug", buildSettings: [
                                                                                                     "SDKROOT": "\(sdkPath.str)",
@@ -2543,6 +2596,7 @@ import SWBMacro
                                                                            ],
                                                                            targets: [
                                                                             TestStandardTarget("Target1",
+                                                                                               type: .application,
                                                                                                buildConfigurations: [
                                                                                                 TestBuildConfiguration("Debug", buildSettings: [
                                                                                                     "FRAMEWORK_SEARCH_PATHS": "$(inherited) onePath",
@@ -2619,6 +2673,7 @@ import SWBMacro
                                                                          ],
                                                                          targets: [
                                                                             TestStandardTarget("Target1",
+                                                                                               type: .application,
                                                                                                buildConfigurations: [
                                                                                                 TestBuildConfiguration("Debug", baseConfig: "TargetSettings.xcconfig", buildSettings: [
                                                                                                     "SDKROOT": "\(sdkPath.str)",
@@ -2671,6 +2726,7 @@ import SWBMacro
                                                                                ],
                                                                                targets: [
                                                                                 TestStandardTarget("Target1",
+                                                                                                   type: .application,
                                                                                                    buildConfigurations: [
                                                                                                     TestBuildConfiguration("Debug", buildSettings: [
                                                                                                         "SDKROOT": "bogus",
@@ -2867,6 +2923,7 @@ import SWBMacro
         #expect(settings.globalScope.evaluate(BuiltinMacros.EXECUTABLE_DEBUG_DYLIB_INSTALL_NAME) == "@rpath/MyOtherClient.debug.dylib")
         // But should be mapped to the original install name
         #expect(settings.globalScope.evaluate(BuiltinMacros.EXECUTABLE_DEBUG_DYLIB_MAPPED_INSTALL_NAME) == "@rpath/Target1.debug.dylib")
+        #expect(settings.globalScope.evaluate(BuiltinMacros.EXECUTABLE_DEBUG_DYLIB_MAPPED_PLATFORM) == "2")
         #expect(settings.globalScope.evaluate(BuiltinMacros.EXECUTABLE_BLANK_INJECTION_DYLIB_PATH).suffix(15) == "__preview.dylib")
     }
 
@@ -2912,20 +2969,18 @@ import SWBMacro
                                 "SWIFT_VERSION": "5",
                                 "SWIFT_OPTIMIZATION_LEVEL": "-O",
                                 "ENABLE_PREVIEWS_EXPECTED": "NO",
-                                "ENABLE_PREVIEWS_EXPECTED_REASON": "SWIFT_VERSION is set and SWIFT_OPTIMIZATION_LEVEL=-O, expected -Onone",
                             ]
                                                   )],
                         buildPhases: [TestSourcesBuildPhase(["main.swift"])]
                     ),
 
-                    // Should be off because no Swift version and should not LOG
+                    // Should be off because no Swift version
                     TestStandardTarget(
                         "Target-no-swift",
                         type: .application,
                         buildConfigurations: [
                             TestBuildConfiguration("Debug", buildSettings: [
                                 "ENABLE_PREVIEWS_EXPECTED": "NO",
-                                "ENABLE_PREVIEWS_EXPECTED_REASON": "",
                             ]
                                                   )],
                         buildPhases: [TestSourcesBuildPhase(["main.swift"])]
@@ -2937,24 +2992,16 @@ import SWBMacro
         let testProject = context.workspace.projects[0]
 
         let expectedMacro = try BuiltinMacros.namespace.declareBooleanMacro("ENABLE_PREVIEWS_EXPECTED")
-        let reasonMacro = try BuiltinMacros.namespace.declareStringMacro("ENABLE_PREVIEWS_EXPECTED_REASON")
 
         for testTarget in testProject.targets {
             let parameters = BuildParameters(action: .build, configuration: "Debug", overrides: [:])
             let settings = Settings(workspaceContext: context, buildRequestContext: buildRequestContext, parameters: parameters, project: testProject, target: testTarget)
             let actual = settings.globalScope.evaluate(BuiltinMacros.ENABLE_PREVIEWS)
-            let swiftEnabled = !settings.globalScope.evaluate(BuiltinMacros.SWIFT_VERSION).isEmpty
             let expected = settings.globalScope.evaluate(expectedMacro)
             #expect(actual == expected)
             if !expected {
-                let reason = settings.globalScope.evaluate(reasonMacro)
-                if swiftEnabled {
-                    #expect(settings.notes == ["Disabling previews because \(reason)"])
-                }
-                else {
-                    #expect(settings.notes == [])
-                    #expect(reason == "")
-                }
+                // We do not currently emit any reasons for disabling in the notes.
+                #expect(settings.notes == [])
             }
             else {
                 #expect(settings.notes == [])
@@ -2972,7 +3019,7 @@ import SWBMacro
     }
 
     @Test(.requireSDKs(.iOS))
-    func previewsDisablingHardedRuntimeWithAdHocSigning() async throws {
+    func previewsDisablingHardenedRuntimeWithAdHocSigning() async throws {
         let testWorkspace = try await TestWorkspace(
             "Workspace",
             projects: [TestProject(
@@ -3002,7 +3049,7 @@ import SWBMacro
                                 "ENABLE_XOJIT_PREVIEWS": "YES",
                                 "CODE_SIGN_IDENTITY": "An Engineer",
 
-                                "ENABLE_HARDED_RUNTIME_EXPECTED": "YES",
+                                "ENABLE_HARDENED_RUNTIME_EXPECTED": "YES",
                             ]),
                         ],
                         buildPhases: [TestSourcesBuildPhase(["main.swift"])]
@@ -3021,7 +3068,7 @@ import SWBMacro
                                 "ENABLE_XOJIT_PREVIEWS": "YES",
                                 "CODE_SIGN_IDENTITY": "-",
 
-                                "ENABLE_HARDED_RUNTIME_EXPECTED": "NO",
+                                "ENABLE_HARDENED_RUNTIME_EXPECTED": "NO",
                             ]),
                         ],
                         buildPhases: [TestSourcesBuildPhase(["main.swift"])]
@@ -3034,7 +3081,7 @@ import SWBMacro
 
         let parameters = BuildParameters(action: .build, configuration: "Debug", overrides: [:])
 
-        let expectedMacro = try BuiltinMacros.namespace.declareBooleanMacro("ENABLE_HARDED_RUNTIME_EXPECTED")
+        let expectedMacro = try BuiltinMacros.namespace.declareBooleanMacro("ENABLE_HARDENED_RUNTIME_EXPECTED")
 
         for target in testProject.targets {
             let settings = Settings(
@@ -3073,6 +3120,7 @@ import SWBMacro
                                                                                     ])],
                                                                                   targets: [
                                                                                     TestStandardTarget("Target1",
+                                                                                                       type: .application,
                                                                                                        buildConfigurations: [
                                                                                                         TestBuildConfiguration("Config1", buildSettings: [
                                                                                                             "BUILD_VARIANTS": "normal other",
@@ -3083,11 +3131,11 @@ import SWBMacro
                                                                                                             "USER_TARGET_SETTING": "USER_TARGET_VALUE"])],
                                                                                                        buildPhases: [TestSourcesBuildPhase(["Mock.cpp"])])])]).load(getCore())
         let context = try await contextForTestData(testWorkspace,
-                                                   environment: [
-                                                    "ENABLE_BITCODE": "YES",
-                                                    "RC_ARCHS": "x86_64 x86_64h",
-                                                   ],
-                                                   files: [:])
+            environment: [
+                "RC_ARCHS": "x86_64 x86_64h",
+            ],
+            files: [:]
+        )
         let buildRequestContext = BuildRequestContext(workspaceContext: context)
         let testProject = context.workspace.projects[0]
         let testTarget = testProject.targets[0]
@@ -3200,6 +3248,7 @@ import SWBMacro
                 // Non-macCatalyst case: The effective macOS deployment target should be the one in the SDK.
                 (
                     TestStandardTarget("Target1",
+                                       type: .application,
                                        buildConfigurations: [
                                         TestBuildConfiguration("Debug", buildSettings: [
                                             "SDKROOT": "\(sdkPath.str)",
@@ -3217,6 +3266,7 @@ import SWBMacro
                 // macCatalyst case: The iOS deployment target should be the value from the macCatalyst target info, and the macOS deployment target should match it since we're building an unzippered target.
                 (
                     TestStandardTarget("Target2",
+                                       type: .application,
                                        buildConfigurations: [
                                         TestBuildConfiguration("Debug", buildSettings: [
                                             "SDKROOT": "\(sdkPath.str)",
@@ -3235,6 +3285,7 @@ import SWBMacro
                 // macCatalyst case: The iOS deployment target should be the value from the macCatalyst target info, and the macOS deployment target should match it since we're building an unzippered target.
                 (
                     TestStandardTarget("Target3",
+                                       type: .application,
                                        buildConfigurations: [
                                         TestBuildConfiguration("Debug", buildSettings: [
                                             "SDKROOT": "\(sdkPath.str)",
@@ -3254,6 +3305,7 @@ import SWBMacro
                 // Non-macCatalyst case: The effective macOS deployment target should be the one from the "trooper" SDK variant.
                 (
                     TestStandardTarget("Target4",
+                                       type: .application,
                                        buildConfigurations: [
                                         TestBuildConfiguration("Debug", buildSettings: [
                                             "SDKROOT": "\(sdkPath.str)",
@@ -3272,6 +3324,7 @@ import SWBMacro
                 // Non-macCatalyst case: The effective macOS deployment target should be the one defined in this target.
                 (
                     TestStandardTarget("Target5",
+                                       type: .application,
                                        buildConfigurations: [
                                         TestBuildConfiguration("Debug", buildSettings: [
                                             "SDKROOT": "\(sdkPath.str)",
@@ -3290,6 +3343,7 @@ import SWBMacro
                 // macCatalyst case: The iOS deployment target should be the value from the macCatalyst target info, and the macOS deployment target should match it since we're building an unzippered target.
                 (
                     TestStandardTarget("Target6",
+                                       type: .application,
                                        buildConfigurations: [
                                         TestBuildConfiguration("Debug", buildSettings: [
                                             "SDKROOT": "\(sdkPath.str)",
@@ -3309,6 +3363,7 @@ import SWBMacro
                 // macCatalyst case: The iOS deployment target should be the value from defined in the target, and the macOS deployment target should match it since we're building an unzippered target.
                 (
                     TestStandardTarget("Target7",
+                                       type: .application,
                                        buildConfigurations: [
                                         TestBuildConfiguration("Debug", buildSettings: [
                                             "SDKROOT": "\(sdkPath.str)",
@@ -3329,6 +3384,7 @@ import SWBMacro
                 // macCatalyst case: The iOS deployment target should be the value from defined in the target, and the macOS deployment target should match it since we're building an unzippered target.
                 (
                     TestStandardTarget("Target8",
+                                       type: .application,
                                        buildConfigurations: [
                                         TestBuildConfiguration("Debug", buildSettings: [
                                             "SDKROOT": "\(sdkPath.str)",
@@ -3348,6 +3404,7 @@ import SWBMacro
                 // Non-macCatalyst case: Since this is a zippered target, both the iOS and macOS deployment targets defined in the target should be preserved.
                 (
                     TestStandardTarget("Target9",
+                                       type: .application,
                                        buildConfigurations: [
                                         TestBuildConfiguration("Debug", buildSettings: [
                                             "SDKROOT": "\(sdkPath.str)",
@@ -3368,6 +3425,7 @@ import SWBMacro
                 // macCatalyst case: Since this is a zippered target, both the iOS and macOS deployment targets defined in the target should be preserved.
                 (
                     TestStandardTarget("Target10",
+                                       type: .application,
                                        buildConfigurations: [
                                         TestBuildConfiguration("Debug", buildSettings: [
                                             "SDKROOT": "\(sdkPath.str)",
@@ -3389,6 +3447,7 @@ import SWBMacro
                 // Non-macCatalyst case: Since this is a zippered target, the macOS deployment target defined in the target should be preserved, but the iOS deployment target should be set to the lower limit.
                 (
                     TestStandardTarget("Target11",
+                                       type: .application,
                                        buildConfigurations: [
                                         TestBuildConfiguration("Debug", buildSettings: [
                                             "SDKROOT": "\(sdkPath.str)",
@@ -3409,6 +3468,7 @@ import SWBMacro
                 // Non-macCatalyst case: Since this is a zippered target, the macOS deployment target defined in the target should be preserved, and the iOS deployment target should be derived from it.
                 (
                     TestStandardTarget("Target12",
+                                       type: .application,
                                        buildConfigurations: [
                                         TestBuildConfiguration("Debug", buildSettings: [
                                             "SDKROOT": "\(sdkPath.str)",
@@ -3522,6 +3582,7 @@ import SWBMacro
                                                                            groupTree: TestGroup("SomeFiles", children: []),
                                                                            targets: [
                                                                             TestStandardTarget("Target1",
+                                                                                               type: .application,
                                                                                                buildConfigurations: [
                                                                                                 TestBuildConfiguration("Debug",
                                                                                                                        buildSettings: [
@@ -3555,6 +3616,7 @@ import SWBMacro
                                                                            groupTree: TestGroup("SomeFiles", children: []),
                                                                            targets: [
                                                                             TestStandardTarget("Target1",
+                                                                                               type: .application,
                                                                                                buildConfigurations: [
                                                                                                 TestBuildConfiguration("Debug",
                                                                                                                        buildSettings: [
@@ -3672,6 +3734,7 @@ import SWBMacro
                                                                 ],
                                                                 targets: [
                                                                     TestStandardTarget("AppTarget",
+                                                                                       type: .application,
                                                                                        buildConfigurations: [
                                                                                         TestBuildConfiguration("Debug", buildSettings: [
                                                                                             "SDKROOT[sdk=iphoneos*]": "\(ios16_0Path.str)",
@@ -3806,6 +3869,7 @@ import SWBMacro
                                                                            groupTree: TestGroup("SomeFiles", children: [TestFile("Mock.cpp")]),
                                                                            targets: [
                                                                             TestStandardTarget("Target1",
+                                                                                               type: .application,
                                                                                                buildConfigurations: [
                                                                                                 TestBuildConfiguration("Debug",
                                                                                                                        buildSettings: [
@@ -3845,6 +3909,7 @@ import SWBMacro
                                                                            groupTree: TestGroup("SomeFiles", children: [TestFile("Mock.cpp")]),
                                                                            targets: [
                                                                             TestStandardTarget("Target1",
+                                                                                               type: .application,
                                                                                                buildConfigurations: [
                                                                                                 TestBuildConfiguration("Debug",
                                                                                                                        buildSettings: [
@@ -4069,6 +4134,7 @@ import SWBMacro
                     targets: [
                         TestStandardTarget(
                             "SomeTarget",
+                            type: .application,
                             buildConfigurations: [
                                 TestBuildConfiguration("Debug")
                             ])
@@ -4122,7 +4188,7 @@ import SWBMacro
         let buildRequestContext = BuildRequestContext(workspaceContext: context)
         let tester = try await TaskConstructionTester(getCore(), testWorkspace)
 
-        await tester.checkBuild() { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkNoDiagnostics()
             results.checkNote("A script phase disables sandboxing, forcing `EAGER_COMPILATION_ALLOW_SCRIPTS` to off (in target \'A\' from project \'aProject\')")
 
@@ -4156,6 +4222,7 @@ import SWBMacro
                     targets: [
                         TestStandardTarget(
                             "SomeTarget",
+                            type: .application,
                             buildConfigurations: [
                                 TestBuildConfiguration(
                                     "Debug",
@@ -4329,6 +4396,7 @@ import SWBMacro
                                                                          ],
                                                                          targets: [
                                                                             TestStandardTarget("Target1",
+                                                                                               type: .application,
                                                                                                buildConfigurations: [
                                                                                                 TestBuildConfiguration("Config", baseConfig: "Target.xcconfig", buildSettings: [
                                                                                                     "CASCADING": "$(TARGET_SETTING) $(inherited)",
@@ -4746,6 +4814,7 @@ import SWBMacro
                 targets: [
                     TestStandardTarget(
                         "Target",
+                        type: .application,
                         buildConfigurations: [
                             TestBuildConfiguration(
                                 "Debug",
@@ -4778,6 +4847,7 @@ import SWBMacro
                 targets: [
                     TestStandardTarget(
                         "Target",
+                        type: .application,
                         buildConfigurations: [
                             TestBuildConfiguration(
                                 "Debug",
@@ -4830,6 +4900,7 @@ import SWBMacro
                 targets: [
                     TestStandardTarget(
                         "Target",
+                        type: .application,
                         buildConfigurations: [
                             TestBuildConfiguration(
                                 "Debug",
@@ -4863,6 +4934,7 @@ import SWBMacro
                 targets: [
                     TestStandardTarget(
                         "Target",
+                        type: .application,
                         buildConfigurations: [
                             TestBuildConfiguration(
                                 "Debug",
@@ -4896,6 +4968,7 @@ import SWBMacro
                 targets: [
                     TestStandardTarget(
                         "Target",
+                        type: .application,
                         buildConfigurations: [
                             TestBuildConfiguration(
                                 "Debug",
@@ -4922,37 +4995,13 @@ import SWBMacro
         #expect(settings.globalScope.evaluate(BuiltinMacros.OTHER_CFLAGS) == ["-best"])
     }
 
-    @Test
-    func packagesAllowTestingSearchPathsAndBitcodeSimultaneously() async throws {
-        let testWorkspace = try await TestWorkspace("Test", projects: [
-            TestPackageProject("aPackageProject", groupTree: TestGroup("Sources", path: "Sources", children: [TestFile("best.swift"), TestFile("Info.plist"),]), targets: [
-                TestStandardTarget("Target", buildConfigurations: [
-                    TestBuildConfiguration("Debug", buildSettings: [
-                        "ENABLE_TESTING_SEARCH_PATHS": "YES",
-                        "INFOPLIST_FILE": "Sources/Info.plist",
-                        "SUPPORTED_PLATFORMS": "$(AVAILABLE_PLATFORMS)",
-                    ])
-                ])
-            ])
-        ]).load(getCore())
-
-        let context = try await contextForTestData(testWorkspace)
-        let buildRequestContext = BuildRequestContext(workspaceContext: context)
-        let testProject = context.workspace.projects[0]
-        let testTarget = testProject.targets[0]
-
-        let parameters = BuildParameters(configuration: "Debug", activeRunDestination: .iOS)
-        let settings = Settings(workspaceContext: context, buildRequestContext: buildRequestContext, parameters: parameters, project: testProject, target: testTarget)
-
-        #expect(!settings.globalScope.evaluate(BuiltinMacros.ENABLE_BITCODE))
-        #expect(settings.globalScope.evaluate(BuiltinMacros.ENABLE_TESTING_SEARCH_PATHS))
-    }
-
     @Test(.requireSDKs(.macOS))
     func catalystDoesNotBreakOnlyActiveArch() async throws {
         let testWorkspace = TestWorkspace("Test", projects: [
             TestProject("Project", groupTree: TestGroup("Sources", path: "Sources", children: [TestFile("best.swift")]), targets: [
-                TestStandardTarget("Target", buildConfigurations: [
+                TestStandardTarget("Target",
+                                   type: .application,
+                                   buildConfigurations: [
                     TestBuildConfiguration("Debug", buildSettings: [
                         "ONLY_ACTIVE_ARCH": "YES",
                         "SUPPORTS_MACCATALYST": "YES",
@@ -5006,6 +5055,7 @@ import SWBMacro
                     ],
                     targets: [
                         TestStandardTarget("TargetA",
+                                           type: .application,
                                            buildConfigurations: [
                                             TestBuildConfiguration("Debug", buildSettings: [
                                                 "CASCADING": "$(TARGET_SETTING) $(inherited)",
@@ -5018,6 +5068,7 @@ import SWBMacro
                                            ]
                                           ),
                         TestStandardTarget("TargetB",
+                                           type: .application,
                                            buildConfigurations: [
                                             TestBuildConfiguration("Debug", buildSettings: [
                                                 "CASCADING": "$(TARGET_SETTING) $(inherited)",
@@ -5412,7 +5463,7 @@ import SWBMacro
                         TestBuildConfiguration("Config1", baseConfig: "Test.xcconfig")
                     ],
                     targets: [
-                        TestStandardTarget("A")
+                        TestStandardTarget("A", type: .application)
                     ]),
                 TestProject(
                     "bProject",
@@ -5426,7 +5477,7 @@ import SWBMacro
                         TestBuildConfiguration("Config1", baseConfig: "Test.xcconfig")
                     ],
                     targets: [
-                        TestStandardTarget("B")
+                        TestStandardTarget("B", type: .application)
                     ])
             ]).load(getCore())
         let context = try await contextForTestData(testWorkspace, files: [

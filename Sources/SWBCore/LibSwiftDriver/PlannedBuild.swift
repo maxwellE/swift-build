@@ -80,7 +80,7 @@ public struct SwiftDriverJob: Serializable, CustomDebugStringConvertible {
     public let outputs: [Path]
     /// The command line to execute for this job
     public let commandLine: [SWBUtil.ByteString]
-    /// A signature which uniquely idnetifies the job.
+    /// A signature which uniquely identifies the job.
     public let signature: SWBUtil.ByteString
     /// Cache keys for the swift-frontend invocation (one key per output producing input)
     public let cacheKeys: [String]
@@ -103,7 +103,7 @@ public struct SwiftDriverJob: Serializable, CustomDebugStringConvertible {
         self.cacheKeys = job.outputCacheKeys.reduce(into: [String]()) { result, key in
             result.append(key.value)
         }.sorted()
-        let md5 = MD5Context()
+        let md5 = InsecureHashContext()
         for arg in commandLine {
             md5.add(bytes: arg)
         }
@@ -256,8 +256,6 @@ extension LibSwiftDriver {
 
         private var jobsUnfinished: Set<JobKey>
 
-        public let transitiveDependencyModuleNames: [String]?
-
         internal init(workload: SwiftDriver.DriverExecutorWorkload, argsResolver: ArgsResolver, explicitModulesResolver: ArgsResolver, jobExecutionDelegate: (any JobExecutionDelegate)?, globalExplicitDependencyJobGraph: (any SwiftGlobalExplicitDependencyGraph)?, workingDirectory: Path, eagerCompilationEnabled: Bool) throws {
             self.globalExplicitDependencyJobGraph = globalExplicitDependencyJobGraph
             self.argsResolver = argsResolver
@@ -275,15 +273,6 @@ extension LibSwiftDriver {
                 afterCompilationIndices: self.afterCompilationIndices,
                 verificationIndices: self.verificationIndices
             ) = try Self.evaluateWorkload(workload, argsResolver: argsResolver, explicitModulesResolver: explicitModulesResolver, globalExplicitDependencyJobGraph: globalExplicitDependencyJobGraph, workingDirectory: workingDirectory, eagerCompilationEnabled: eagerCompilationEnabled)
-
-            if let graph = workload.interModuleDependencyGraph {
-                // This calculation is a bit awkward because we cannot directly access the ID of the main module, just its info object
-                let directDependencies = graph.mainModule.directDependencies ?? []
-                let transitiveDependencies = Set(directDependencies + SWBUtil.transitiveClosure(directDependencies, successors: { moduleID in graph.modules[moduleID]?.directDependencies ?? [] }).0)
-                self.transitiveDependencyModuleNames = transitiveDependencies.map(\.moduleName)
-            } else {
-                self.transitiveDependencyModuleNames = nil
-            }
 
             self.jobsUnfinished = Set(plannedTargetJobs.map { $0.key })
             self.jobsUnfinished.formUnion(explicitModuleBuildJobKeys)

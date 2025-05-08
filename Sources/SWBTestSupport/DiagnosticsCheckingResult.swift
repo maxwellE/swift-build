@@ -36,32 +36,38 @@ package protocol DiagnosticsCheckingResult: AnyObject {
 }
 
 extension DiagnosticsCheckingResult {
+    private func getFilteredDiagnostics(_ forKind: DiagnosticKind) -> [String] {
+        return getDiagnostics(forKind).compactMap {
+            filterDiagnostic(message: $0)
+        }
+    }
+
     /// Get the list of all errors.
     /// - remark: If the test calls this method then it must perform all checking of errors itself, as calling this method will disable automatic checking in the tester.
     package func getErrors() -> [String] {
         checkedErrors = true
-        return getDiagnostics(.error)
+        return getFilteredDiagnostics(.error)
     }
 
     /// Get the list of all warnings.
     /// - remark: If the test calls this method then it must perform all checking of warnings itself, as calling this method will disable automatic checking in the tester.
     package func getWarnings() -> [String] {
         checkedWarnings = true
-        return getDiagnostics(.warning)
+        return getFilteredDiagnostics(.warning)
     }
 
     /// Get the list of all notes.
     /// - remark: If the test calls this method then it must perform all checking of notes itself, as calling this method will disable automatic checking in the tester.
     package func getNotes() -> [String] {
         checkedNotes = true
-        return getDiagnostics(.note)
+        return getFilteredDiagnostics(.note)
     }
 
     /// Get the list of all remarks.
     /// - remark: If the test calls this method then it must perform all checking of remarks itself, as calling this method will disable automatic checking in the tester.
     package func getRemarks() -> [String] {
         checkedRemarks = true
-        return getDiagnostics(.remark)
+        return getFilteredDiagnostics(.remark)
     }
 
     /// Find a particular error.
@@ -188,6 +194,24 @@ package func _filterDiagnostic(message: String) -> String? {
 
     // rdar://137565964 (REGRESSION: Linking any Swift program back-deployed emits warnings)
     if message.contains(#/[oO]bject file .+\/libswiftCompatibility.+ was built for newer '.+' version \(.+\) than being linked \(.+\)/#) {
+        return nil
+    }
+
+    // Workaround: rdar://141686644
+    if message.contains("In-process dependency scan query failed due to incompatible libSwiftScan") {
+        return nil
+    }
+
+    if message.hasPrefix("Enabling the Swift language feature 'MemberImportVisibility' will become a requirement in the future") {
+        return nil
+    }
+
+    if message.hasPrefix("Learn more about 'MemberImportVisibility' by visiting") {
+        return nil
+    }
+
+    // Workaround: rdar://146492614
+    if message.contains(#/Search path '.+\/System\/iOSSupport\/System\/Library\/SubFrameworks' not found/#) {
         return nil
     }
 

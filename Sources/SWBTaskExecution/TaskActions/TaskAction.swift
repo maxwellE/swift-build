@@ -52,7 +52,7 @@ open class TaskAction: PlannedTaskAction, PolymorphicSerializable
         // FIXME: This is quite inefficient as practically used by the build system, because we end up serializing every task action twice, effectively. We could do a lot better if we were willing to lift this signature out somewhere else, but this is simply and ensures that by default we tend to capture every interesting piece of information in the signature.
         let sz = MsgPackSerializer()
         serialize(to: sz)
-        let md5 = MD5Context()
+        let md5 = InsecureHashContext()
         md5.add(bytes: sz.byteString)
         return md5.signature
     }
@@ -67,7 +67,7 @@ open class TaskAction: PlannedTaskAction, PolymorphicSerializable
     /// This is checked to determine if the command needs to rebuild versus the last time it was run.
     open func getSignature(_ task: any ExecutableTask, executionDelegate: any TaskExecutionDelegate) -> ByteString
     {
-        let md5 = MD5Context()
+        let md5 = InsecureHashContext()
         md5.add(bytes: serializedRepresentationSignature!)
         for arg in task.commandLine {
             md5.add(bytes: arg.asByteString)
@@ -131,42 +131,15 @@ open class TaskAction: PlannedTaskAction, PolymorphicSerializable
         self.serializedRepresentationSignature = try deserializer.deserialize()
     }
 
-    public static let implementations: [SerializableTypeCode: any PolymorphicSerializable.Type] = [
-        1: AuxiliaryFileTaskAction.self,
-        2: CopyPlistTaskAction.self,
-        3: CopyStringsFileTaskAction.self,
-        4: CopyTiffTaskAction.self,
-        5: FileCopyTaskAction.self,
-        6: InfoPlistProcessorTaskAction.self,
-        // 7: Removed
-        8: LSRegisterURLTaskAction.self,
-        9: EmbedSwiftStdLibTaskAction.self,
-        10: ProcessProductEntitlementsTaskAction.self,
-        11: ProcessProductProvisioningProfileTaskAction.self,
-        15: ValidateProductTaskAction.self,
-        16: CreateBuildDirectoryTaskAction.self,
-        17: ODRAssetPackManifestTaskAction.self,
-        18: SwiftHeaderToolTaskAction.self,
-        19: RegisterExecutionPolicyExceptionTaskAction.self,
-        20: ClangCompileTaskAction.self,
-        21: ProcessXCFrameworkTaskAction.self,
-        22: SwiftCompilationTaskAction.self,
-        23: SwiftDriverTaskAction.self,
-        24: SwiftDriverCompilationRequirementTaskAction.self,
-        26: ClangScanTaskAction.self,
-        28: ValidateDevelopmentAssetsTaskAction.self,
-        // 29: AppIntentsMetadataTaskAction.self, //removed
-        30: DeferredExecutionTaskAction.self,
-        31: LinkAssetCatalogTaskAction.self,
-        32: SignatureCollectionTaskAction.self,
-        33: CodeSignTaskAction.self,
-        34: MergeInfoPlistTaskAction.self,
-        35: ClangModuleVerifierInputGeneratorTaskAction.self,
-        36: ConstructStubExecutorInputFileListTaskAction.self,
-        37: ConcatenateTaskAction.self,
-        38: GenericCachingTaskAction.self,
-        39: ProcessSDKImportsTaskAction.self
-    ]
+    @TaskLocal internal static var taskActionImplementations: [SerializableTypeCode: any PolymorphicSerializable.Type] = [:]
+
+    public static var implementations: [SerializableTypeCode: any PolymorphicSerializable.Type] {
+        let implementations = TaskAction.taskActionImplementations
+        if implementations.isEmpty {
+            fatalError("Task action implementations task local is not set (did you forget to wrap the call stack in TaskActionRegistry.withSerializationContext?)")
+        }
+        return implementations
+    }
 }
 
 public enum DynamicTaskRequestReason: CustomStringConvertible {
@@ -228,7 +201,6 @@ public protocol DynamicTaskExecutionDelegate: ActivityReporter {
         singleUse: Bool,
         workingDirectory: Path,
         environment: EnvironmentBindings,
-        taskInputs: [ExecutionNode],
         forTarget: ConfiguredTarget?,
         priority: TaskPriority,
         showEnvironment: Bool,

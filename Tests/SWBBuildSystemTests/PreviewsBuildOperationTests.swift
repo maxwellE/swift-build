@@ -18,6 +18,8 @@ import SWBTestSupport
 import SWBProtocol
 import SWBCore
 @_spi(Testing) import SWBBuildService
+import SWBTaskExecution
+import SwiftBuildTestSupport
 
 @Suite(.requireXcode16())
 fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
@@ -46,6 +48,7 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
                         "SWIFT_VERSION": "5.0",
                         "SWIFT_OPTIMIZATION_LEVEL": "-Onone",
                         "SDK_STAT_CACHE_ENABLE": "NO",
+                        "SWIFT_ENABLE_EXPLICIT_MODULES": "NO",
                         "PRODUCT_BUNDLE_IDENTIFIER": "com.test.ProjectName",
                         "SWIFT_VALIDATE_CLANG_MODULES_ONCE_PER_BUILD_SESSION": "NO",
                     ])
@@ -80,7 +83,7 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
             let previewInfoInput = TaskGeneratePreviewInfoInput.thunkInfo(sourceFile: srcRoot.join("Sources/main.swift"), thunkVariantSuffix: "selection")
 
             // Concrete iOS simulator destination with overrides for an iPhone 14 Pro
-            let buildParameters = BuildParameters(configuration: "Debug", activeRunDestination: .iOSSimulator, overrides: [
+            let buildParameters = BuildParameters(configuration: "Debug", overrides: [
                 "ASSETCATALOG_FILTER_FOR_DEVICE_MODEL": "iPhone15,2",
                 "ASSETCATALOG_FILTER_FOR_DEVICE_OS_VERSION": core.loadSDK(.iOSSimulator).defaultDeploymentTarget,
                 "ASSETCATALOG_FILTER_FOR_THINNING_DEVICE_CONFIGURATION": "iPhone15,2",
@@ -110,7 +113,7 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
 
             var buildDescriptionID: BuildDescriptionID?
 
-            try await tester.checkBuild(parameters: buildParameters, buildCommand: .build(style: .buildOnly, skipDependencies: false), signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs) { results in
+            try await tester.checkBuild(parameters: buildParameters, runDestination: .iOSSimulator, buildCommand: .build(style: .buildOnly, skipDependencies: false), signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs) { results in
                 results.checkNoDiagnostics()
                 results.checkNote(.equal("Emplaced \(srcRoot.str)/build/Debug-iphonesimulator/AppTarget.app/Assets.car (for task: [\"LinkAssetCatalog\", \"\(srcRoot.str)/Sources/Assets.xcassets\"])"))
                 results.checkNote(.equal("Using stub executor library with Swift entry point. (for task: [\"ConstructStubExecutorLinkFileList\", \"\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/AppTarget-ExecutorLinkFileList-normal-x86_64.txt\"])"))
@@ -124,7 +127,7 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
                 // For the regular build we should expect to run the thinned asset catalog task
                 results.checkTask(.matchRuleType("CompileAssetCatalogVariant")) { task in
                     task.checkRuleInfo(["CompileAssetCatalogVariant", "thinned", "\(srcRoot.str)/build/Debug-iphonesimulator/AppTarget.app", "\(srcRoot.str)/Sources/Assets.xcassets"])
-                    task.checkCommandLine(["\(core.developerPath.str)/usr/bin/actool", "\(srcRoot.str)/Sources/Assets.xcassets", "--compile", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/assetcatalog_output/thinned", "--output-format", "human-readable-text", "--notices", "--warnings", "--export-dependency-info", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/assetcatalog_dependencies_thinned", "--output-partial-info-plist", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/assetcatalog_generated_info.plist_thinned", "--app-icon", "AppIcon", "--compress-pngs", "--enable-on-demand-resources", "YES", "--filter-for-thinning-device-configuration", "iPhone15,2", "--filter-for-device-os-version", core.loadSDK(.iOSSimulator).defaultDeploymentTarget, "--development-region", "English", "--target-device", "iphone", "--minimum-deployment-target", core.loadSDK(.iOSSimulator).defaultDeploymentTarget, "--platform", "iphonesimulator"])
+                    task.checkCommandLine(["\(core.developerPath.path.str)/usr/bin/actool", "\(srcRoot.str)/Sources/Assets.xcassets", "--compile", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/assetcatalog_output/thinned", "--output-format", "human-readable-text", "--notices", "--warnings", "--export-dependency-info", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/assetcatalog_dependencies_thinned", "--output-partial-info-plist", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/assetcatalog_generated_info.plist_thinned", "--app-icon", "AppIcon", "--compress-pngs", "--enable-on-demand-resources", "YES", "--filter-for-thinning-device-configuration", "iPhone15,2", "--filter-for-device-os-version", core.loadSDK(.iOSSimulator).defaultDeploymentTarget, "--development-region", "English", "--target-device", "iphone", "--minimum-deployment-target", core.loadSDK(.iOSSimulator).defaultDeploymentTarget, "--platform", "iphonesimulator"])
                 }
 
                 results.checkTask(.matchRuleType("LinkAssetCatalog")) { task in
@@ -142,7 +145,7 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
                 results.checkTask(.matchRule(["Ld", "\(srcRoot.str)/build/Debug-iphonesimulator/AppTarget.app/AppTarget", "normal"])) { task in
                     task.checkCommandLine(
                         [
-                            "\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang",
+                            "\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang",
                             "-Xlinker", "-reproducible",
                             "-target", "\(results.runDestinationTargetArchitecture)-apple-ios\(core.loadSDK(.iOSSimulator).defaultDeploymentTarget)-simulator",
                             "-isysroot", core.loadSDK(.iOSSimulator).path.str,
@@ -190,18 +193,94 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
                         // Ignore irrelevant paths which change often
                         var compileCommandLine = previewInfo.thunkInfo?.compileCommandLine ?? []
                         for idx in compileCommandLine.indices.reversed().dropFirst() {
-                            if ["-external-plugin-path", "-plugin-path", "-blocklist-file", "-prebuilt-module-cache-path", "-in-process-plugin-server-path"].contains(compileCommandLine[idx]) {
+                            if ["-external-plugin-path", "-plugin-path", "-blocklist-file", "-prebuilt-module-cache-path", "-in-process-plugin-server-path", "-resource-dir"].contains(compileCommandLine[idx]) {
                                 // Remove the flag and argument
                                 compileCommandLine.remove(at: idx)
                                 compileCommandLine.remove(at: idx)
                             }
-                            if ["-disable-clang-spi"].contains(compileCommandLine[idx]) {
+                            if ["-disable-clang-spi", "-no-auto-bridging-header-chaining", "-auto-bridging-header-chaining"].contains(compileCommandLine[idx]) {
                                 // Remove the flag
+                                compileCommandLine.remove(at: idx)
+                            }
+                            if ["-fcolor-diagnostics", "-fno-color-diagnostics"].contains(compileCommandLine[idx+1]) && compileCommandLine[idx] == "-Xcc" {
+                                compileCommandLine.remove(at: idx)
                                 compileCommandLine.remove(at: idx)
                             }
                         }
 
-                        XCTAssertEqualSequences(compileCommandLine, ["\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend", "-frontend", "-c", "-primary-file", "\(srcRoot.str)/Sources/main.swift", "-serialize-diagnostics-path", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/main.selection.preview-thunk.dia", "-target", "\(results.runDestinationTargetArchitecture)-apple-ios\(core.loadSDK(.iOSSimulator).defaultDeploymentTarget)-simulator", "-enable-objc-interop", "-sdk", "\(core.loadSDK(.iOSSimulator).path.str)", "-I", "\(srcRoot.str)/build/Debug-iphonesimulator", "-F", "\(srcRoot.str)/build/Debug-iphonesimulator", "-vfsoverlay", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/vfsoverlay-main.selection.preview-thunk.swift.json", "-no-color-diagnostics", "-swift-version", "5", "-enforce-exclusivity=checked", "-Onone", "-serialize-debugging-options", "-disable-modules-validate-system-headers", "-enable-experimental-feature", "DebugDescriptionMacro", "-enable-bare-slash-regex", "-empty-abi-descriptor", "-Xcc", "-working-directory", "-Xcc", "\(srcRoot.str)", "-resource-dir", "\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift", "-Xcc", "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/swift-overrides.hmap", "-Xcc", "-iquote", "-Xcc", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/AppTarget-generated-files.hmap", "-Xcc", "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/AppTarget-own-target-headers.hmap", "-Xcc", "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/AppTarget-all-target-headers.hmap", "-Xcc", "-iquote", "-Xcc", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/AppTarget-project-headers.hmap", "-Xcc", "-I\(srcRoot.str)/build/Debug-iphonesimulator/include", "-Xcc", "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/DerivedSources-normal/\(results.runDestinationTargetArchitecture)", "-Xcc", "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/DerivedSources/\(results.runDestinationTargetArchitecture)", "-Xcc", "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/DerivedSources", "-module-name", "AppTarget", "-target-sdk-version", "\(core.loadSDK(.iOSSimulator).defaultDeploymentTarget)", "-target-sdk-name", "iphonesimulator\(core.loadSDK(.iOSSimulator).defaultDeploymentTarget)", "-o", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/main.selection.preview-thunk.o"])
+                        XCTAssertEqualSequences(
+                            compileCommandLine,
+                            [
+                                "\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend",
+                                "-frontend",
+                                "-c",
+                                "-primary-file",
+                                "\(srcRoot.str)/Sources/main.swift",
+                                "-serialize-diagnostics-path",
+                                "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/main.selection.preview-thunk.dia",
+                                "-target",
+                                "\(results.runDestinationTargetArchitecture)-apple-ios\(core.loadSDK(.iOSSimulator).defaultDeploymentTarget)-simulator",
+                                "-enable-objc-interop",
+                                "-sdk",
+                                "\(core.loadSDK(.iOSSimulator).path.str)",
+                                "-I",
+                                "\(srcRoot.str)/build/Debug-iphonesimulator",
+                                "-F",
+                                "\(srcRoot.str)/build/Debug-iphonesimulator",
+                                "-vfsoverlay",
+                                "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/vfsoverlay-main.selection.preview-thunk.swift.json",
+                                "-no-color-diagnostics",
+                                "-g",
+                                "-debug-info-format=dwarf",
+                                "-dwarf-version=5",
+                                "-swift-version",
+                                "5",
+                                "-enforce-exclusivity=checked",
+                                "-Onone",
+                                "-serialize-debugging-options",
+                                "-enable-experimental-feature",
+                                "DebugDescriptionMacro",
+                                "-enable-bare-slash-regex",
+                                "-empty-abi-descriptor",
+                                "-Xcc",
+                                "-working-directory",
+                                "-Xcc",
+                                "\(srcRoot.str)",
+                                "-enable-anonymous-context-mangled-names",
+                                "-file-compilation-dir",
+                                "\(srcRoot.str)",
+                                "-Xcc",
+                                "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/swift-overrides.hmap",
+                                "-Xcc",
+                                "-iquote",
+                                "-Xcc",
+                                "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/AppTarget-generated-files.hmap",
+                                "-Xcc",
+                                "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/AppTarget-own-target-headers.hmap",
+                                "-Xcc",
+                                "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/AppTarget-all-target-headers.hmap",
+                                "-Xcc",
+                                "-iquote",
+                                "-Xcc",
+                                "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/AppTarget-project-headers.hmap",
+                                "-Xcc",
+                                "-I\(srcRoot.str)/build/Debug-iphonesimulator/include",
+                                "-Xcc",
+                                "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/DerivedSources-normal/\(results.runDestinationTargetArchitecture)",
+                                "-Xcc",
+                                "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/DerivedSources/\(results.runDestinationTargetArchitecture)",
+                                "-Xcc",
+                                "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/DerivedSources",
+                                "-module-name",
+                                "AppTarget",
+                                "-target-sdk-version",
+                                "\(core.loadSDK(.iOSSimulator).defaultDeploymentTarget)",
+                                "-target-sdk-name",
+                                "iphonesimulator\(core.loadSDK(.iOSSimulator).defaultDeploymentTarget)",
+                                "-o",
+                                "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/main.selection.preview-thunk.o"
+                            ]
+                        )
                         #expect(previewInfo.thunkInfo?.thunkSourceFile == Path("\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/main.selection.preview-thunk.swift"))
                         #expect(previewInfo.thunkInfo?.thunkObjectFile == Path("\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/main.selection.preview-thunk.o"))
 
@@ -223,7 +302,13 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
                         #expect(targetPreviewInfo.targetDependencyInfo?.objectFileInputMap == [
                             "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/main.o": Set(["\(srcRoot.str)/Sources/main.swift"])
                             ])
-                        XCTAssertEqualSequences(targetPreviewInfo.targetDependencyInfo?.linkCommandLine ?? [], ["\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", "-Xlinker", "-reproducible", "-target", "\(results.runDestinationTargetArchitecture)-apple-ios\(core.loadSDK(.iOSSimulator).defaultDeploymentTarget)-simulator", "-dynamiclib", "-isysroot", core.loadSDK(.iOSSimulator).path.str, "-Os", "-Xlinker", "-warn_unused_dylibs", "-L\(srcRoot.str)/build/EagerLinkingTBDs/Debug-iphonesimulator", "-L\(srcRoot.str)/build/Debug-iphonesimulator", "-F\(srcRoot.str)/build/EagerLinkingTBDs/Debug-iphonesimulator", "-F\(srcRoot.str)/build/Debug-iphonesimulator", "-filelist", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/AppTarget.LinkFileList", "-install_name", "@rpath/AppTarget.debug.dylib", "-dead_strip", "-Xlinker", "-object_path_lto", "-Xlinker", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/AppTarget_lto.o", "-Xlinker", "-objc_abi_version", "-Xlinker", "2", "-Xlinker", "-dependency_info", "-Xlinker", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/AppTarget_dependency_info.dat", "-L\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/iphonesimulator", "-L/usr/lib/swift", "-Xlinker", "-add_ast_path", "-Xlinker", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/AppTarget.swiftmodule", "-Xlinker", "-alias", "-Xlinker", "_main", "-Xlinker", "___debug_main_executable_dylib_entry_point", "-Xlinker", "-no_adhoc_codesign", "-o", "\(srcRoot.str)/build/Debug-iphonesimulator/AppTarget.app/AppTarget.debug.dylib"])
+                        var linkerCommandLine = targetPreviewInfo.targetDependencyInfo?.linkCommandLine ?? []
+                        for idx in linkerCommandLine.indices.reversed() {
+                            if linkerCommandLine[idx].hasSuffix("linker-args.resp") {
+                                linkerCommandLine.remove(at: idx)
+                            }
+                        }
+                        XCTAssertEqualSequences(linkerCommandLine, ["\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", "-Xlinker", "-reproducible", "-target", "\(results.runDestinationTargetArchitecture)-apple-ios\(core.loadSDK(.iOSSimulator).defaultDeploymentTarget)-simulator", "-dynamiclib", "-isysroot", core.loadSDK(.iOSSimulator).path.str, "-Os", "-Xlinker", "-warn_unused_dylibs", "-L\(srcRoot.str)/build/EagerLinkingTBDs/Debug-iphonesimulator", "-L\(srcRoot.str)/build/Debug-iphonesimulator", "-F\(srcRoot.str)/build/EagerLinkingTBDs/Debug-iphonesimulator", "-F\(srcRoot.str)/build/Debug-iphonesimulator", "-filelist", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/AppTarget.LinkFileList", "-install_name", "@rpath/AppTarget.debug.dylib", "-dead_strip", "-Xlinker", "-object_path_lto", "-Xlinker", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/AppTarget_lto.o", "-Xlinker", "-objc_abi_version", "-Xlinker", "2", "-Xlinker", "-dependency_info", "-Xlinker", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/AppTarget_dependency_info.dat", "-L\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/iphonesimulator", "-L/usr/lib/swift", "-Xlinker", "-add_ast_path", "-Xlinker", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/AppTarget.swiftmodule", "-Xlinker", "-alias", "-Xlinker", "_main", "-Xlinker", "___debug_main_executable_dylib_entry_point", "-Xlinker", "-no_adhoc_codesign", "-o", "\(srcRoot.str)/build/Debug-iphonesimulator/AppTarget.app/AppTarget.debug.dylib"])
                     }
                 }
 
@@ -239,9 +324,9 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
                 }
             }
 
-            try await tester.checkNullBuild(parameters: buildParameters, buildCommand: .build(style: .buildOnly, skipDependencies: false), signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs)
+            try await tester.checkNullBuild(parameters: buildParameters, runDestination: .iOSSimulator, buildCommand: .build(style: .buildOnly, skipDependencies: false), signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs)
 
-            try await tester.checkBuild(parameters: buildParameters, buildCommand: .preview(style: .xojit), signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs) { results in
+            try await tester.checkBuild(parameters: buildParameters, runDestination: .iOSSimulator, buildCommand: .preview(style: .xojit), signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs) { results in
                 results.checkNoDiagnostics()
                 results.checkNote(.equal("Emplaced \(srcRoot.str)/build/Debug-iphonesimulator/AppTarget.app/Assets.car (for task: [\"LinkAssetCatalog\", \"\(srcRoot.str)/Sources/Assets.xcassets\"])"))
                 results.checkNoNotes()
@@ -255,7 +340,7 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
                 // For the preview build we should expect to run the unthinned asset catalog task
                 results.checkTask(.matchRuleType("CompileAssetCatalogVariant")) { task in
                     task.checkRuleInfo(["CompileAssetCatalogVariant", "unthinned", "\(srcRoot.str)/build/Debug-iphonesimulator/AppTarget.app", "\(srcRoot.str)/Sources/Assets.xcassets"])
-                    task.checkCommandLine(["\(core.developerPath.str)/usr/bin/actool", "\(srcRoot.str)/Sources/Assets.xcassets", "--compile", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/assetcatalog_output/unthinned", "--output-format", "human-readable-text", "--notices", "--warnings", "--export-dependency-info", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/assetcatalog_dependencies_unthinned", "--output-partial-info-plist", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/assetcatalog_generated_info.plist_unthinned", "--app-icon", "AppIcon", "--compress-pngs", "--enable-on-demand-resources", "YES", "--development-region", "English", "--target-device", "iphone", "--minimum-deployment-target", core.loadSDK(.iOSSimulator).defaultDeploymentTarget, "--platform", "iphonesimulator"])
+                    task.checkCommandLine(["\(core.developerPath.path.str)/usr/bin/actool", "\(srcRoot.str)/Sources/Assets.xcassets", "--compile", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/assetcatalog_output/unthinned", "--output-format", "human-readable-text", "--notices", "--warnings", "--export-dependency-info", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/assetcatalog_dependencies_unthinned", "--output-partial-info-plist", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/assetcatalog_generated_info.plist_unthinned", "--app-icon", "AppIcon", "--compress-pngs", "--enable-on-demand-resources", "YES", "--development-region", "English", "--target-device", "iphone", "--minimum-deployment-target", core.loadSDK(.iOSSimulator).defaultDeploymentTarget, "--platform", "iphonesimulator"])
                 }
 
                 // And we should link into place again, because the inputs (e.g. the unthinned catalog) changed
@@ -264,9 +349,9 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
                 results.checkNoTask()
             }
 
-            try await tester.checkNullBuild(parameters: buildParameters, buildCommand: .preview(style: .xojit), signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs)
+            try await tester.checkNullBuild(parameters: buildParameters, runDestination: .iOSSimulator, buildCommand: .preview(style: .xojit), signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs)
 
-            try await tester.checkBuild(parameters: buildParameters, buildCommand: .build(style: .buildOnly, skipDependencies: false), signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs) { results in
+            try await tester.checkBuild(parameters: buildParameters, runDestination: .iOSSimulator, buildCommand: .build(style: .buildOnly, skipDependencies: false), signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs) { results in
                 results.checkNoDiagnostics()
 
                 // Switching from preview to build should not have changed the build description
@@ -279,9 +364,9 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
                 results.checkNoTask()
             }
 
-            try await tester.checkNullBuild(parameters: buildParameters, buildCommand: .build(style: .buildOnly, skipDependencies: false), signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs)
+            try await tester.checkNullBuild(parameters: buildParameters, runDestination: .iOSSimulator, buildCommand: .build(style: .buildOnly, skipDependencies: false), signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs)
 
-            try await tester.checkBuild(parameters: buildParameters, buildCommand: .preview(style: .xojit), signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs) { results in
+            try await tester.checkBuild(parameters: buildParameters, runDestination: .iOSSimulator, buildCommand: .preview(style: .xojit), signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs) { results in
                 results.checkNoDiagnostics()
 
                 // Switching from build to preview should not have changed the build description
@@ -294,7 +379,7 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
                 results.checkNoTask()
             }
 
-            try await tester.checkNullBuild(parameters: buildParameters, buildCommand: .preview(style: .xojit), signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs)
+            try await tester.checkNullBuild(parameters: buildParameters, runDestination: .iOSSimulator, buildCommand: .preview(style: .xojit), signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs)
         }
     }
 
@@ -326,6 +411,7 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
                         "SDKROOT": "iphoneos",
                         "SWIFT_VERSION": "5.0",
                         "SWIFT_OPTIMIZATION_LEVEL": "-Onone",
+                        "SWIFT_ENABLE_EXPLICIT_MODULES": "NO",
                         "SDK_STAT_CACHE_ENABLE": "NO",
                         "SWIFT_VALIDATE_CLANG_MODULES_ONCE_PER_BUILD_SESSION": "NO",
                     ])
@@ -366,7 +452,7 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
             let previewInfoInput = TaskGeneratePreviewInfoInput.thunkInfo(sourceFile: srcRoot.join("Sources/File1.swift"), thunkVariantSuffix: "selection")
 
             // Concrete iOS simulator destination with overrides for an iPhone 14 Pro
-            let buildParameters = BuildParameters(configuration: "Debug", activeRunDestination: .iOSSimulator, overrides: [
+            let buildParameters = BuildParameters(configuration: "Debug", overrides: [
                 "ASSETCATALOG_FILTER_FOR_DEVICE_MODEL": "iPhone15,2",
                 "ASSETCATALOG_FILTER_FOR_DEVICE_OS_VERSION": core.loadSDK(.iOSSimulator).defaultDeploymentTarget,
                 "ASSETCATALOG_FILTER_FOR_THINNING_DEVICE_CONFIGURATION": "iPhone15,2",
@@ -386,7 +472,7 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
 
             let provisioningInputs = ["AppTarget": ProvisioningTaskInputs(identityHash: "-", signedEntitlements: .plDict([:]), simulatedEntitlements: .plDict(["foo": "bar"]))]
 
-            try await tester.checkBuild(parameters: buildParameters, buildCommand: .build(style: .buildOnly, skipDependencies: false), signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs) { results in
+            try await tester.checkBuild(parameters: buildParameters, runDestination: .iOSSimulator, buildCommand: .build(style: .buildOnly, skipDependencies: false), signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs) { results in
                 results.checkNoDiagnostics()
 
                 let buildDescription = results.buildDescription
@@ -408,18 +494,97 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
                         // Ignore irrelevant paths which change often.
                         var compileCommandLine = previewInfo.thunkInfo?.compileCommandLine ?? []
                         for idx in compileCommandLine.indices.reversed().dropFirst() {
-                            if ["-external-plugin-path", "-plugin-path", "-blocklist-file", "-prebuilt-module-cache-path", "-in-process-plugin-server-path"].contains(compileCommandLine[idx]) {
+                            if ["-external-plugin-path", "-plugin-path", "-blocklist-file", "-prebuilt-module-cache-path", "-in-process-plugin-server-path", "-resource-dir"].contains(compileCommandLine[idx]) {
                                 // Remove the flag and argument
                                 compileCommandLine.remove(at: idx)
                                 compileCommandLine.remove(at: idx)
                             }
-                            if ["-disable-clang-spi"].contains(compileCommandLine[idx]) {
+                            if ["-disable-clang-spi", "-no-auto-bridging-header-chaining", "-auto-bridging-header-chaining"].contains(compileCommandLine[idx]) {
                                 // Remove the flag
+                                compileCommandLine.remove(at: idx)
+                            }
+                            if ["-fcolor-diagnostics", "-fno-color-diagnostics"].contains(compileCommandLine[idx+1]) && compileCommandLine[idx] == "-Xcc" {
+                                compileCommandLine.remove(at: idx)
                                 compileCommandLine.remove(at: idx)
                             }
                         }
 
-                        XCTAssertEqualSequences(compileCommandLine, ["\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend", "-frontend", "-c", "\(srcRoot.str)/Sources/main.swift", "-primary-file", "\(srcRoot.str)/Sources/File1.swift", "\(srcRoot.str)/Sources/File2.swift", "\(srcRoot.str)/Sources/File3.swift", "-serialize-diagnostics-path", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/File1.selection.preview-thunk.dia", "-target", "\(results.runDestinationTargetArchitecture)-apple-ios\(core.loadSDK(.iOSSimulator).defaultDeploymentTarget)-simulator", "-enable-objc-interop", "-sdk", "\(core.loadSDK(.iOSSimulator).path.str)", "-I", "\(srcRoot.str)/build/Debug-iphonesimulator", "-F", "\(srcRoot.str)/build/Debug-iphonesimulator", "-vfsoverlay", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/vfsoverlay-File1.selection.preview-thunk.swift.json", "-no-color-diagnostics", "-swift-version", "5", "-enforce-exclusivity=checked", "-Onone", "-serialize-debugging-options", "-disable-modules-validate-system-headers", "-enable-experimental-feature", "DebugDescriptionMacro", "-enable-bare-slash-regex", "-empty-abi-descriptor", "-Xcc", "-working-directory", "-Xcc", "\(srcRoot.str)", "-resource-dir", "\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift", "-Xcc", "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/swift-overrides.hmap", "-Xcc", "-iquote", "-Xcc", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/AppTarget-generated-files.hmap", "-Xcc", "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/AppTarget-own-target-headers.hmap", "-Xcc", "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/AppTarget-all-target-headers.hmap", "-Xcc", "-iquote", "-Xcc", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/AppTarget-project-headers.hmap", "-Xcc", "-I\(srcRoot.str)/build/Debug-iphonesimulator/include", "-Xcc", "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/DerivedSources-normal/\(results.runDestinationTargetArchitecture)", "-Xcc", "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/DerivedSources/\(results.runDestinationTargetArchitecture)", "-Xcc", "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/DerivedSources", "-module-name", "AppTarget", "-target-sdk-version", "\(core.loadSDK(.iOSSimulator).defaultDeploymentTarget)", "-target-sdk-name", "iphonesimulator\(core.loadSDK(.iOSSimulator).defaultDeploymentTarget)", "-o", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/File1.selection.preview-thunk.o"])
+                        XCTAssertEqualSequences(
+                            compileCommandLine,
+                            [
+                                "\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend",
+                                "-frontend",
+                                "-c",
+                                "\(srcRoot.str)/Sources/main.swift",
+                                "-primary-file",
+                                "\(srcRoot.str)/Sources/File1.swift",
+                                "\(srcRoot.str)/Sources/File2.swift",
+                                "\(srcRoot.str)/Sources/File3.swift",
+                                "-serialize-diagnostics-path",
+                                "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/File1.selection.preview-thunk.dia",
+                                "-target",
+                                "\(results.runDestinationTargetArchitecture)-apple-ios\(core.loadSDK(.iOSSimulator).defaultDeploymentTarget)-simulator",
+                                "-enable-objc-interop",
+                                "-sdk",
+                                "\(core.loadSDK(.iOSSimulator).path.str)",
+                                "-I",
+                                "\(srcRoot.str)/build/Debug-iphonesimulator",
+                                "-F",
+                                "\(srcRoot.str)/build/Debug-iphonesimulator",
+                                "-vfsoverlay",
+                                "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/vfsoverlay-File1.selection.preview-thunk.swift.json",
+                                "-no-color-diagnostics",
+                                "-g",
+                                "-debug-info-format=dwarf",
+                                "-dwarf-version=5",
+                                "-swift-version",
+                                "5",
+                                "-enforce-exclusivity=checked",
+                                "-Onone",
+                                "-serialize-debugging-options",
+                                "-enable-experimental-feature",
+                                "DebugDescriptionMacro",
+                                "-enable-bare-slash-regex",
+                                "-empty-abi-descriptor",
+                                "-Xcc",
+                                "-working-directory",
+                                "-Xcc",
+                                "\(srcRoot.str)",
+                                "-enable-anonymous-context-mangled-names",
+                                "-file-compilation-dir",
+                                "\(srcRoot.str)",
+                                "-Xcc",
+                                "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/swift-overrides.hmap",
+                                "-Xcc",
+                                "-iquote",
+                                "-Xcc",
+                                "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/AppTarget-generated-files.hmap",
+                                "-Xcc",
+                                "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/AppTarget-own-target-headers.hmap",
+                                "-Xcc",
+                                "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/AppTarget-all-target-headers.hmap",
+                                "-Xcc",
+                                "-iquote",
+                                "-Xcc",
+                                "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/AppTarget-project-headers.hmap",
+                                "-Xcc",
+                                "-I\(srcRoot.str)/build/Debug-iphonesimulator/include",
+                                "-Xcc",
+                                "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/DerivedSources-normal/\(results.runDestinationTargetArchitecture)",
+                                "-Xcc",
+                                "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/DerivedSources/\(results.runDestinationTargetArchitecture)",
+                                "-Xcc",
+                                "-I\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/DerivedSources",
+                                "-module-name",
+                                "AppTarget",
+                                "-target-sdk-version",
+                                "\(core.loadSDK(.iOSSimulator).defaultDeploymentTarget)",
+                                "-target-sdk-name",
+                                "iphonesimulator\(core.loadSDK(.iOSSimulator).defaultDeploymentTarget)",
+                                "-o",
+                                "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/File1.selection.preview-thunk.o"
+                            ]
+                        )
                         #expect(previewInfo.thunkInfo?.thunkSourceFile == Path("\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/File1.selection.preview-thunk.swift"))
                         #expect(previewInfo.thunkInfo?.thunkObjectFile == Path("\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/File1.selection.preview-thunk.o"))
 
@@ -444,7 +609,13 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
                             "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/File2.o": Set(["\(srcRoot.str)/Sources/File2.swift"]),
                             "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/File3.o": Set(["\(srcRoot.str)/Sources/File3.swift"]),
                         ])
-                        XCTAssertEqualSequences(targetPreviewInfo.targetDependencyInfo?.linkCommandLine ?? [], ["\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", "-Xlinker", "-reproducible", "-target", "\(results.runDestinationTargetArchitecture)-apple-ios\(core.loadSDK(.iOSSimulator).defaultDeploymentTarget)-simulator", "-dynamiclib", "-isysroot", core.loadSDK(.iOSSimulator).path.str, "-Os", "-L\(srcRoot.str)/build/EagerLinkingTBDs/Debug-iphonesimulator", "-L\(srcRoot.str)/build/Debug-iphonesimulator", "-F\(srcRoot.str)/build/EagerLinkingTBDs/Debug-iphonesimulator", "-F\(srcRoot.str)/build/Debug-iphonesimulator", "-filelist", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/AppTarget.LinkFileList", "-install_name", "@rpath/AppTarget.debug.dylib", "-dead_strip", "-Xlinker", "-object_path_lto", "-Xlinker", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/AppTarget_lto.o", "-Xlinker", "-objc_abi_version", "-Xlinker", "2", "-Xlinker", "-dependency_info", "-Xlinker", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/AppTarget_dependency_info.dat", "-fobjc-link-runtime", "-L\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/iphonesimulator", "-L/usr/lib/swift", "-Xlinker", "-add_ast_path", "-Xlinker", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/AppTarget.swiftmodule", "-Xlinker", "-alias", "-Xlinker", "_main", "-Xlinker", "___debug_main_executable_dylib_entry_point", "-Xlinker", "-no_adhoc_codesign", "-o", "\(srcRoot.str)/build/Debug-iphonesimulator/AppTarget.app/AppTarget.debug.dylib"])
+                        var linkerCommandLine = targetPreviewInfo.targetDependencyInfo?.linkCommandLine ?? []
+                        for idx in linkerCommandLine.indices.reversed() {
+                            if linkerCommandLine[idx].hasSuffix("linker-args.resp") {
+                                linkerCommandLine.remove(at: idx)
+                            }
+                        }
+                        XCTAssertEqualSequences(linkerCommandLine, ["\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", "-Xlinker", "-reproducible", "-target", "\(results.runDestinationTargetArchitecture)-apple-ios\(core.loadSDK(.iOSSimulator).defaultDeploymentTarget)-simulator", "-dynamiclib", "-isysroot", core.loadSDK(.iOSSimulator).path.str, "-Os", "-L\(srcRoot.str)/build/EagerLinkingTBDs/Debug-iphonesimulator", "-L\(srcRoot.str)/build/Debug-iphonesimulator", "-F\(srcRoot.str)/build/EagerLinkingTBDs/Debug-iphonesimulator", "-F\(srcRoot.str)/build/Debug-iphonesimulator", "-filelist", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/AppTarget.LinkFileList", "-install_name", "@rpath/AppTarget.debug.dylib", "-dead_strip", "-Xlinker", "-object_path_lto", "-Xlinker", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/AppTarget_lto.o", "-Xlinker", "-objc_abi_version", "-Xlinker", "2", "-Xlinker", "-dependency_info", "-Xlinker", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/AppTarget_dependency_info.dat", "-fobjc-link-runtime", "-L\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/iphonesimulator", "-L/usr/lib/swift", "-Xlinker", "-add_ast_path", "-Xlinker", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppTarget.build/Objects-normal/\(results.runDestinationTargetArchitecture)/AppTarget.swiftmodule", "-Xlinker", "-alias", "-Xlinker", "_main", "-Xlinker", "___debug_main_executable_dylib_entry_point", "-Xlinker", "-no_adhoc_codesign", "-o", "\(srcRoot.str)/build/Debug-iphonesimulator/AppTarget.app/AppTarget.debug.dylib"])
                     }
                 }
             }
@@ -494,12 +665,12 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
             try tester.fs.createDirectory(srcRoot.join("Sources"), recursive: true)
             try tester.fs.write(srcRoot.join("Sources/main.swift"), contents: "")
 
-            let buildParameters = BuildParameters(configuration: "Debug", activeRunDestination: .anyiOSSimulator, overrides: [
+            let buildParameters = BuildParameters(configuration: "Debug", overrides: [
                 // And XOJIT previews enabled, which should be passed when the workspace setting is on
                 "ENABLE_XOJIT_PREVIEWS": "YES",
             ])
 
-            try await tester.checkBuild(parameters: buildParameters, buildCommand: .build(style: .buildOnly, skipDependencies: false)) { results in
+            try await tester.checkBuild(parameters: buildParameters, runDestination: .anyiOSSimulator, buildCommand: .build(style: .buildOnly, skipDependencies: false)) { results in
                 results.checkNoDiagnostics()
 
                 results.consumeTasksMatchingRuleTypes(["Copy", "CopySwiftLibs", "ExtractAppIntentsMetadata", "Gate", "GenerateDSYMFile", "MkDir", "CreateBuildDirectory", "WriteAuxiliaryFile", "ClangStatCache", "RegisterExecutionPolicyException", "AppIntentsSSUTraining", "ProcessInfoPlistFile", "Touch", "Validate", "LinkAssetCatalogSignature", "SwiftExplicitDependencyCompileModuleFromInterface", "SwiftExplicitDependencyGeneratePcm", "ConstructStubExecutorLinkFileList", "ProcessSDKImports"])
@@ -568,12 +739,12 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
             try tester.fs.createDirectory(srcRoot.join("Sources"), recursive: true)
             try tester.fs.write(srcRoot.join("Sources/main.swift"), contents: "")
 
-            let buildParameters = BuildParameters(configuration: "Debug", activeRunDestination: .iOSSimulator, overrides: [
+            let buildParameters = BuildParameters(configuration: "Debug", overrides: [
                 // And XOJIT previews enabled, which should be passed when the workspace setting is on
                 "ENABLE_XOJIT_PREVIEWS": "YES",
             ])
 
-            try await tester.checkBuild(parameters: buildParameters, buildCommand: .build(style: .buildOnly, skipDependencies: false)) { results in
+            try await tester.checkBuild(parameters: buildParameters, runDestination: .iOSSimulator, buildCommand: .build(style: .buildOnly, skipDependencies: false)) { results in
                 results.checkNoDiagnostics()
 
                 try results.checkTask(.matchRule(["WriteAuxiliaryFile", "\(srcRoot.str)/build/ProjectName.build/Debug-iphonesimulator/AppExTarget.build/AppExTarget-DebugDylibPath-normal-\(results.runDestinationTargetArchitecture).txt"])) { _ in
@@ -593,7 +764,7 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
                 results.checkTask(.matchRule(["Ld", "\(srcRoot.str)/build/Debug-iphonesimulator/AppExTarget.appex/AppExTarget", "normal"])) { task in
                     task.checkCommandLine(
                         [
-                            "\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang",
+                            "\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang",
                             "-Xlinker", "-reproducible",
                             "-target", "\(results.runDestinationTargetArchitecture)-apple-ios\(core.loadSDK(.iOSSimulator).defaultDeploymentTarget)-simulator",
                             "-isysroot", core.loadSDK(.iOSSimulator).path.str,
@@ -776,7 +947,7 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
 
                 let previewInfoInput = TaskGeneratePreviewInfoInput.thunkInfo(sourceFile: srcRoot.join("Sources/main.swift"), thunkVariantSuffix: "selection")
 
-                try await tester.checkBuild(parameters: BuildParameters(configuration: "Debug", activeRunDestination: .anyiOSDevice)) { results in
+                try await tester.checkBuild(parameters: BuildParameters(configuration: "Debug"), runDestination: .anyiOSDevice) { results in
                     results.checkNoDiagnostics()
                     let buildDescription = results.buildDescription
                     let targets = buildDescription.allConfiguredTargets.sorted { $0.target.name < $1.target.name }
@@ -894,7 +1065,7 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
 
             let previewInfoInput = TaskGeneratePreviewInfoInput.thunkInfo(sourceFile: srcRoot.join("Sources/main.swift"), thunkVariantSuffix: "selection")
 
-            try await tester.checkBuild(parameters: BuildParameters(configuration: "Debug")) { results in
+            try await tester.checkBuild(parameters: BuildParameters(configuration: "Debug"), runDestination: .macOS) { results in
                 results.checkNoDiagnostics()
 
                 let buildDescription = results.buildDescription
@@ -945,7 +1116,7 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
         }
 
         XCTAssertEqualSequences(compileCommandLine, [[
-            "\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+            "\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
             "-enforce-exclusivity=checked",
             "-enable-experimental-feature", "DebugDescriptionMacro",
             "-sdk", sdkPath.str,
@@ -991,8 +1162,15 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
             linkStyleArgs = ["-bundle", "-bundle_loader", linkAgainst.str]
         }
 
-        XCTAssertEqualSequences(previewInfo.thunkInfo?.linkCommandLine ?? [], [[
-            "\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang",
+        var linkerCommandLine = previewInfo.thunkInfo?.linkCommandLine ?? []
+        for idx in linkerCommandLine.indices.reversed() {
+            if linkerCommandLine[idx].hasSuffix("linker-args.resp") {
+                linkerCommandLine.remove(at: idx)
+            }
+        }
+
+        XCTAssertEqualSequences(linkerCommandLine, [[
+            "\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang",
             "-Xlinker", "-reproducible",
             "-target", "\(arch)-apple-ios\(core.loadSDK(.iOS).defaultDeploymentTarget)",
             "-isysroot", sdkPath.str,
@@ -1002,9 +1180,9 @@ fileprivate struct PreviewsBuildOperationTests: CoreBasedTests {
             "-F\(srcRoot.str)/build/EagerLinkingTBDs/Debug-iphoneos",
             "-F\(srcRoot.str)/build/Debug-iphoneos",
             "-fobjc-link-runtime",
-            "-L\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/iphoneos",
+            "-L\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/iphoneos",
             "-L/usr/lib/swift",
-        ], explicitModuleBuild ? ["@\(srcRoot.str)/build/ProjectName.build/Debug-iphoneos/\(targetName).build/Objects-normal/\(arch)/\(targetName)-linker-args.resp"] : [], linkStyleArgs, [
+        ], linkStyleArgs, [
                 "\(srcRoot.str)/build/ProjectName.build/Debug-iphoneos/\(targetName).build/Objects-normal/\(arch)/main.selection.preview-thunk.o",
                 "-o", "\(srcRoot.str)/build/ProjectName.build/Debug-iphoneos/\(targetName).build/Objects-normal/\(arch)/main.selection.preview-thunk.dylib",
             ]].reduce([], +))

@@ -105,7 +105,7 @@ fileprivate struct ProcessTests {
         #expect(result.exitStatus == .exit(42))
     }
 
-    @Test(.enabled(if: StackedSearchPath(environment: ProcessInfo.processInfo.environment, fs: localFS).lookup(Path("clang")) != nil, "requires clang in PATH"))
+    @Test(.enabled(if: StackedSearchPath(environment: .current, fs: localFS).lookup(Path("clang")) != nil, "requires clang in PATH"))
     func uncaughtSignal() async throws {
         try await withTemporaryDirectory { tmpDir in
             let mainCPath = tmpDir.join("main.c").str
@@ -124,7 +124,7 @@ fileprivate struct ProcessTests {
                 #ifdef _WIN32
                 TerminateProcess(GetCurrentProcess(), 0xC0000009); // STATUS_BAD_INITIAL_STACK
                 #else
-                kill(getpid(), SIGKILL);
+                kill(getpid(), SIGKILL); // ignore-unacceptable-language; POSIX API
                 #endif
                 return 0;
             }
@@ -226,13 +226,7 @@ extension SWBUtil.Process {
         let hostOS = try ProcessInfo.processInfo.hostOperatingSystem()
         let scriptString = try await script(hostOS)
         if hostOS == .windows {
-            // https://github.com/apple/swift-foundation/issues/860
-            if ProcessInfo.processInfo.isTranslated {
-                let systemRoot = try #require(getEnvironmentVariable("SystemRoot"), "Can't determine path to cmd.exe because the SystemRoot environment variable is not set")
-                commandShellPath = "\(systemRoot)\\SysWOW64\\cmd.exe"
-            } else {
-                commandShellPath = try #require(getEnvironmentVariable("ComSpec"), "Can't determine path to cmd.exe because the ComSpec environment variable is not set")
-            }
+            commandShellPath = try #require(getEnvironmentVariable("ComSpec"), "Can't determine path to cmd.exe because the ComSpec environment variable is not set")
             arguments = ["/c", scriptString]
         } else {
             commandShellPath = "/bin/sh"

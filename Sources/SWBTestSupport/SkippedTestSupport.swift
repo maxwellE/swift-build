@@ -12,6 +12,7 @@
 
 import class Foundation.FileManager
 import class Foundation.ProcessInfo
+import struct Foundation.URL
 
 package import SWBUtil
 package import SWBCore
@@ -115,15 +116,17 @@ extension Trait where Self == Testing.ConditionTrait {
     package static func requireSDKs(_ knownSDKs: KnownSDK..., comment: Comment? = nil) -> Self {
         enabled(comment != nil ? "required SDKs are not installed: \(comment?.description ?? "")" : "required SDKs are not installed.", {
             let sdkRegistry = try await ConditionTraitContext.shared.getCore().sdkRegistry
-            let missingSDKs = await knownSDKs.asyncFilter { sdkRegistry.lookup($0.sdkName) == nil }.sorted()
+            let missingSDKs = await knownSDKs.asyncFilter { knownSDK in
+                sdkRegistry.lookup(knownSDK.sdkName) == nil && sdkRegistry.allSDKs.count(where: { $0.aliases.contains(knownSDK.sdkName) }) == 0
+            }.sorted()
             return missingSDKs.isEmpty
         })
     }
 
     /// Constructs a condition trait that causes a test to be disabled if not running on the specified host OS.
-    /// - parameter when: An additional constraint to apply such that the host OS requirement is only applied if this parameer is _also_ true. Defaults to true.
-    package static func requireHostOS(_ os: OperatingSystem, when condition: Bool = true) -> Self {
-        enabled("This test requires a \(os) host OS.", { try ProcessInfo.processInfo.hostOperatingSystem() == os && condition })
+    /// - parameter when: An additional constraint to apply such that the host OS requirement is only applied if this parameter is _also_ true. Defaults to true.
+    package static func requireHostOS(_ os: OperatingSystem..., when condition: Bool = true) -> Self {
+        enabled("This test requires a \(os) host OS.", { os.contains(try ProcessInfo.processInfo.hostOperatingSystem()) && condition })
     }
 
     /// Constructs a condition trait that causes a test to be disabled if running on the specified host OS.
@@ -136,11 +139,23 @@ extension Trait where Self == Testing.ConditionTrait {
         disabled("Process spawning is unavailable.", { try ProcessInfo.processInfo.hostOperatingSystem().isAppleEmbedded || ProcessInfo.processInfo.isMacCatalystApp })
     }
 
+    /// Constructs a condition trait that causes a test to be disabled if the developer directory is pointing at an Xcode developer directory.
+    package static var skipXcodeToolchain: Self {
+        disabled("This test is incompatible with Xcode toolchains.", {
+            try await ConditionTraitContext.shared.getCore().developerPath.path.str.contains(".app/Contents/Developer")
+        })
+    }
+
     /// Constructs a condition trait that causes a test to be disabled if the Foundation process spawning implementation is not using `posix_spawn_file_actions_addchdir`.
     package static var requireThreadSafeWorkingDirectory: Self {
         disabled("Thread-safe process working directory support is unavailable.", {
-            // Amazon Linux 2 has glibc 2.26, and glibc 2.29 is needed for posix_spawn_file_actions_addchdir_np support
-            FileManager.default.contents(atPath: "/etc/system-release").map { String(decoding: $0, as: UTF8.self) == "Amazon Linux release 2 (Karoo)\n" } ?? false
+            switch try ProcessInfo.processInfo.hostOperatingSystem() {
+            case .linux:
+                // Amazon Linux 2 has glibc 2.26, and glibc 2.29 is needed for posix_spawn_file_actions_addchdir_np support
+                FileManager.default.contents(atPath: "/etc/system-release").map { String(decoding: $0, as: UTF8.self) == "Amazon Linux release 2 (Karoo)\n" } ?? false
+            default:
+                false
+            }
         })
     }
 
@@ -156,6 +171,10 @@ extension Trait where Self == Testing.ConditionTrait {
         #else
         return enabled(if: true)
         #endif
+    }
+
+    package static func skipInGitHubActions(_ comment: Comment? = nil) -> Self {
+        return .skipIfEnvironmentVariableSet(key: "GITHUB_ACTIONS")
     }
 
     package static func requireClangFeatures(_ requiredFeatures: DiscoveredClangToolSpecInfo.FeatureFlag...) -> Self {
@@ -215,14 +234,14 @@ extension Trait where Self == Testing.ConditionTrait {
         }
     }
 
-    package static func skipIfEnvironment(key: String, value: String) -> Self {
+    package static func skipIfEnvironment(key: EnvironmentKey, value: String) -> Self {
         disabled("environment sets '\(key)' to '\(value)'") {
             getEnvironmentVariable(key) == value
         }
     }
 
-    package static func skipIfEnvironmentVariableSet(key: String) -> Self {
-        disabled("environment sets '\(key)'") {
+    package static func skipIfEnvironmentVariableSet(key: EnvironmentKey, _ comment: Comment? = nil) -> Self {
+        disabled(comment ?? "environment sets '\(key)'") {
             getEnvironmentVariable(key) != nil
         }
     }
@@ -289,12 +308,12 @@ extension Trait where Self == Testing.ConditionTrait {
         })
     }
 
-    /// Constructs a condition trait that causes a test to be disabled if not running against a version of Xcode including the SDK which is equal to or newer than at least one of the given versions wihin the same release.
+    /// Constructs a condition trait that causes a test to be disabled if not running against a version of Xcode including the SDK which is equal to or newer than at least one of the given versions within the same release.
     package static func requireMinimumSDKBuildVersion(sdkName: String, requiredVersions: [String], sourceLocation: SourceLocation = #_sourceLocation) -> Self {
         requireMinimumSDKBuildVersion(sdkName: sdkName, requiredVersions: try requiredVersions.map { try ProductBuildVersion($0) }, sourceLocation: sourceLocation)
     }
 
-    /// Constructs a condition trait that causes a test to be disabled if not running against a version of Xcode including the SDK which is equal to or newer than at least one of the given versions wihin the same release.
+    /// Constructs a condition trait that causes a test to be disabled if not running against a version of Xcode including the SDK which is equal to or newer than at least one of the given versions within the same release.
     package static func requireMinimumSDKBuildVersion(sdkName: String, requiredVersions: @Sendable @autoclosure @escaping () throws -> [ProductBuildVersion], sourceLocation: SourceLocation = #_sourceLocation) -> Self {
         disabled("SDK build version is too old", sourceLocation: sourceLocation, {
             let sdkVersion = try await InstalledXcode.currentlySelected().productBuildVersion(sdkCanonicalName: sdkName)
@@ -316,7 +335,7 @@ extension Trait where Self == Testing.ConditionTrait {
 extension Trait where Self == Testing.ConditionTrait {
     package static var skipDeveloperDirectoryWithEqualSign: Self {
         disabled {
-            try await ConditionTraitContext.shared.getCore().developerPath.str.contains("=")
+            try await ConditionTraitContext.shared.getCore().developerPath.path.str.contains("=")
         }
     }
 
@@ -338,6 +357,13 @@ extension Trait where Self == Testing.ConditionTrait {
             }
 
             return false
+        }
+    }
+
+    package static var requireDependencyScannerWorkingDirectoryOptimization: Self {
+        enabled {
+            let libclang = try #require(try await ConditionTraitContext.shared.libclang)
+            return libclang.supportsCurrentWorkingDirectoryOptimization
         }
     }
 
@@ -369,6 +395,19 @@ extension Trait where Self == Testing.ConditionTrait {
         }
     }
 
+    package static var requireCASValidation: Self {
+        enabled {
+            guard try await ConditionTraitContext.shared.supportsCompilationCaching, UserDefaults.enableCASValidation else {
+                return false
+            }
+            guard let path = try? await ConditionTraitContext.shared.llvmCasToolPath else {
+                return false
+            }
+            let result = try await Process.getOutput(url: URL(fileURLWithPath: path.str), arguments: ["--help"])
+            return result.stdout.contains(ByteString("validate-if-needed"))
+        }
+    }
+
     package static var requireCASPlugin: Self {
         enabled("libclang does not support CAS plugins") { try await casOptions().canUseCASPlugin }
     }
@@ -387,7 +426,7 @@ extension Trait where Self == Testing.ConditionTrait {
 package func casOptions() async throws -> (canUseCASPlugin: Bool, canUseCASPruning: Bool, canCheckCASUpToDate: Bool) {
     let libclang = try #require(try await ConditionTraitContext.shared.libclang)
     let core = try await ConditionTraitContext.shared.getCore()
-    let canUseCASPlugin = libclang.supportsCASPlugin && localFS.exists(core.developerPath.join("usr/lib/libToolchainCASPlugin.dylib"))
+    let canUseCASPlugin = libclang.supportsCASPlugin && localFS.exists(core.developerPath.path.join("usr/lib/libToolchainCASPlugin.dylib"))
     let canUseCASPruning = libclang.supportsCASPruning
     let canCheckCASUpToDate = libclang.supportsCASUpToDateChecks
     return (canUseCASPlugin, canUseCASPruning, canCheckCASUpToDate)

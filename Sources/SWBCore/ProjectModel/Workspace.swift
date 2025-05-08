@@ -13,8 +13,9 @@
 import SWBProtocol
 public import SWBUtil
 public import SWBMacro
+import Foundation
 
-public enum DuplicatedIdentifierObjectType: String {
+public enum DuplicatedIdentifierObjectType: String, Sendable {
     case project
     case target
     case reference

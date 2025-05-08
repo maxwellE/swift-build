@@ -315,7 +315,7 @@ public final class InfoPlistProcessorTaskAction: TaskAction
         }
 
         // LSSupportsOpeningDocumentsInPlace has some special checks:
-        // - When building for iOS, warn if it doesn't seclare whether it supports either open-in-place or document browsing (see <rdar://problem/41161290>).
+        // - When building for iOS, warn if it doesn't declare whether it supports either open-in-place or document browsing (see <rdar://problem/41161290>).
         // - When building for macOS, error if it sets 'LSSupportsOpeningDocumentsInPlace = NO', as that mode is not supported on macOS (see <rdar://problem/46390792>.
         //   (We can't just force it to YES because it's a declaration of behavior, so the app could still do something very bad on macOS no matter what the entry is.)
         // LSSupportsOpeningDocumentsInPlace is only relevant when document types are also defined.
@@ -632,6 +632,55 @@ public final class InfoPlistProcessorTaskAction: TaskAction
         return (.succeeded, messages)
     }
 
+    private let usageDescriptionStringKeys: Set<String> = [
+        "NFCReaderUsageDescription",
+        "NSAppleEventsUsageDescription",
+        "NSAppleMusicUsageDescription",
+        "NSBluetoothAlwaysUsageDescription",
+        "NSBluetoothPeripheralUsageDescription",
+        "NSBluetoothWhileInUseUsageDescription",
+        "NSCalendarsUsageDescription",
+        "NSCameraUsageDescription",
+        "NSContactsUsageDescription",
+        "NSDesktopFolderUsageDescription",
+        "NSDocumentsFolderUsageDescription",
+        "NSDownloadsFolderUsageDescription",
+        "NSFaceIDUsageDescription",
+        "NSFallDetectionUsageDescription",
+        "NSFileProviderDomainUsageDescription",
+        "NSFileProviderPresenceUsageDescription",
+        "NSFocusStatusUsageDescription",
+        "NSGKFriendListUsageDescription",
+        "NSHealthClinicalHealthRecordsShareUsageDescription",
+        "NSHealthShareUsageDescription",
+        "NSHealthUpdateUsageDescription",
+        "NSHomeKitUsageDescription",
+        "NSIdentityUsageDescription",
+        "NSLocalNetworkUsageDescription",
+        "NSLocationAlwaysAndWhenInUseUsageDescription",
+        "NSLocationAlwaysUsageDescription",
+        "NSLocationUsageDescription",
+        "NSLocationWhenInUseUsageDescription",
+        "NSMicrophoneUsageDescription",
+        "NSMotionUsageDescription",
+        "NSNearbyInteractionAllowOnceUsageDescription",
+        "NSNearbyInteractionUsageDescription",
+        "NSNetworkVolumesUsageDescription",
+        "NSPhotoLibraryAddUsageDescription",
+        "NSPhotoLibraryUsageDescription",
+        "NSRemindersUsageDescription",
+        "NSRemovableVolumesUsageDescription",
+        "NSSensorKitUsageDescription",
+        "NSSiriUsageDescription",
+        "NSSpeechRecognitionUsageDescription",
+        "NSSystemAdministrationUsageDescription",
+        "NSSystemExtensionUsageDescription",
+        "NSUserTrackingUsageDescription",
+        "NSVideoSubscriberAccountUsageDescription",
+        "NSVoIPUsageDescription",
+        "OSBundleUsageDescription",
+    ]
+
     /// Produce a collection of default Info.plist keys based on content in the project, taking platform and product type into account.
     /// Could be done through InfoPlistAdditions properties in product types, but that would result in more duplication at this point
     private func defaultInfoPlistContent(scope: MacroEvaluationScope, platform: Platform?, productType: ProductTypeSpec?) -> [String: PropertyListItem]
@@ -641,7 +690,7 @@ public final class InfoPlistProcessorTaskAction: TaskAction
         // The general theory of this method is that we now have a bunch of INFOPLIST_KEY-prefixed build settings that are used to define sufficiently simple Info.plist content, and we go to those (which will either have appropriate backstops set as necessary, or be empty) to determine the content to generate.
 
         /// Get the macro name corresponding to the given Info.plist key name.
-        /// This accomodates platform-specific override names like UISomething~ipad, which may use proper capitalization in the build setting.
+        /// This accommodates platform-specific override names like UISomething~ipad, which may use proper capitalization in the build setting.
         func macroNameForInfoPlistKey(key: String, prefix: String) -> String {
             let replacements = [ "~iphone": "_iPhone",
                                  "~ipad": "_iPad" ]
@@ -687,57 +736,9 @@ public final class InfoPlistProcessorTaskAction: TaskAction
             "LSApplicationCategoryType",
             "NSHumanReadableCopyright",
             "NSPrincipalClass",
-
-            // Usage Descriptions
-
-            "NFCReaderUsageDescription",
-            "NSAppleEventsUsageDescription",
-            "NSAppleMusicUsageDescription",
-            "NSBluetoothAlwaysUsageDescription",
-            "NSBluetoothPeripheralUsageDescription",
-            "NSBluetoothWhileInUseUsageDescription",
-            "NSCalendarsUsageDescription",
-            "NSCameraUsageDescription",
-            "NSContactsUsageDescription",
-            "NSDesktopFolderUsageDescription",
-            "NSDocumentsFolderUsageDescription",
-            "NSDownloadsFolderUsageDescription",
-            "NSFaceIDUsageDescription",
-            "NSFallDetectionUsageDescription",
-            "NSFileProviderDomainUsageDescription",
-            "NSFileProviderPresenceUsageDescription",
-            "NSFocusStatusUsageDescription",
-            "NSGKFriendListUsageDescription",
-            "NSHealthClinicalHealthRecordsShareUsageDescription",
-            "NSHealthShareUsageDescription",
-            "NSHealthUpdateUsageDescription",
-            "NSHomeKitUsageDescription",
-            "NSIdentityUsageDescription",
-            "NSLocalNetworkUsageDescription",
-            "NSLocationAlwaysAndWhenInUseUsageDescription",
-            "NSLocationAlwaysUsageDescription",
+            "ITSAppUsesNonExemptEncryption",
+            "ITSEncryptionExportComplianceCode",
             "NSLocationTemporaryUsageDescriptionDictionary",
-            "NSLocationUsageDescription",
-            "NSLocationWhenInUseUsageDescription",
-            "NSMicrophoneUsageDescription",
-            "NSMotionUsageDescription",
-            "NSNearbyInteractionAllowOnceUsageDescription",
-            "NSNearbyInteractionUsageDescription",
-            "NSNetworkVolumesUsageDescription",
-            "NSPhotoLibraryAddUsageDescription",
-            "NSPhotoLibraryUsageDescription",
-            "NSRemindersUsageDescription",
-            "NSRemovableVolumesUsageDescription",
-            "NSSensorKitPrivacyPolicyURL",
-            "NSSensorKitUsageDescription",
-            "NSSiriUsageDescription",
-            "NSSpeechRecognitionUsageDescription",
-            "NSSystemAdministrationUsageDescription",
-            "NSSystemExtensionUsageDescription",
-            "NSUserTrackingUsageDescription",
-            "NSVideoSubscriberAccountUsageDescription",
-            "NSVoIPUsageDescription",
-            "OSBundleUsageDescription",
 
             // macOS
 
@@ -757,6 +758,7 @@ public final class InfoPlistProcessorTaskAction: TaskAction
             // iOS
 
             "LSSupportsOpeningDocumentsInPlace",
+            "NSSensorKitPrivacyPolicyURL",
             "NSSupportsLiveActivities",
             "NSSupportsLiveActivitiesFrequentUpdates",
             "UIApplicationSupportsIndirectInputEvents",
@@ -789,7 +791,7 @@ public final class InfoPlistProcessorTaskAction: TaskAction
             // Sticker Packs
 
             "NSStickerSharingLevel",
-        ]
+        ] + usageDescriptionStringKeys
 
         for key in generatedInfoPlistKeys {
             updateContentWithInfoPlistKeyMacroValue(&content, key)
@@ -1451,7 +1453,7 @@ public final class InfoPlistProcessorTaskAction: TaskAction
                 case watchOS
             }
 
-            /// The values of the key that are deprecated, if only specific values are deprecated. `nil` indcates the key as a whole is deprecated.
+            /// The values of the key that are deprecated, if only specific values are deprecated. `nil` indicates the key as a whole is deprecated.
             let values: [PropertyListItem]?
 
             /// An infix to display in the "use (alternative) instead" portion of the deprecation message.
@@ -1509,7 +1511,25 @@ public final class InfoPlistProcessorTaskAction: TaskAction
             }
         }
 
+        validateUsageStringDefinitions(plistDict, outputDelegate: outputDelegate)
         return true
+    }
+
+    private func validateUsageStringDefinitions(_ plistDict: [String: PropertyListItem], outputDelegate: any TaskOutputDelegate) {
+        let usageStringPlistEntries = plistDict.filter { key, _ in
+            usageDescriptionStringKeys.contains(key)
+        }
+
+        for (key, value) in usageStringPlistEntries {
+            switch value {
+            case .plString(let stringValue):
+                if stringValue.isEmpty {
+                    outputDelegate.emitWarning("The value for \(key) must be a non-empty string.")
+                }
+            default:
+                outputDelegate.emitWarning("The value for \(key) must be of type string, but is \(value.typeDisplayString.withIndefiniteArticle).")
+            }
+        }
     }
 
     /// Scans the path for an `PrivacyInfo.xcprivacy` file and returns the `Path` to that file, if found. Otherwise, returns `nil`.
@@ -1543,7 +1563,7 @@ public final class InfoPlistProcessorTaskAction: TaskAction
             return encoded
         }
 
-        // Get the package type code and signature (a.k.a. creator) code from the Info.plist.  We do various correctness checks.  One of the more interesting restrictions is that both the type code and the signature code have to be convertable to Mac OS Roman encoding.  The reason for this is that both four-character codes are really OSTypes, which were implicitly encoded in Mac OS Roman back in historical times.
+        // Get the package type code and signature (a.k.a. creator) code from the Info.plist.  We do various correctness checks.  One of the more interesting restrictions is that both the type code and the signature code have to be convertible to Mac OS Roman encoding.  The reason for this is that both four-character codes are really OSTypes, which were implicitly encoded in Mac OS Roman back in historical times.
         let pkgInfoBytes = (OutputByteStream()
             <<< getFourCharCode(forKey: "CFBundlePackageType")
             <<< getFourCharCode(forKey: "CFBundleSignature")).bytes

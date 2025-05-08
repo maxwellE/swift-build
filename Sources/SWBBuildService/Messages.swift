@@ -13,7 +13,7 @@
 import SWBBuildSystem
 package import SWBCore
 import SWBProtocol
-package import SWBServiceCore
+public import SWBServiceCore
 import SWBTaskConstruction
 import SWBTaskExecution
 package import SWBUtil
@@ -77,7 +77,7 @@ private struct CreateXCFrameworkHandler: MessageHandler {
         guard let buildService = request.service as? BuildService else {
             throw StubError.error("service object is not of type BuildService")
         }
-        let (result, output) = try await XCFramework.createXCFramework(commandLine: message.commandLine, currentWorkingDirectory: message.currentWorkingDirectory, infoLookup: buildService.sharedCore(developerPath: message.effectiveDeveloperPath))
+        let (result, output) = try await XCFramework.createXCFramework(commandLine: message.commandLine, currentWorkingDirectory: message.currentWorkingDirectory, infoLookup: buildService.sharedCore(developerPath: message.effectiveDeveloperPath.map { .xcode($0) }))
         if !result {
             throw StubError.error(output)
         }
@@ -104,7 +104,7 @@ private struct AppleSystemFrameworkNamesHandler: MessageHandler {
         guard let buildService = request.service as? BuildService else {
             throw StubError.error("service object is not of type BuildService")
         }
-        return try await StringListResponse(Array(buildService.sharedCore(developerPath: message.effectiveDeveloperPath).appleSystemFrameworkNames()))
+        return try await StringListResponse([])
     }
 }
 
@@ -113,7 +113,7 @@ private struct ProductTypeSupportsMacCatalystHandler: MessageHandler {
         guard let buildService = request.service as? BuildService else {
             throw StubError.error("service object is not of type BuildService")
         }
-        return try await BoolResponse(buildService.sharedCore(developerPath: message.effectiveDeveloperPath).productTypeSupportsMacCatalyst(productTypeIdentifier: message.productTypeIdentifier))
+        return try await BoolResponse(buildService.sharedCore(developerPath: message.effectiveDeveloperPath.map { .xcode($0) }).productTypeSupportsMacCatalyst(productTypeIdentifier: message.productTypeIdentifier))
     }
 }
 
@@ -122,8 +122,17 @@ private struct ProductTypeSupportsMacCatalystHandler: MessageHandler {
 private struct CreateSessionHandler: MessageHandler {
     func handle(request: Request, message: CreateSessionRequest) async throws -> CreateSessionResponse {
         let service = request.buildService
+        let developerPath: DeveloperPath?
+        if let devPath = message.developerPath2 {
+            developerPath = devPath
+        } else if let devPath = message.effectiveDeveloperPath {
+            developerPath = .xcode(devPath)
+        } else {
+            developerPath = nil
+        }
         let (core, diagnostics) = await service.sharedCore(
-            developerPath: message.effectiveDeveloperPath,
+            developerPath: developerPath,
+            resourceSearchPaths: message.resourceSearchPaths ?? [],
             inferiorProducts: message.inferiorProductsPath,
             environment: message.environment ?? [:]
         )
@@ -183,7 +192,7 @@ extension SetSessionWorkspaceContainerPathRequest: PIFProvidingRequest {
             try fs.createDirectory(dir, recursive: true)
             let pifPath = dir.join(Foundation.UUID().description + ".json")
             let argument = isProject ? "-project" : "-workspace"
-            let result = try await Process.getOutput(url: URL(fileURLWithPath: "/usr/bin/xcrun"), arguments: ["xcodebuild", "-dumpPIF", pifPath.str, argument, path.str], currentDirectoryURL: URL(fileURLWithPath: containerPath.dirname.str, isDirectory: true), environment: ProcessInfo.processInfo.cleanEnvironment.merging(["DEVELOPER_DIR": session.core.developerPath.str], uniquingKeysWith: { _, new in new }))
+            let result = try await Process.getOutput(url: URL(fileURLWithPath: "/usr/bin/xcrun"), arguments: ["xcodebuild", "-dumpPIF", pifPath.str, argument, path.str], currentDirectoryURL: URL(fileURLWithPath: containerPath.dirname.str, isDirectory: true), environment: Environment.current.addingContents(of: [.developerDir: session.core.developerPath.path.str]))
             if !result.exitStatus.isSuccess {
                 throw StubError.error("Could not dump PIF for '\(path.str)': \(String(decoding: result.stderr, as: UTF8.self))")
             }
@@ -262,8 +271,13 @@ private struct SetSessionUserInfoMsg: MessageHandler {
             throw MsgParserError.missingWorkspaceContext
         }
 
+        struct Context: EnvironmentExtensionAdditionalEnvironmentVariablesContext {
+            var hostOperatingSystem: OperatingSystem
+            var fs: any FSProxy
+        }
+
         // Update the workspace context.
-        let env = try await EnvironmentExtensionPoint.additionalEnvironmentVariables(pluginManager: workspaceContext.core.pluginManager, fs: workspaceContext.fs)
+        let env = try await EnvironmentExtensionPoint.additionalEnvironmentVariables(pluginManager: workspaceContext.core.pluginManager, context: Context(hostOperatingSystem: workspaceContext.core.hostOperatingSystem, fs: workspaceContext.fs))
         workspaceContext.updateUserInfo(try await UserInfo(user: message.user, group: message.group, uid: message.uid, gid: message.gid, home: Path(message.home), processEnvironment: message.processEnvironment, buildSystemEnvironment: message.buildSystemEnvironment).addingPlatformDefaults(from: env))
 
         return VoidResponse()
@@ -1072,6 +1086,7 @@ private extension PreviewInfoOutput {
                 PreviewInfoTargetDependencyInfo(
                     objectFileInputMap: info.objectFileInputMap,
                     linkCommandLine: info.linkCommandLine,
+                    linkerWorkingDirectory: info.linkerWorkingDirectory,
                     swiftEnableOpaqueTypeErasure: info.swiftEnableOpaqueTypeErasure,
                     swiftUseIntegratedDriver: info.swiftUseIntegratedDriver,
                     enableJITPreviews: info.enableJITPreviews,
@@ -1193,7 +1208,7 @@ private struct ClientExchangeResponseMsg<MessageType: ClientExchangeMessage & Re
 private struct DeveloperPathHandler: MessageHandler {
     func handle(request: Request, message: DeveloperPathRequest) throws -> StringResponse {
         let session = try request.session(for: message)
-        return StringResponse(session.core.developerPath.str)
+        return StringResponse(session.core.developerPath.path.str)
     }
 }
 
@@ -1316,42 +1331,6 @@ private func getSettings(for session: Session, workspaceContext: WorkspaceContex
         }
         let buildParameters = try BuildParameters(from: buildParameters)
         return try getSettings(for: session, workspaceContext: workspaceContext, level: level, buildParameters: buildParameters, purpose: purpose)
-    }
-}
-
-/// Handle a `CreateMacroEvaluationScopeRequest` message.
-private struct CreateMacroEvaluationScopeMsg: MessageHandler {
-    func handle(request: Request, message: CreateMacroEvaluationScopeRequest) throws -> StringResponse {
-        // Look up the session, and create the build parameters.
-        let session = try request.session(for: message)
-        guard let workspaceContext = session.workspaceContext else {
-            throw MsgParserError.missingWorkspaceContext
-        }
-        let buildParameters = try BuildParameters(from: message.buildParameters)
-
-        // Create a settings object for the requested level and register it with the session.
-        let settings = try getSettings(for: session, workspaceContext: workspaceContext, level: message.level, buildParameters: buildParameters, purpose: .build)
-        let handle = session.registerSettings(settings)
-
-        // Return the handle to the client.
-        return StringResponse(handle)
-    }
-}
-
-private struct DiscardMacroEvaluationScopeMsg: MessageHandler {
-    func handle(request: Request, message: DiscardMacroEvaluationScope) throws -> VoidResponse {
-        // Look up the session.
-        let session = try request.session(for: message)
-
-        // Discard the settings.
-        do {
-            try session.unregisterSettings(for: message.settingsHandle)
-        }
-        catch {
-            throw MsgParserError.missingSettings
-        }
-
-        return VoidResponse()
     }
 }
 
@@ -1498,7 +1477,7 @@ private struct ExecuteCommandLineToolMsg: MessageHandler {
                     request.service.send(message.replyChannel, BoolResponse(false))
                     return
                 }
-                let (core, diagnostics) = await buildService.sharedCore(developerPath: message.developerPath)
+                let (core, diagnostics) = await buildService.sharedCore(developerPath: message.developerPath.map { .xcode($0) })
                 guard let core else {
                     for diagnostic in diagnostics where diagnostic.behavior == .error {
                         request.service.send(message.replyChannel, ErrorResponse(diagnostic.formatLocalizedDescription(.messageOnly)))
@@ -1550,10 +1529,10 @@ private struct ClearAllCaches: MessageHandler {
 
 // MARK: ServiceExtension Support
 
-package struct ServiceSessionMessageHandlers: ServiceExtension {
-    package init() {}
+public struct ServiceSessionMessageHandlers: ServiceExtension {
+    public init() {}
 
-    package func register(_ service: Service) {
+    public func register(_ service: Service) {
         service.registerMessageHandler(CreateSessionHandler.self)
         service.registerMessageHandler(ListSessionsHandler.self)
         service.registerMessageHandler(WaitForQuiescenceHandler.self)
@@ -1566,10 +1545,10 @@ package struct ServiceSessionMessageHandlers: ServiceExtension {
     }
 }
 
-package struct ServicePIFMessageHandlers: ServiceExtension {
-    package init() {}
+public struct ServicePIFMessageHandlers: ServiceExtension {
+    public init() {}
 
-    package func register(_ service: Service) {
+    public func register(_ service: Service) {
         service.registerMessageHandler(SetSessionPIFMsg.self)
         service.registerMessageHandler(TransferSessionPIFMsg.self)
         service.registerMessageHandler(TransferSessionPIFObjectsMsg.self)
@@ -1588,10 +1567,10 @@ package struct WorkspaceModelMessageHandlers: ServiceExtension {
     }
 }
 
-package struct ActiveBuildBasicMessageHandlers: ServiceExtension {
-    package init() {}
+public struct ActiveBuildBasicMessageHandlers: ServiceExtension {
+    public init() {}
 
-    package func register(_ service: Service) {
+    public func register(_ service: Service) {
         service.registerMessageHandler(CreateBuildRequestMsg.self)
         service.registerMessageHandler(BuildStartRequestMsg.self)
         service.registerMessageHandler(BuildCancelRequestMsg.self)
@@ -1634,8 +1613,6 @@ package struct ServiceMessageHandlers: ServiceExtension {
         service.registerMessageHandler(ComputeDependencyGraphMsg.self)
         service.registerMessageHandler(DumpBuildDependencyInfoMsg.self)
         
-        service.registerMessageHandler(CreateMacroEvaluationScopeMsg.self)
-        service.registerMessageHandler(DiscardMacroEvaluationScopeMsg.self)
         service.registerMessageHandler(MacroEvaluationMsg.self)
         service.registerMessageHandler(AllExportedMacrosAndValuesMsg.self)
         service.registerMessageHandler(BuildSettingsEditorInfoMsg.self)

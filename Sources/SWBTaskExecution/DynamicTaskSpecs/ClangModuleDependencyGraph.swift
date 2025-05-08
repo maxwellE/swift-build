@@ -106,7 +106,7 @@ package final class ClangModuleDependencyGraph {
         /// For example, for a source file, it contains the original command line plus the arguments that configure the
         /// compilation with explicit modules. For module dependencies, it contains the command line arguments to build
         /// the pcm file. There may be multiple command lines if a single clang driver invocation expands to multiple jobs
-        /// for example, when using `-save-temps` or `-fembed-bitcode`.
+        /// for example, when using `-save-temps`.
         package let commands: [CompileCommand]
 
         package let transitiveIncludeTreeIDs: OrderedSet<String>
@@ -429,8 +429,8 @@ package final class ClangModuleDependencyGraph {
                                     fileDependencies: fileDependencies,
                                     includeTreeID: module.include_tree_id,
                                     moduleDependencies: OrderedSet(moduleDeps),
-                                    // Cached builds do not rely on the process working directory, and different scanner working directories should not inhibit task deduplication
-                                    workingDirectory: module.cache_key != nil ? Path.root : workingDirectory,
+                                    // Cached builds do not rely on the process working directory, and different scanner working directories should not inhibit task deduplication. The same is true if the scanner reports the working directory can be ignored.
+                                    workingDirectory: module.cache_key != nil || module.is_cwd_ignored ? Path.root : workingDirectory,
                                     command: DependencyInfo.CompileCommand(cacheKey: module.cache_key, arguments: commandLine),
                                     transitiveIncludeTreeIDs: transitiveIncludeTreeIDs,
                                     transitiveCompileCommandCacheKeys: transitiveCommandCacheKeys,
@@ -584,12 +584,21 @@ package final class ClangModuleDependencyGraph {
             summaryCSV.writeRow([moduleName, "\(variants.count)"])
             summaryMessage += "\(moduleName): \(variants.count == 1 ? "1 variant" : "\(variants.count) variants")\n"
 
-            let mergeResult = nWayMerge(variants.map { ["CWD: \($0.workingDirectory.str)"] + ($0.commands.only?.arguments ?? []) }).filter {
+            let mergeResult = nWayMerge(variants.map {
+                (["CWD: \($0.workingDirectory.str)"] + ($0.commands.only?.arguments ?? [])).filter {
+                    if ["pcm", "dia", "d"].contains(Path($0).fileExtension) {
+                        // Filter differences in module paths, they are a function of the other args
+                        return false
+                    } else if $0.hasPrefix("llvmcas://") {
+                        // Filter differences in CAS URLs, they are a function of the other args
+                        return false
+                    } else {
+                        return true
+                    }
+                }
+            }).filter {
                 if $0.elementOf.count == variants.count {
                     // Don't report args common to all variants
-                    return false
-                } else if ["pcm", "dia", "d"].contains(Path($0.element).fileExtension) {
-                    // Don't report differences in module paths, they are a function of the other args
                     return false
                 } else {
                     return true

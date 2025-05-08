@@ -18,6 +18,7 @@ import SWBTestSupport
 import Foundation
 
 @_spi(Testing) import SWBCore
+import SWBServiceCore
 
 @Suite fileprivate struct CoreTests: CoreBasedTests {
     @Test
@@ -25,11 +26,11 @@ import Foundation
         let core = try await getCore()
         switch try ProcessInfo.processInfo.hostOperatingSystem() {
         case .macOS:
-            XCTAssertMatch(core.developerPath.str, .suffix(".app/Contents/Developer"))
+            XCTAssertMatch(core.developerPath.path.str, .suffix(".app/Contents/Developer"))
         case .windows:
-            XCTAssertMatch(core.developerPath.str, .suffix("\\AppData\\Local\\Programs\\Swift"))
+            XCTAssertMatch(core.developerPath.path.str, .suffix("\\AppData\\Local\\Programs\\Swift"))
         default:
-            #expect(core.developerPath.str == "/")
+            #expect(core.developerPath.path.str == "/")
         }
     }
 
@@ -178,7 +179,47 @@ import Foundation
         }
     }
 
-    @Test
+    @Test(.requireSDKs(.xrOS))
+    func platformLoading_visionOS() async throws {
+        let core = try await getCore()
+
+        do {
+            let identifier = "com.apple.platform.xros"
+            if let platform = core.platformRegistry.lookup(identifier: identifier) {
+                #expect(platform.signingContext is DeviceSigningContext)
+
+                let sdkCanonicalName = try #require(platform.sdkCanonicalName)
+                let publicSDK = try #require(core.sdkRegistry.lookup(sdkCanonicalName))
+                let defaultVariant = try #require(publicSDK.defaultVariant)
+                #expect(defaultVariant.deviceFamilies.list == [
+                    DeviceFamily(identifier: 7, name: "vision", displayName: "Apple Vision")
+                ])
+            }
+            else {
+                Issue.record("did not load platform '\(identifier)'")
+            }
+        }
+
+        do {
+            let identifier = "com.apple.platform.xrsimulator"
+            if let platform = core.platformRegistry.lookup(identifier: identifier) {
+                #expect(platform.signingContext is SimulatorSigningContext)
+
+                let sdkCanonicalName = try #require(platform.sdkCanonicalName)
+                let publicSDK = try #require(core.sdkRegistry.lookup(sdkCanonicalName))
+                let defaultVariant = try #require(publicSDK.defaultVariant)
+                #expect(defaultVariant.deviceFamilies.list == [
+                    DeviceFamily(identifier: 7, name: "vision", displayName: "Apple Vision")
+                ])
+            }
+            else {
+                Issue.record("did not load platform '\(identifier)'")
+            }
+        }
+    }
+
+
+    @Test(.requireHostOS(.macOS))
     func toolchainLoading() async throws {
         // Validate that we loaded the default toolchain.
         let defaultToolchain = try #require(await getCore().toolchainRegistry.lookup("default"), "no default toolchain")
@@ -293,17 +334,16 @@ import Foundation
             let pluginManager = await PluginManager(skipLoadingPluginIdentifiers: [])
             await pluginManager.registerExtensionPoint(SpecificationsExtensionPoint())
             await pluginManager.register(BuiltinSpecsExtension(), type: SpecificationsExtensionPoint.self)
-            let core = await Core.getInitializedCore(delegate, pluginManager: pluginManager, developerPath: tmpDirPath, buildServiceModTime: Date(), connectionMode: .inProcess)
+            let core = await Core.getInitializedCore(delegate, pluginManager: pluginManager, developerPath: .fallback(tmpDirPath), buildServiceModTime: Date(), connectionMode: .inProcess)
             #expect(core == nil)
 
             let results = CoreDelegateResults(delegate.diagnostics)
             results.checkError(.prefix("missing required default toolchain"))
-            results.checkError(.contains("Toolchains: failed to load toolchains in "))
             results.checkNoDiagnostics()
         }
     }
 
-    @Test(.skipIfEnvironmentVariableSet(key: "EXTERNAL_TOOLCHAINS_DIR"))
+    @Test(.skipIfEnvironmentVariableSet(key: .externalToolchainsDir))
     func externalToolchainsDir() async throws {
         try await withTemporaryDirectory { tmpDir in
             let originalToolchain = try await toolchainPathsCount()
@@ -339,8 +379,25 @@ import Foundation
     func toolchainPathsCount() async throws -> Int {
         let delegate = Delegate()
         let pluginManager = await PluginManager(skipLoadingPluginIdentifiers: [])
+        await pluginManager.registerExtensionPoint(DeveloperDirectoryExtensionPoint())
         await pluginManager.registerExtensionPoint(SpecificationsExtensionPoint())
+        await pluginManager.registerExtensionPoint(ToolchainRegistryExtensionPoint())
         await pluginManager.register(BuiltinSpecsExtension(), type: SpecificationsExtensionPoint.self)
+        struct MockDeveloperDirectoryExtensionPoint: DeveloperDirectoryExtension {
+            func fallbackDeveloperDirectory(hostOperatingSystem: OperatingSystem) async throws -> Path? {
+                .root
+            }
+        }
+        struct MockToolchainExtension: ToolchainRegistryExtension {
+            func additionalToolchains(context: any ToolchainRegistryExtensionAdditionalToolchainsContext) async throws -> [Toolchain] {
+                guard context.toolchainRegistry.lookup(ToolchainRegistry.defaultToolchainIdentifier) == nil else {
+                    return []
+                }
+                return [Toolchain(identifier: ToolchainRegistry.defaultToolchainIdentifier, displayName: "Mock", version: Version(), aliases: ["default"], path: .root, frameworkPaths: [], libraryPaths: [], defaultSettings: [:], overrideSettings: [:], defaultSettingsWhenPrimary: [:], executableSearchPaths: [], testingLibraryPlatformNames: [], fs: context.fs)]
+            }
+        }
+        await pluginManager.register(MockDeveloperDirectoryExtensionPoint(), type: DeveloperDirectoryExtensionPoint.self)
+        await pluginManager.register(MockToolchainExtension(), type: ToolchainRegistryExtensionPoint.self)
         let core = await Core.getInitializedCore(delegate, pluginManager: pluginManager, inferiorProductsPath: Path.root.join("invalid"), environment: [:], buildServiceModTime: Date(), connectionMode: .inProcess)
         for diagnostic in delegate.diagnostics {
             if diagnostic.formatLocalizedDescription(.debug).hasPrefix("warning: found previously-unknown deployment target macro ") {
@@ -352,13 +409,13 @@ import Foundation
     }
 
     func testExternalToolchainPath(withSetEnv externalToolchainPathsString: String?, expecting expectedPathStrings: [String], _ originalToolchainCount: Int) async throws {
-        var env = ProcessInfo.processInfo.environment.filter { $0.key != "EXTERNAL_TOOLCHAINS_DIR" }
+        var env = Environment.current.filter { $0.key != .externalToolchainsDir }
         if let externalToolchainPathsString {
-            env["EXTERNAL_TOOLCHAINS_DIR"] = externalToolchainPathsString
+            env[.externalToolchainsDir] = externalToolchainPathsString
         }
 
         try await withEnvironment(env, clean: true) {
-            #expect(getEnvironmentVariable("EXTERNAL_TOOLCHAINS_DIR") == externalToolchainPathsString)
+            #expect(getEnvironmentVariable(.externalToolchainsDir) == externalToolchainPathsString)
 
             try await testExternalToolchainPath(environmentOverrides: [:], expecting: expectedPathStrings, originalToolchainCount)
         }
@@ -367,8 +424,25 @@ import Foundation
     func testExternalToolchainPath(environmentOverrides: [String:String], expecting expectedPathStrings: [String], _ originalToolchainCount: Int) async throws {
         let delegate = Delegate()
         let pluginManager = await PluginManager(skipLoadingPluginIdentifiers: [])
+        await pluginManager.registerExtensionPoint(DeveloperDirectoryExtensionPoint())
         await pluginManager.registerExtensionPoint(SpecificationsExtensionPoint())
+        await pluginManager.registerExtensionPoint(ToolchainRegistryExtensionPoint())
         await pluginManager.register(BuiltinSpecsExtension(), type: SpecificationsExtensionPoint.self)
+        struct MockDeveloperDirectoryExtensionPoint: DeveloperDirectoryExtension {
+            func fallbackDeveloperDirectory(hostOperatingSystem: OperatingSystem) async throws -> Path? {
+                .root
+            }
+        }
+        struct MockToolchainExtension: ToolchainRegistryExtension {
+            func additionalToolchains(context: any ToolchainRegistryExtensionAdditionalToolchainsContext) async throws -> [Toolchain] {
+                guard context.toolchainRegistry.lookup(ToolchainRegistry.defaultToolchainIdentifier) == nil else {
+                    return []
+                }
+                return [Toolchain(identifier: ToolchainRegistry.defaultToolchainIdentifier, displayName: "Mock", version: Version(), aliases: ["default"], path: .root, frameworkPaths: [], libraryPaths: [], defaultSettings: [:], overrideSettings: [:], defaultSettingsWhenPrimary: [:], executableSearchPaths: [], testingLibraryPlatformNames: [], fs: context.fs)]
+            }
+        }
+        await pluginManager.register(MockDeveloperDirectoryExtensionPoint(), type: DeveloperDirectoryExtensionPoint.self)
+        await pluginManager.register(MockToolchainExtension(), type: ToolchainRegistryExtensionPoint.self)
         let core = await Core.getInitializedCore(delegate, pluginManager: pluginManager, inferiorProductsPath: Path.root.join("invalid"), environment: environmentOverrides, buildServiceModTime: Date(), connectionMode: .inProcess)
         for diagnostic in delegate.diagnostics {
             if diagnostic.formatLocalizedDescription(.debug).hasPrefix("warning: found previously-unknown deployment target macro ") {

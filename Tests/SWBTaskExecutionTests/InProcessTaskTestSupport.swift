@@ -21,6 +21,7 @@ import SWBUtil
 import enum SWBProtocol.ExternalToolResult
 import struct SWBProtocol.BuildOperationMetrics
 import SWBMacro
+import Synchronization
 
 struct MockExecutionDelegate: TaskExecutionDelegate {
     struct Lookup: PlatformInfoLookup {
@@ -40,6 +41,7 @@ struct MockExecutionDelegate: TaskExecutionDelegate {
     var platformRegistry: PlatformRegistry { core!.platformRegistry }
     var namespace: MacroNamespace
     var requestContext: SWBCore.BuildRequestContext { fatalError() }
+    var emitFrontendCommandLines: Bool { false }
     private var core: Core?
 
     func taskDiscoveredRequiredTargetDependency(target: ConfiguredTarget, antecedent: ConfiguredTarget, reason: RequiredTargetDependencyReason, warningLevel: BooleanWarningLevel) {}

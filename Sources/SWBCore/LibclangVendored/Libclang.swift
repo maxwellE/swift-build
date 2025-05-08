@@ -98,6 +98,10 @@ public final class Libclang {
     public var supportsCASUpToDateChecks: Bool {
         libclang_has_cas_up_to_date_checks_feature(lib)
     }
+
+    public var supportsCurrentWorkingDirectoryOptimization: Bool {
+        libclang_has_current_working_directory_optimization(lib)
+    }
 }
 
 enum DependencyScanningError: Error {
@@ -130,6 +134,7 @@ public final class DependencyScanner {
         public var module_deps: some Sequence<String> { clang_module_dependency.module_deps.toLazyStringSequence() }
         public var cache_key: String? { clang_module_dependency.cache_key.map { String(cString: $0) } }
         public var build_arguments: some Sequence<String> { clang_module_dependency.build_arguments.toLazyStringSequence() }
+        public var is_cwd_ignored: Bool { clang_module_dependency.is_cwd_ignored }
     }
 
     public struct Command {
@@ -465,7 +470,7 @@ public final class ClangCASDatabases {
         libclang_casdatabases_dispose(dbs)
     }
 
-    public func getOndiskSize() throws -> Int? {
+    public func getOndiskSize() throws -> Int64? {
         var error: ClangCASDatabases.Error? = nil
         let ret = libclang_casdatabases_get_ondisk_size(dbs, { c_error in
             error = .operationFailed(String(cString: c_error!))
@@ -476,12 +481,12 @@ public final class ClangCASDatabases {
         if ret < 0 {
             return nil
         }
-        return Int(ret)
+        return ret
     }
 
-    public func setOndiskSizeLimit(_ limit: Int?) throws {
+    public func setOndiskSizeLimit(_ limit: Int64?) throws {
         var error: ClangCASDatabases.Error? = nil
-        libclang_casdatabases_set_ondisk_size_limit(dbs, Int64(limit ?? 0), { c_error in
+        libclang_casdatabases_set_ondisk_size_limit(dbs, limit ?? 0, { c_error in
             error = .operationFailed(String(cString: c_error!))
         })
         if let error {

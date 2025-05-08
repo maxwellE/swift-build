@@ -203,8 +203,8 @@ public enum UserDefaults: Sendable {
         return hasValue(forKey: "EnableSDKStatCaching") ? bool(forKey: "EnableSDKStatCaching") : true
     }
 
-    public static var enableBitcodeSupport: Bool {
-        return hasValue(forKey: "EnableBitcodeSupport") ? bool(forKey: "EnableBitcodeSupport") : false
+    public static var enableCASValidation: Bool {
+        return hasValue(forKey: "EnableCASValidation") ? bool(forKey: "EnableCASValidation") : true
     }
 
     public static var useTargetDependenciesForImpartedBuildSettings: Bool {
@@ -350,7 +350,6 @@ public let xcodeUserDefaultsToExportToSwiftBuild = [
     "AttemptDependencyCycleResolution",
     "IgnoreFileSystemDeviceInodeChanges",
     "FileSystemMode",
-    "EnableBitcodeSupport",
     "DVTExtraPlatformFolders",
 
     // Legacy build system defaults also supported by Swift Build.
@@ -361,7 +360,7 @@ public let xcodeUserDefaultsToExportToSwiftBuild = [
 
 /// Global function which exports the supplied user default key, if present in the standard UserDefaults, to the process environment if it has not already been set.
 public func exportUserDefaultToEnvironment(_ key: String) {
-    if let _ = getEnvironmentVariable(key) {
+    if let _ = getEnvironmentVariable(EnvironmentKey(key)) {
         // do not override existing environment variable
         return
     }

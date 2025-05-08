@@ -32,7 +32,6 @@ public enum SwiftBuildServicePIFObjectType: Sendable {
     }
 }
 
-
 /// This class encapsulates a unique session connection to the inferior build service process.
 ///
 /// The state for each individual session is separated, and generally a unique session is used for each separate workspace, project, etc. that a client may want to build
@@ -55,7 +54,6 @@ public final class SWBBuildServiceSession: Sendable {
     ///
     /// For build operations, the tracker implements a generic background operation queue. Closures are enqueued to a stream, and consumed and awaited on a background task. Closing the session awaits that background taskto ensure all closures are awaited before continuing with teardown.
     private actor SessionResourceTracker {
-        private var macroEvaluationScopes: [String: SWBMacroEvaluationScope] = [:]
         private var awaitableBuildOperations: AsyncStreamController<SWBBuildOperation, Never>
         private let cancellableBuildOperationsHolder = CancellableBuildOperationsHolder()
 
@@ -90,14 +88,6 @@ public final class SWBBuildServiceSession: Sendable {
             }
         }
 
-        func append(_ scope: SWBMacroEvaluationScope) {
-            macroEvaluationScopes[scope.settingsHandle] = scope
-        }
-
-        func remove(_ scope: SWBMacroEvaluationScope) {
-            macroEvaluationScopes.removeValue(forKey: scope.settingsHandle)
-        }
-
         func enqueue(_ operation: SWBBuildOperation) async {
             let queuedResult = awaitableBuildOperations.yield(operation)
             switch queuedResult {
@@ -122,17 +112,6 @@ public final class SWBBuildServiceSession: Sendable {
             awaitableBuildOperations.finish()
             await cancellableBuildOperationsHolder.cancelAll()
             await awaitableBuildOperations.wait()
-
-            let scopes = macroEvaluationScopes.values
-            macroEvaluationScopes = [:]
-            try await withThrowingTaskGroup(of: Void.self) { group in
-                for scope in scopes {
-                    group.addTask {
-                        try await scope.invalidate()
-                    }
-                }
-                try await group.waitForAll()
-            }
         }
     }
 
@@ -430,70 +409,42 @@ public final class SWBBuildServiceSession: Sendable {
     }
 
 
-    // Helper methods to package up a request and send it to the service.
-    // These methods are used both by the public methods below, and by those in SWBMacroEvaluationScope.
-
-    func evaluateMacroAsString(_ macro: String, context: MacroEvaluationRequestContext, overrides: [String : String]?) async throws -> String {
-        let request = MacroEvaluationRequest(sessionHandle: uid, context: context, request: .macro(macro), overrides: overrides, resultType: .string)
-        return try await sendMacroEvaluationStringRequest(self, request)
-    }
-
-    func evaluateMacroAsStringList(_ macro: String, context: MacroEvaluationRequestContext, overrides: [String : String]?) async throws -> [String] {
-        let request = MacroEvaluationRequest(sessionHandle: uid, context: context, request: .macro(macro), overrides: overrides, resultType: .stringList)
-        return try await sendMacroEvaluationStringListRequest(self, request)
-    }
-
-    func evaluateMacroAsBoolean(_ macro: String, context: MacroEvaluationRequestContext, overrides: [String : String]?) async throws -> Bool {
-        let request = MacroEvaluationRequest(sessionHandle: uid, context: context, request: .macro(macro), overrides: overrides, resultType: .string)
-        return try await sendMacroEvaluationStringRequest(self, request) == "YES"
-    }
-
-    func evaluateMacroExpressionAsString(_ expr: String, context: MacroEvaluationRequestContext, overrides: [String : String]?) async throws -> String {
-        let request = MacroEvaluationRequest(sessionHandle: uid, context: context, request: .stringExpression(expr), overrides: overrides, resultType: .string)
-        return try await sendMacroEvaluationStringRequest(self, request)
-    }
-
-    func evaluateMacroExpressionAsStringList(_ expr: String, context: MacroEvaluationRequestContext, overrides: [String : String]?) async throws -> [String] {
-        let request = MacroEvaluationRequest(sessionHandle: uid, context: context, request: .stringExpression(expr), overrides: overrides, resultType: .stringList)
-        return try await sendMacroEvaluationStringListRequest(self, request)
-    }
-
-    func evaluateMacroExpressionArrayAsStringList(_ expr: [String], context: MacroEvaluationRequestContext, overrides: [String : String]?) async throws -> [String] {
-        let request = MacroEvaluationRequest(sessionHandle: uid, context: context, request: .stringExpressionArray(expr), overrides: overrides, resultType: .stringList)
-        return try await sendMacroEvaluationStringListRequest(self, request)
-    }
-
-
     // Public methods to perform macro evaluations for a level and build parameters.
 
     public func evaluateMacroAsString(_ macro: String, level: SWBMacroEvaluationLevel, buildParameters: SWBBuildParameters, overrides: [String : String]?) async throws -> String {
         let parameters = buildParameters.messagePayloadRepresentation
-        return try await evaluateMacroAsString(macro, context: .components(level: level.toSWBRequest, buildParameters: parameters), overrides: overrides)
+        let request = MacroEvaluationRequest(sessionHandle: uid, context: .components(level: level.toSWBRequest, buildParameters: parameters), request: .macro(macro), overrides: overrides, resultType: .string)
+        return try await sendMacroEvaluationStringRequest(self, request)
     }
 
     public func evaluateMacroAsStringList(_ macro: String, level: SWBMacroEvaluationLevel, buildParameters: SWBBuildParameters, overrides: [String : String]?) async throws -> [String] {
         let parameters = buildParameters.messagePayloadRepresentation
-        return try await evaluateMacroAsStringList(macro, context: .components(level: level.toSWBRequest, buildParameters: parameters), overrides: overrides)
+        let request = MacroEvaluationRequest(sessionHandle: uid, context: .components(level: level.toSWBRequest, buildParameters: parameters), request: .macro(macro), overrides: overrides, resultType: .stringList)
+        return try await sendMacroEvaluationStringListRequest(self, request)
     }
 
     public func evaluateMacroAsBoolean(_ macro: String, level: SWBMacroEvaluationLevel, buildParameters: SWBBuildParameters, overrides: [String : String]?) async throws -> Bool {
         let parameters = buildParameters.messagePayloadRepresentation
-        return try await evaluateMacroAsBoolean(macro, context: .components(level: level.toSWBRequest, buildParameters: parameters), overrides: overrides)
+        let request = MacroEvaluationRequest(sessionHandle: uid, context: .components(level: level.toSWBRequest, buildParameters: parameters), request: .macro(macro), overrides: overrides, resultType: .string)
+        return try await sendMacroEvaluationStringRequest(self, request) == "YES"
     }
 
     public func evaluateMacroExpressionAsString(_ expr: String, level: SWBMacroEvaluationLevel, buildParameters: SWBBuildParameters, overrides: [String : String]?) async throws -> String {
         let parameters = buildParameters.messagePayloadRepresentation
-        return try await evaluateMacroExpressionAsString(expr, context: .components(level: level.toSWBRequest, buildParameters: parameters), overrides: overrides)
+        let request = MacroEvaluationRequest(sessionHandle: uid, context: .components(level: level.toSWBRequest, buildParameters: parameters), request: .stringExpression(expr), overrides: overrides, resultType: .string)
+        return try await sendMacroEvaluationStringRequest(self, request)
     }
 
     public func evaluateMacroExpressionAsStringList(_ expr: String, level: SWBMacroEvaluationLevel, buildParameters: SWBBuildParameters, overrides: [String : String]?) async throws -> [String] {
         let parameters = buildParameters.messagePayloadRepresentation
-        return try await evaluateMacroExpressionAsStringList(expr, context: .components(level: level.toSWBRequest, buildParameters: parameters), overrides: overrides)
+        let request = MacroEvaluationRequest(sessionHandle: uid, context: .components(level: level.toSWBRequest, buildParameters: parameters), request: .stringExpression(expr), overrides: overrides, resultType: .stringList)
+        return try await sendMacroEvaluationStringListRequest(self, request)
     }
 
     public func evaluateMacroExpressionArrayAsStringList(_ expr: [String], level: SWBMacroEvaluationLevel, buildParameters: SWBBuildParameters, overrides: [String : String]?) async throws -> [String] {
         let parameters = buildParameters.messagePayloadRepresentation
-        return try await evaluateMacroExpressionArrayAsStringList(expr, context: .components(level: level.toSWBRequest, buildParameters: parameters), overrides: overrides)
+        let request = MacroEvaluationRequest(sessionHandle: uid, context: .components(level: level.toSWBRequest, buildParameters: parameters), request: .stringExpressionArray(expr), overrides: overrides, resultType: .stringList)
+        return try await sendMacroEvaluationStringListRequest(self, request)
     }
 
 
@@ -513,61 +464,6 @@ public final class SWBBuildServiceSession: Sendable {
         return SWBBuildSettingsEditorInfo(from: try await service.send(request: BuildSettingsEditorInfoRequest(sessionHandle: uid, context: .components(level: level.toSWBRequest, buildParameters: parameters))).result)
     }
 
-
-    // MARK: Macro evaluation scopes
-
-
-    // FIXME: rdar://142511013 (Remove deprecated macro evaluation scope logic from SWBuild)
-    /// Request a macro evaluation scope for given level and build parameters.
-    @available(*, deprecated, message: "SWBMacroEvaluationScope is deprecated and should not be used")
-    public func createMacroEvaluationScope(level: SWBMacroEvaluationLevel, buildParameters: SWBBuildParameters) async throws -> SWBMacroEvaluationScope {
-        let parameters = buildParameters.messagePayloadRepresentation
-        let request = CreateMacroEvaluationScopeRequest(sessionHandle: uid, level: level.toSWBRequest, buildParameters: parameters)
-        let scope = try await SWBMacroEvaluationScope(self, service.send(request: request).value)
-        await sessionResourceTracker.append(scope)
-        return scope
-    }
-
-    // FIXME: rdar://142511013 (Remove deprecated macro evaluation scope logic from SWBuild)
-    @available(*, deprecated, message: "SWBMacroEvaluationScope is deprecated and should not be used")
-    public func createMacroEvaluationScope(_ level: MacroEvaluationScopeLevel, buildParameters: SWBBuildParameters) async throws -> SWBMacroEvaluationScope {
-        switch level {
-        case .defaults:
-            return try await createMacroEvaluationScope(level: .defaults, buildParameters: buildParameters)
-        case .project(let guid):
-            return try await createMacroEvaluationScope(level: .project(guid), buildParameters: buildParameters)
-        case .target(let guid):
-            return try await createMacroEvaluationScope(level: .target(guid), buildParameters: buildParameters)
-        }
-    }
-
-    // FIXME: rdar://142511013 (Remove deprecated macro evaluation scope logic from SWBuild)
-    @available(*, deprecated, message: "MacroEvaluationScopeLevel is deprecated and should not be used")
-    public enum MacroEvaluationScopeLevel: Sendable {
-        case defaults
-        case project(_ guid: String)
-        case target(_ guid: String)
-    }
-
-    // FIXME: rdar://142511013 (Remove deprecated macro evaluation scope logic from SWBuild)
-    @available(*, deprecated, message: "SWBMacroEvaluationScope is deprecated and should not be used")
-    public func createMacroEvaluationScope(projectGUID: String, buildParameters: SWBBuildParameters) async throws -> SWBMacroEvaluationScope {
-        return try await createMacroEvaluationScope(level: .project(projectGUID), buildParameters: buildParameters)
-    }
-
-    // FIXME: rdar://142511013 (Remove deprecated macro evaluation scope logic from SWBuild)
-    @available(*, deprecated, message: "SWBMacroEvaluationScope is deprecated and should not be used")
-    public func createMacroEvaluationScope(targetGUID: String, buildParameters: SWBBuildParameters) async throws -> SWBMacroEvaluationScope {
-        return try await createMacroEvaluationScope(level: .project(targetGUID), buildParameters: buildParameters)
-    }
-
-    // FIXME: rdar://142511013 (Remove deprecated macro evaluation scope logic from SWBuild)
-    /// Discard a macro evaluation scope.
-    @available(*, deprecated, message: "SWBMacroEvaluationScope is deprecated and should not be used")
-    public func discardMacroEvaluationScope(_ scope: SWBMacroEvaluationScope) async throws {
-        await sessionResourceTracker.remove(scope)
-        _ = try await service.send(request: DiscardMacroEvaluationScope(sessionHandle: uid, settingsHandle: scope.settingsHandle))
-    }
 
     /// Loads the workspace at the specified container path.
     ///
@@ -734,7 +630,7 @@ extension SWBBuildServiceSession {
             throw StubError.error("Unexpected message: \(msgOpt.map(String.init(describing:)) ?? "<nil>")")
         }
 
-        // NOTE: If any GetProvisioningTaskInputsRequest/ExternalToolExecutionRequest messages are received, cancellation may result in them never receiving a reply, which could result in background operations hanging. We should find a way to handle that better.
+        // NOTE: If any GetProvisioningTaskInputsRequest/ExternalToolExecutionRequest messages are received, cancellation may result in them never receiving a reply, which could result in background operations getting stuck. We should find a way to handle that better.
 
         // nil indicates Task cancellation (we broke out of the loop)
         return nil
@@ -1016,6 +912,7 @@ fileprivate extension SWBPreviewTargetDependencyInfo {
         case let .targetDependencyInfo(targetDependencyInfo):
             self.objectFileInputMap = targetDependencyInfo.objectFileInputMap
             self.linkCommandLine = targetDependencyInfo.linkCommandLine
+            self.linkerWorkingDirectory = targetDependencyInfo.linkerWorkingDirectory
             self.swiftEnableOpaqueTypeErasure = targetDependencyInfo.swiftEnableOpaqueTypeErasure
             self.swiftUseIntegratedDriver = targetDependencyInfo.swiftUseIntegratedDriver
             self.enableJITPreviews = targetDependencyInfo.enableJITPreviews

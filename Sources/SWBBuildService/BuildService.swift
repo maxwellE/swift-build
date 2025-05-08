@@ -14,8 +14,8 @@ import Foundation
 import SWBBuildSystem
 import SWBCore
 import SWBLibc
-package import SWBProtocol
-package import SWBServiceCore
+public import SWBProtocol
+public import SWBServiceCore
 import SWBUtil
 
 typealias Cache = SWBUtil.Cache
@@ -34,7 +34,7 @@ public struct MsgHandlingError: Swift.Error {
 
 private struct CoreCacheKey: Equatable, Hashable {
     /// The path of the developer directory.
-    let developerPath: Path?
+    let developerPath: SWBProtocol.DeveloperPath?
 
     /// The inferior build products path, if defined.
     let inferiorProducts: Path?
@@ -46,28 +46,28 @@ private struct CoreCacheKey: Equatable, Hashable {
 /// This is the central class which manages a service instance communicating with a unique client.
 ///
 /// This class is designed to be thread safe: clients can send messages from any thread and they will be sent in FIFO order. Note that individual messages are currently always processed in FIFO order non-concurrently. Messages which require non-trivial amounts of time to service should always be split to use an asynchronous reply.
-package class BuildService: Service, @unchecked Sendable {
+open class BuildService: Service, @unchecked Sendable {
     /// The map of registered sessions.
     var sessionMap = Dictionary<String, Session>()
 
     private var lastBuildOperationID = LockedValue<Int>(0)
 
     /// The shared build manager.
-    let buildManager = BuildManager()
+    let buildManager = BazelBuildManager()
 
     /// The cache of core objects.
     ///
     /// We make this a heavy cache in debug mode, so that it can be explicitly cleared (via `clearAllCaches`), which helps considerably with memory leak debugging.
 #if DEBUG
-    private let sharedCoreCache = HeavyCache<CoreCacheKey, (Core?, [Diagnostic])>()
+    private let sharedCoreCache = HeavyCache<CoreCacheKey, (Core?, [SWBUtil.Diagnostic])>()
 #else
-    private let sharedCoreCache = Cache<CoreCacheKey, (Core?, [Diagnostic])>()
+    private let sharedCoreCache = Cache<CoreCacheKey, (Core?, [SWBUtil.Diagnostic])>()
 #endif
 
     /// Async lock to guard access to `sharedCoreCache`, since its `getOrInsert` method can't be given an async closure.
     private var sharedCoreCacheLock = ActorLock()
 
-    package func nextBuildOperationID() -> Int {
+    public func nextBuildOperationID() -> Int {
         return lastBuildOperationID.withLock { value in
             let lastID = value
             value += 1
@@ -146,7 +146,7 @@ package class BuildService: Service, @unchecked Sendable {
     }
 
     /// Convenience overload which throws if the Core had initialization errors.
-    func sharedCore(developerPath: Path?, inferiorProducts: Path? = nil, environment: [String: String] = [:]) async throws -> Core {
+    func sharedCore(developerPath: SWBProtocol.DeveloperPath?, inferiorProducts: Path? = nil, environment: [String: String] = [:]) async throws -> Core {
         let (c, diagnostics) = await sharedCore(developerPath: developerPath, inferiorProducts: inferiorProducts, environment: environment)
         guard let core = c else {
             throw ServiceError.unableToInitializeCore(errors: diagnostics.map { $0.formatLocalizedDescription(.debug) })
@@ -157,7 +157,7 @@ package class BuildService: Service, @unchecked Sendable {
     /// Get a shared core instance.
     ///
     /// We use an explicit cache so that we can minimize the number of cores we load while still keeping a flexible public interface that doesn't require all clients to provide all possible required parameters for core initialization (which is useful for testing and debug purposes).
-    func sharedCore(developerPath: Path?, inferiorProducts: Path? = nil, environment: [String: String] = [:]) async -> (Core?, [Diagnostic]) {
+    func sharedCore(developerPath: SWBProtocol.DeveloperPath?, resourceSearchPaths: [Path] = [], inferiorProducts: Path? = nil, environment: [String: String] = [:]) async -> (Core?, [Diagnostic]) {
         let key = CoreCacheKey(developerPath: developerPath, inferiorProducts: inferiorProducts, environment: environment)
         return await sharedCoreCacheLock.withLock {
             if let existing = sharedCoreCache[key] {
@@ -178,7 +178,7 @@ package class BuildService: Service, @unchecked Sendable {
                     .init(_diagnosticsEngine)
                 }
 
-                var diagnostics: [Diagnostic] {
+                var diagnostics: [SWBUtil.Diagnostic] {
                     _diagnosticsEngine.diagnostics
                 }
 
@@ -191,7 +191,17 @@ package class BuildService: Service, @unchecked Sendable {
                 }
             }
             let delegate = Delegate()
-            let (core, diagnostics) = await (Core.getInitializedCore(delegate, pluginManager: pluginManager, developerPath: developerPath, inferiorProductsPath: inferiorProducts, environment: environment, buildServiceModTime: buildServiceModTime, connectionMode: connectionMode), delegate.diagnostics)
+            let coreDeveloperPath: Core.DeveloperPath?
+            switch developerPath {
+            case .xcode(let path):
+                coreDeveloperPath = .xcode(path)
+            case .swiftToolchain(let path):
+                let xcodeDeveloperPath = try? await Xcode.getActiveDeveloperDirectoryPath()
+                coreDeveloperPath = .swiftToolchain(path, xcodeDeveloperPath: xcodeDeveloperPath)
+            case nil:
+                coreDeveloperPath = nil
+            }
+            let (core, diagnostics) = await (Core.getInitializedCore(delegate, pluginManager: pluginManager, developerPath: coreDeveloperPath, resourceSearchPaths: resourceSearchPaths, inferiorProductsPath: inferiorProducts, environment: environment, buildServiceModTime: buildServiceModTime, connectionMode: connectionMode), delegate.diagnostics)
             delegate.freeze()
             sharedCoreCache[key] = (core, diagnostics)
             return (core, diagnostics)

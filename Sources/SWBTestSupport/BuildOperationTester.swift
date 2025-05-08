@@ -19,7 +19,7 @@ package import SWBBuildSystem
 @_spi(Testing) package import SWBCore
 package import SWBTaskConstruction
 package import SWBTaskExecution
-package import SWBUtil
+@_spi(Testing) package import SWBUtil
 
 private import class SWBLLBuild.BuildDB
 private import class SWBLLBuild.BuildKey
@@ -36,6 +36,7 @@ package import struct SWBProtocol.BuildOperationMetrics
 
 // FIXME: Workaround: <rdar://problem/26249252> Unable to prefer my own type over NS renamed types
 package import class SWBTaskExecution.Task
+import SWBMacro
 
 extension BuildRequest {
     func with(parameters: BuildParameters, buildTargets: [BuildTargetInfo]) -> BuildRequest {
@@ -50,6 +51,8 @@ extension BuildRequest {
             useDryRun: useDryRun,
             enableStaleFileRemoval: enableStaleFileRemoval,
             showNonLoggedProgress: showNonLoggedProgress,
+            recordBuildBacktraces: recordBuildBacktraces,
+            generatePrecompiledModulesReport: generatePrecompiledModulesReport,
             buildDescriptionID: buildDescriptionID,
             qos: qos,
             buildPlanDiagnosticsDirPath: buildPlanDiagnosticsDirPath,
@@ -66,7 +69,7 @@ package protocol BuildRequestCheckingResult {
 }
 
 extension BuildRequestCheckingResult {
-    /// The target architecture of the run destination in the build request.  Returns `undefined_arch` if the build request has no run destination, or the run destination has no target archotecture.
+    /// The target architecture of the run destination in the build request.  Returns `undefined_arch` if the build request has no run destination, or the run destination has no target architecture.
     package var runDestinationTargetArchitecture: String {
         return buildRequest.parameters.activeRunDestination?.targetArchitecture ?? "undefined_arch"
     }
@@ -136,6 +139,9 @@ package final class BuildOperationTester {
         /// A generic activity produced a diagnostic.
         case activityHadDiagnostic(ActivityID, Diagnostic)
 
+        /// A generic activity produced output.
+        case activityEmittedData(ruleInfo: String, [UInt8])
+
         /// A generic activity ended.
         case activityEnded(ruleInfo: String, status: BuildOperationTaskEnded.Status)
 
@@ -179,6 +185,8 @@ package final class BuildOperationTester {
                 return "activityStarted(\(ruleInfo))"
             case .activityHadDiagnostic(let activityID, let diagnostic):
                 return "activityHadDiagnostic(\(activityID),\(diagnostic))"
+            case .activityEmittedData(ruleInfo: let ruleInfo, let bytes):
+                return "activityEmittedData(\(ruleInfo), bytes: \(ByteString(bytes).asString)"
             case .activityEnded(ruleInfo: let ruleInfo):
                 return "activityEnded(\(ruleInfo))"
             case .emittedBuildBacktraceFrame(identifier: let id, previousFrameIdentifier: let previousID, category: let category, description: let description):
@@ -224,7 +232,7 @@ package final class BuildOperationTester {
         }
     }
 
-    /// Describes a single event which ocurred as a part of a task, during the build.
+    /// Describes a single event which occurred as a part of a task, during the build.
     package enum TaskEvent: Hashable, Equatable, CustomStringConvertible, Sendable {
 
         /// The task was started.
@@ -623,6 +631,25 @@ package final class BuildOperationTester {
             return nil
         }
 
+        package func getDiagnosticMessageForTask(_ pattern: StringPattern, kind: DiagnosticKind, task: Task) -> String? {
+            for (index, event) in self.events.enumerated() {
+                switch event {
+                case .taskHadEvent(let eventTask, event: .hadDiagnostic(let diagnostic)) where diagnostic.behavior == kind:
+                    guard eventTask == task else {
+                        continue
+                    }
+                    let message = diagnostic.formatLocalizedDescription(.debugWithoutBehavior, task: eventTask)
+                    if pattern ~= message {
+                        _eventList.remove(at: index)
+                        return message
+                    }
+                default:
+                    continue
+                }
+            }
+            return nil
+        }
+
         package func check(_ pattern: StringPattern, kind: BuildOperationTester.DiagnosticKind, failIfNotFound: Bool, sourceLocation: SourceLocation, checkDiagnostic: (Diagnostic) -> Bool) -> Bool {
             let found = (getDiagnosticMessage(pattern, kind: kind, checkDiagnostic: checkDiagnostic) != nil)
             if !found, failIfNotFound {
@@ -706,6 +733,18 @@ package final class BuildOperationTester {
                 self.rawTrace = rawTrace
             }
 
+        }
+
+        package func checkNoTaskWithBacktraces(_ conditions: TaskCondition..., sourceLocation: SourceLocation = #_sourceLocation) {
+            for matchedTask in findMatchingTasks(conditions) {
+                Issue.record("found unexpected task matching conditions '\(conditions)', found: \(matchedTask)", sourceLocation: sourceLocation)
+
+                if let frameID = getBacktraceID(matchedTask, sourceLocation: sourceLocation) {
+                    enumerateBacktraces(frameID) { _, category, description in
+                        Issue.record("...<category='\(category)' description='\(description)'>", sourceLocation: sourceLocation)
+                    }
+                }
+            }
         }
 
         /// Check whether the results contains a dependency cycle error. If so, then consume the error and create a `CycleChecking` object and pass it to the block. Otherwise fail.
@@ -1006,8 +1045,21 @@ package final class BuildOperationTester {
             startedTasks.remove(task)
         }
 
-        package func checkBacktrace(_ identifier: BuildOperationBacktraceFrameEmitted.Identifier, _ patterns: [StringPattern], sourceLocation: SourceLocation = #_sourceLocation) {
-            var frameDescriptions: [String] = []
+        private func getBacktraceID(_ task: Task, sourceLocation: SourceLocation = #_sourceLocation) -> BuildOperationBacktraceFrameEmitted.Identifier? {
+            guard let frameID: BuildOperationBacktraceFrameEmitted.Identifier = events.compactMap ({ (event) -> BuildOperationBacktraceFrameEmitted.Identifier? in
+                guard case .emittedBuildBacktraceFrame(identifier: let identifier, previousFrameIdentifier: _, category: _, description: _) = event, case .task(let signature) = identifier, BuildOperationTaskSignature.taskIdentifier(ByteString(encodingAsUTF8: task.identifier.rawValue)) == signature else {
+                    return nil
+                }
+                return identifier
+                // Iff the task is a dynamic task, there may be more than one corresponding frame if it was requested multiple times, in which case we choose the first. Non-dynamic tasks always have a 1-1 relationship with frames.
+            }).sorted().first else {
+                Issue.record("Did not find a single build backtrace frame for task: \(task.identifier)", sourceLocation: sourceLocation)
+                return nil
+            }
+            return frameID
+        }
+
+        private func enumerateBacktraces(_ identifier: BuildOperationBacktraceFrameEmitted.Identifier, _ handleFrameInfo: (_ identifier: BuildOperationBacktraceFrameEmitted.Identifier?, _ category: BuildOperationBacktraceFrameEmitted.Category, _ description: String) -> ()) {
             var currentFrameID: BuildOperationBacktraceFrameEmitted.Identifier? = identifier
             while let id = currentFrameID {
                 if let frameInfo: (BuildOperationBacktraceFrameEmitted.Identifier?, BuildOperationBacktraceFrameEmitted.Category, String) = events.compactMap({ (event) -> (BuildOperationBacktraceFrameEmitted.Identifier?, BuildOperationBacktraceFrameEmitted.Category, String)? in
@@ -1017,28 +1069,29 @@ package final class BuildOperationTester {
                     return (previousFrameIdentifier, category, description)
                     // Iff the task is a dynamic task, there may be more than one corresponding frame if it was requested multiple times, in which case we choose the first. Non-dynamic tasks always have a 1-1 relationship with frames.
                 }).sorted(by: { $0.0 }).first {
-                    frameDescriptions.append("<category='\(frameInfo.1)' description='\(frameInfo.2)'>")
+                    handleFrameInfo(frameInfo.0, frameInfo.1, frameInfo.2)
                     currentFrameID = frameInfo.0
                 } else {
                     currentFrameID = nil
                 }
+            }
+        }
+
+        package func checkBacktrace(_ identifier: BuildOperationBacktraceFrameEmitted.Identifier, _ patterns: [StringPattern], sourceLocation: SourceLocation = #_sourceLocation) {
+            var frameDescriptions: [String] = []
+            enumerateBacktraces(identifier) { (_, category, description) in
+                frameDescriptions.append("<category='\(category)' description='\(description)'>")
             }
 
             XCTAssertMatch(frameDescriptions, patterns, sourceLocation: sourceLocation)
         }
 
         package func checkBacktrace(_ task: Task, _ patterns: [StringPattern], sourceLocation: SourceLocation = #_sourceLocation) {
-            guard let frameID: BuildOperationBacktraceFrameEmitted.Identifier = events.compactMap ({ (event) -> BuildOperationBacktraceFrameEmitted.Identifier? in
-                guard case .emittedBuildBacktraceFrame(identifier: let identifier, previousFrameIdentifier: _, category: _, description: _) = event, case .task(let signature) = identifier, BuildOperationTaskSignature.taskIdentifier(ByteString(encodingAsUTF8: task.identifier.rawValue)) == signature else {
-                    return nil
-                }
-                return identifier
-                // Iff the task is a dynamic task, there may be more than one corresponding frame if it was requested multiple times, in which case we choose the first. Non-dynamic tasks always have a 1-1 relationship with frames.
-            }).sorted().first else {
-                Issue.record("Did not find a single build backtrace frame for task: \(task.identifier)", sourceLocation: sourceLocation)
-                return
+            if let frameID = getBacktraceID(task, sourceLocation: sourceLocation) {
+                checkBacktrace(frameID, patterns, sourceLocation: sourceLocation)
+            } else {
+                // already recorded an issue
             }
-            checkBacktrace(frameID, patterns, sourceLocation: sourceLocation)
         }
 
         private class TaskDependencyResolver {
@@ -1209,6 +1262,11 @@ package final class BuildOperationTester {
     /// The user preferences to supply when testing.
     package var userPreferences = UserPreferences.defaultForTesting
 
+    private struct EnvironmentVariablesExtensionContext: EnvironmentExtensionAdditionalEnvironmentVariablesContext {
+        var hostOperatingSystem: OperatingSystem
+        var fs: any FSProxy
+    }
+
     /// Create a build tester.
     ///
     /// - simulated: Whether or not the build is being done in simulation.
@@ -1223,7 +1281,7 @@ package final class BuildOperationTester {
         self.clientDelegate = clientDelegate ?? MockTestClientDelegate()
         self.continueBuildingAfterErrors = continueBuildingAfterErrors
         self.systemInfo = systemInfo
-        let env = try await EnvironmentExtensionPoint.additionalEnvironmentVariables(pluginManager: core.pluginManager, fs: fs)
+        let env = try await EnvironmentExtensionPoint.additionalEnvironmentVariables(pluginManager: core.pluginManager, context: EnvironmentVariablesExtensionContext(hostOperatingSystem: core.hostOperatingSystem, fs: fs))
         self.userInfo = try await Self.defaultUserInfo.addingPlatformDefaults(from: env)
     }
 
@@ -1241,7 +1299,7 @@ package final class BuildOperationTester {
         self.clientDelegate = clientDelegate ?? MockTestClientDelegate()
         self.continueBuildingAfterErrors = continueBuildingAfterErrors
         self.systemInfo = systemInfo
-        let env = try await EnvironmentExtensionPoint.additionalEnvironmentVariables(pluginManager: core.pluginManager, fs: fs)
+        let env = try await EnvironmentExtensionPoint.additionalEnvironmentVariables(pluginManager: core.pluginManager, context: EnvironmentVariablesExtensionContext(hostOperatingSystem: core.hostOperatingSystem, fs: fs))
         self.userInfo = try await Self.defaultUserInfo.addingPlatformDefaults(from: env)
     }
 
@@ -1289,8 +1347,6 @@ package final class BuildOperationTester {
             "ALWAYS_SEARCH_USER_PATHS": "NO",
             // Temporarily force each tester to use its own stat cache dir. rdar://104356237 (Clang-stat-cache should write to a temporary file and rename into place to avoid races generating the cache)
             "SDK_STAT_CACHE_DIR": workspace.path.dirname.str,
-            // This is slow, and not relevant for the vast majority of tests.
-            "DISABLE_SDK_METADATA_PARSING": "YES",
         ]
 
         // If we have a run destination, then we default ONLY_ACTIVE_ARCH to YES. This means when they build with a non-generic run destination, that run destination's architecture will be used rather than building universal.
@@ -1320,7 +1376,7 @@ package final class BuildOperationTester {
             }
         }
 
-        // Add overrides from the parameters we were passed, which will supercede the default overrides above.
+        // Add overrides from the parameters we were passed, which will supersede the default overrides above.
         overrides.addContents(of: parameters.overrides)
 
         // Create and return the effective parameters.
@@ -1339,7 +1395,7 @@ package final class BuildOperationTester {
     }
 
     /// Construct the build description for the given build parameters, and check it.
-    @discardableResult package func checkBuildDescription<T>(_ parameters: BuildParameters? = nil, runDestination: SWBProtocol.RunDestinationInfo? = .macOS, buildRequest inputBuildRequest: BuildRequest? = nil, buildCommand: BuildCommand? = nil, schemeCommand: SchemeCommand? = .launch, persistent: Bool = false, serial: Bool = false, signableTargets: Set<String> = [], signableTargetInputs: [String: ProvisioningTaskInputs] = [:], clientDelegate: (any ClientDelegate)? = nil, workspaceContext: WorkspaceContext? = nil, sourceLocation: SourceLocation = #_sourceLocation, body: (BuildDescriptionResults) async throws -> T) async throws -> T {
+    @discardableResult package func checkBuildDescription<T>(_ parameters: BuildParameters? = nil, runDestination: SWBProtocol.RunDestinationInfo?, buildRequest inputBuildRequest: BuildRequest? = nil, buildCommand: BuildCommand? = nil, schemeCommand: SchemeCommand? = .launch, persistent: Bool = false, serial: Bool = false, signableTargets: Set<String> = [], signableTargetInputs: [String: ProvisioningTaskInputs] = [:], clientDelegate: (any ClientDelegate)? = nil, workspaceContext: WorkspaceContext? = nil, sourceLocation: SourceLocation = #_sourceLocation, body: (BuildDescriptionResults) async throws -> T) async throws -> T {
         let parameters = effectiveBuildParameters(parameters, runDestination: runDestination)
 
         let clientDelegate = clientDelegate ?? self.clientDelegate
@@ -1419,12 +1475,12 @@ package final class BuildOperationTester {
     }
 
     /// Construct the tasks for the given build parameters, and test the result.
-    @discardableResult package func checkBuild<T>(_ name: String? = nil, parameters: BuildParameters? = nil, runDestination: SWBProtocol.RunDestinationInfo? = .macOS, buildRequest inputBuildRequest: BuildRequest? = nil, buildCommand: BuildCommand? = nil, schemeCommand: SchemeCommand? = .launch, persistent: Bool = false, serial: Bool = false, buildOutputMap: [String:String]? = nil, signableTargets: Set<String> = [], signableTargetInputs: [String: ProvisioningTaskInputs] = [:], clientDelegate: (any ClientDelegate)? = nil, sourceLocation: SourceLocation = #_sourceLocation, body: (BuildResults) async throws -> T) async throws -> T {
+    @discardableResult package func checkBuild<T>(_ name: String? = nil, parameters: BuildParameters? = nil, runDestination: SWBProtocol.RunDestinationInfo?, buildRequest inputBuildRequest: BuildRequest? = nil, buildCommand: BuildCommand? = nil, schemeCommand: SchemeCommand? = .launch, persistent: Bool = false, serial: Bool = false, buildOutputMap: [String:String]? = nil, signableTargets: Set<String> = [], signableTargetInputs: [String: ProvisioningTaskInputs] = [:], clientDelegate: (any ClientDelegate)? = nil, sourceLocation: SourceLocation = #_sourceLocation, body: (BuildResults) async throws -> T) async throws -> T {
         try await checkBuild(name, parameters: parameters, runDestination: runDestination, buildRequest: inputBuildRequest, buildCommand: buildCommand, schemeCommand: schemeCommand, persistent: persistent, serial: serial, buildOutputMap: buildOutputMap, signableTargets: signableTargets, signableTargetInputs: signableTargetInputs, clientDelegate: clientDelegate, sourceLocation: sourceLocation, body: body, performBuild: { await $0.buildWithTimeout() })
     }
 
     /// Construct the tasks for the given build parameters, and test the result.
-    @discardableResult package func checkBuild<T>(_ name: String? = nil, parameters: BuildParameters? = nil, runDestination: RunDestinationInfo? = .macOS, buildRequest inputBuildRequest: BuildRequest? = nil, operationBuildRequest: BuildRequest? = nil, buildCommand: BuildCommand? = nil, schemeCommand: SchemeCommand? = .launch, persistent: Bool = false, serial: Bool = false, buildOutputMap: [String:String]? = nil, signableTargets: Set<String> = [], signableTargetInputs: [String: ProvisioningTaskInputs] = [:], clientDelegate: (any ClientDelegate)? = nil, sourceLocation: SourceLocation = #_sourceLocation, body: (BuildResults) async throws -> T, performBuild: @escaping (any BuildSystemOperation) async throws -> Void) async throws -> T {
+    @discardableResult package func checkBuild<T>(_ name: String? = nil, parameters: BuildParameters? = nil, runDestination: RunDestinationInfo?, buildRequest inputBuildRequest: BuildRequest? = nil, operationBuildRequest: BuildRequest? = nil, buildCommand: BuildCommand? = nil, schemeCommand: SchemeCommand? = .launch, persistent: Bool = false, serial: Bool = false, buildOutputMap: [String:String]? = nil, signableTargets: Set<String> = [], signableTargetInputs: [String: ProvisioningTaskInputs] = [:], clientDelegate: (any ClientDelegate)? = nil, sourceLocation: SourceLocation = #_sourceLocation, body: (BuildResults) async throws -> T, performBuild: @escaping (any BuildSystemOperation) async throws -> Void) async throws -> T {
         try await checkBuildDescription(parameters, runDestination: runDestination, buildRequest: inputBuildRequest, buildCommand: buildCommand, schemeCommand: schemeCommand, persistent: persistent, serial: serial, signableTargets: signableTargets, signableTargetInputs: signableTargetInputs, clientDelegate: clientDelegate) { results throws in
             // Check that there are no duplicate task identifiers - it is a fatal error if there are, unless `continueBuildingAfterErrors` is set.
             var tasksByTaskIdentifier: [TaskIdentifier: Task] = [:]
@@ -1508,11 +1564,11 @@ package final class BuildOperationTester {
     }
 
     /// Ensure that the build is a null build.
-    package func checkNullBuild(_ name: String? = nil, parameters: BuildParameters? = nil, runDestination: RunDestinationInfo? = .macOS, buildRequest inputBuildRequest: BuildRequest? = nil, buildCommand: BuildCommand? = nil, schemeCommand: SchemeCommand? = .launch, persistent: Bool = false, serial: Bool = false, buildOutputMap: [String:String]? = nil, signableTargets: Set<String> = [], signableTargetInputs: [String: ProvisioningTaskInputs] = [:], clientDelegate: (any ClientDelegate)? = nil, excludedTasks: Set<String> = ["ClangStatCache", "LinkAssetCatalogSignature"], diagnosticsToValidate: Set<DiagnosticKind> = [.note, .error, .warning], sourceLocation: SourceLocation = #_sourceLocation) async throws {
+    package func checkNullBuild(_ name: String? = nil, parameters: BuildParameters? = nil, runDestination: RunDestinationInfo?, buildRequest inputBuildRequest: BuildRequest? = nil, buildCommand: BuildCommand? = nil, schemeCommand: SchemeCommand? = .launch, persistent: Bool = false, serial: Bool = false, buildOutputMap: [String:String]? = nil, signableTargets: Set<String> = [], signableTargetInputs: [String: ProvisioningTaskInputs] = [:], clientDelegate: (any ClientDelegate)? = nil, excludedTasks: Set<String> = ["ClangStatCache", "LinkAssetCatalogSignature"], diagnosticsToValidate: Set<DiagnosticKind> = [.note, .error, .warning], sourceLocation: SourceLocation = #_sourceLocation) async throws {
 
         func body(results: BuildResults) throws -> Void {
             results.consumeTasksMatchingRuleTypes(excludedTasks)
-            results.checkNoTask(sourceLocation: sourceLocation)
+            results.checkNoTaskWithBacktraces(sourceLocation: sourceLocation)
 
             results.checkNote(.equal("Building targets in dependency order"), failIfNotFound: false)
             results.checkNote(.prefix("Target dependency graph"), failIfNotFound: false)
@@ -1538,7 +1594,9 @@ package final class BuildOperationTester {
             }
         }
 
-        try await checkBuild(name, parameters: parameters, runDestination: runDestination, buildRequest: inputBuildRequest, buildCommand: buildCommand, schemeCommand: schemeCommand, persistent: persistent, serial: serial, buildOutputMap: buildOutputMap, signableTargets: signableTargets, signableTargetInputs: signableTargetInputs, clientDelegate: clientDelegate, sourceLocation: sourceLocation, body: body)
+        try await UserDefaults.withEnvironment(["EnableBuildBacktraceRecording": "true"]) {
+            try await checkBuild(name, parameters: parameters, runDestination: runDestination, buildRequest: inputBuildRequest, buildCommand: buildCommand, schemeCommand: schemeCommand, persistent: persistent, serial: serial, buildOutputMap: buildOutputMap, signableTargets: signableTargets, signableTargetInputs: signableTargetInputs, clientDelegate: clientDelegate, sourceLocation: sourceLocation, body: body)
+        }
     }
 
     package static func buildRequestForIndexOperation(
@@ -1612,7 +1670,7 @@ package final class BuildOperationTester {
         let operationParameters = buildRequest.parameters.replacing(activeRunDestination: runDestination, activeArchitecture: nil)
         let operationBuildRequest = buildRequest.with(parameters: operationParameters, buildTargets: [])
 
-        return try await checkBuild(buildRequest: buildRequest, operationBuildRequest: operationBuildRequest, persistent: persistent, sourceLocation: sourceLocation, body: body, performBuild: { await $0.buildWithTimeout() })
+        return try await checkBuild(runDestination: nil, buildRequest: buildRequest, operationBuildRequest: operationBuildRequest, persistent: persistent, sourceLocation: sourceLocation, body: body, performBuild: { await $0.buildWithTimeout() })
     }
 
     package struct BuildGraphResult: Sendable {
@@ -1915,7 +1973,7 @@ private final class BuildOperationTesterDelegate: BuildOperationDelegate {
                     if !self.hadErrors {
                         switch result {
                         case let .exit(exitStatus, _) where !exitStatus.isSuccess && !exitStatus.wasCanceled:
-                            self.delegate.events.append(.buildHadDiagnostic(Diagnostic(behavior: .error, location: .unknown, data: DiagnosticData("Command \(task.ruleInfo[0]) failed. \(RunProcessNonZeroExitError(args: Array(task.commandLineAsStrings), workingDirectory: task.workingDirectory.str, environment: task.environment.bindingsDictionary, status: exitStatus, mergedOutput: output).description)"))))
+                            self.delegate.events.append(.buildHadDiagnostic(Diagnostic(behavior: .error, location: .unknown, data: DiagnosticData("Command \(task.ruleInfo[0]) failed. \(RunProcessNonZeroExitError(args: Array(task.commandLineAsStrings), workingDirectory: task.workingDirectory.str, environment: .init(task.environment.bindingsDictionary), status: exitStatus, mergedOutput: output).description)"))))
                         case .failedSetup:
                             self.delegate.events.append(.buildHadDiagnostic(Diagnostic(behavior: .error, location: .unknown, data: DiagnosticData("Command \(task.ruleInfo[0]) failed setup."))))
                         case .exit, .skipped:
@@ -1992,11 +2050,12 @@ private final class BuildOperationTesterDelegate: BuildOperationDelegate {
         return TesterBuildOutputDelegate(delegate: self)
     }
 
-    func buildComplete(_ operation: any BuildSystemOperation, status: BuildOperationEnded.Status?, delegate: any BuildOutputDelegate, metrics: BuildOperationMetrics?) {
+    func buildComplete(_ operation: any BuildSystemOperation, status: BuildOperationEnded.Status?, delegate: any BuildOutputDelegate, metrics: BuildOperationMetrics?) -> BuildOperationEnded.Status {
         queue.async {
             // There is no "build failed" event, so only explicit cancellation needs to map to `buildCancelled`
             self.events.append(status == .cancelled ? .buildCancelled : .buildCompleted)
         }
+        return status ?? .succeeded
     }
 
     func targetPreparationStarted(_ operation: any BuildSystemOperation, configuredTarget: ConfiguredTarget) {
@@ -2152,7 +2211,11 @@ private final class BuildOperationTesterDelegate: BuildOperationDelegate {
 
     func emit(data: [UInt8], for activity: ActivityID, signature: ByteString) {
         queue.async {
-            // FIXME.
+            guard let ruleInfo = self.activitiesByActivityID[activity.rawValue] else {
+                assertionFailure("Received emit message for activity id '\(activity.rawValue)' but it was not started, or has already ended")
+                return
+            }
+            self.events.append(.activityEmittedData(ruleInfo: ruleInfo, data))
         }
     }
 

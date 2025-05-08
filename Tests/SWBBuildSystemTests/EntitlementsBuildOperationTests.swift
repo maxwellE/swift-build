@@ -20,6 +20,7 @@ import struct SWBProtocol.TargetDependencyRelationship
 import SWBTestSupport
 import SWBTaskExecution
 import SWBUtil
+import SwiftBuildTestSupport
 
 @Suite
 fileprivate struct EntitlementsBuildOperationTests: CoreBasedTests {
@@ -136,6 +137,13 @@ fileprivate struct EntitlementsBuildOperationTests: CoreBasedTests {
                     "PRODUCT_NAME": "$(TARGET_NAME)",
                     "INFOPLIST_FILE": "Info.plist",
                     "CODE_SIGN_IDENTITY": "-",
+                    "RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES": "",
+                    "RUNTIME_EXCEPTION_ALLOW_JIT": "",
+                    "RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY": "",
+                    "AUTOMATION_APPLE_EVENTS": "",
+                    "RUNTIME_EXCEPTION_DEBUGGING_TOOL": "",
+                    "RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION": "",
+                    "RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION": "",
                     "ENABLE_APP_SANDBOX": "YES",
                     "ENABLE_FILE_ACCESS_DOWNLOADS_FOLDER": "",
                     "ENABLE_FILE_ACCESS_PICTURE_FOLDER": "",
@@ -174,6 +182,13 @@ fileprivate struct EntitlementsBuildOperationTests: CoreBasedTests {
                     "PRODUCT_NAME": "$(TARGET_NAME)",
                     "INFOPLIST_FILE": "Info.plist",
                     "CODE_SIGN_IDENTITY": "-",
+                    "RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES": "YES",
+                    "RUNTIME_EXCEPTION_ALLOW_JIT": "YES",
+                    "RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY": "YES",
+                    "AUTOMATION_APPLE_EVENTS": "YES",
+                    "RUNTIME_EXCEPTION_DEBUGGING_TOOL": "YES",
+                    "RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION": "YES",
+                    "RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION": "YES",
                     "ENABLE_APP_SANDBOX": "YES",
                     "ENABLE_FILE_ACCESS_DOWNLOADS_FOLDER": "readwrite",
                     "ENABLE_FILE_ACCESS_PICTURE_FOLDER": "readonly",
@@ -197,6 +212,13 @@ fileprivate struct EntitlementsBuildOperationTests: CoreBasedTests {
             try await buildTestBinaryAndValidateEntitlements(testWorkspace: testWorkspace, expectedEntitlements: [
                 "com.apple.application-identifier": "$(AppIdentifierPrefix)$(CFBundleIdentifier)",
                 "com.apple.security.app-sandbox": "1",
+                "com.apple.security.automation.apple-events": "1",
+                "com.apple.security.cs.allow-dyld-environment-variables": "1",
+                "com.apple.security.cs.allow-jit": "1",
+                "com.apple.security.cs.allow-unsigned-executable-memory": "1",
+                "com.apple.security.cs.debugger": "1",
+                "com.apple.security.cs.disable-executable-page-protection": "1",
+                "com.apple.security.cs.disable-library-validation": "1",
                 "com.apple.security.device.audio-input": "1",
                 "com.apple.security.device.bluetooth": "1",
                 "com.apple.security.personal-information.calendars": "1",
@@ -216,17 +238,24 @@ fileprivate struct EntitlementsBuildOperationTests: CoreBasedTests {
         }
     }
 
-    /// Test that the `ProcessProductEntitlementsTaskAction` does not embed build settings based entitlements that are dependent on App Sandbox being enabled, when App Sandbox is disabled.
-    @Test(.requireSDKs(.macOS))
-    func macOSAppSandboxEnabledEntitlementsWithSandboxDisabled() async throws {
+    /// Test that the `ProcessProductEntitlementsTaskAction` does not embed build settings that only apply to macOS.
+    @Test(.requireSDKs(.macOS, .iOS))
+    func iOSAppSandboxAndHardenedRuntimeBuildSettingEnabled() async throws {
         try await withTemporaryDirectory { tmpDirPath async throws -> Void in
             let testWorkspace = entitlementsTestWorkspace(
                 sourceRoot: tmpDirPath,
                 buildSettings: [
                     "PRODUCT_NAME": "$(TARGET_NAME)",
                     "INFOPLIST_FILE": "Info.plist",
-                    "CODE_SIGN_IDENTITY": "-",
-                    "ENABLE_APP_SANDBOX": "NO",
+                    "AD_HOC_CODE_SIGNING_ALLOWED": "YES",
+                    "RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES": "YES",
+                    "RUNTIME_EXCEPTION_ALLOW_JIT": "YES",
+                    "RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY": "YES",
+                    "AUTOMATION_APPLE_EVENTS": "YES",
+                    "RUNTIME_EXCEPTION_DEBUGGING_TOOL": "YES",
+                    "RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION": "YES",
+                    "RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION": "YES",
+                    "ENABLE_APP_SANDBOX": "YES",
                     "ENABLE_FILE_ACCESS_DOWNLOADS_FOLDER": "readwrite",
                     "ENABLE_FILE_ACCESS_PICTURE_FOLDER": "readonly",
                     "ENABLE_FILE_ACCESS_MUSIC_FOLDER": "readwrite",
@@ -242,7 +271,7 @@ fileprivate struct EntitlementsBuildOperationTests: CoreBasedTests {
                     "ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY": "YES",
                     "ENABLE_RESOURCE_ACCESS_USB": "YES",
                     "ENABLE_RESOURCE_ACCESS_PRINTING": "YES",
-                    "SDKROOT": "macosx"
+                    "SDKROOT": "iphoneos"
                 ]
             )
 
@@ -263,6 +292,13 @@ fileprivate struct EntitlementsBuildOperationTests: CoreBasedTests {
                     "INFOPLIST_FILE": "Info.plist",
                     "CODE_SIGN_IDENTITY": "-",
                     "ENABLE_HARDENED_RUNTIME": "YES",
+                    "RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES": "YES",
+                    "RUNTIME_EXCEPTION_ALLOW_JIT": "YES",
+                    "RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY": "YES",
+                    "AUTOMATION_APPLE_EVENTS": "YES",
+                    "RUNTIME_EXCEPTION_DEBUGGING_TOOL": "YES",
+                    "RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION": "YES",
+                    "RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION": "YES",
                     "ENABLE_FILE_ACCESS_DOWNLOADS_FOLDER": "readwrite",
                     "ENABLE_FILE_ACCESS_PICTURE_FOLDER": "readonly",
                     "ENABLE_FILE_ACCESS_MUSIC_FOLDER": "readwrite",
@@ -282,6 +318,13 @@ fileprivate struct EntitlementsBuildOperationTests: CoreBasedTests {
 
             try await buildTestBinaryAndValidateEntitlements(testWorkspace: testWorkspace, expectedEntitlements: [
                 "com.apple.application-identifier": "$(AppIdentifierPrefix)$(CFBundleIdentifier)",
+                "com.apple.security.automation.apple-events": "1",
+                "com.apple.security.cs.allow-dyld-environment-variables": "1",
+                "com.apple.security.cs.allow-jit": "1",
+                "com.apple.security.cs.allow-unsigned-executable-memory": "1",
+                "com.apple.security.cs.debugger": "1",
+                "com.apple.security.cs.disable-executable-page-protection": "1",
+                "com.apple.security.cs.disable-library-validation": "1",
                 "com.apple.security.device.audio-input": "1",
                 "com.apple.security.device.bluetooth": "1",
                 "com.apple.security.personal-information.calendars": "1",
@@ -299,9 +342,9 @@ fileprivate struct EntitlementsBuildOperationTests: CoreBasedTests {
         }
     }
 
-    /// Test that the `ProcessProductEntitlementsTaskAction` does not embed build settings based entitlements that are dependent on Hardened Runtime being enabled, when Hardened Runtime is disabled.
+    /// Test that the `ProcessProductEntitlementsTaskAction` embeds entitlements that are settable through build settings and dependent on Hardened Runtime being enabled. Emitting the correct warnings as the entitlements and build settings are different.
     @Test(.requireSDKs(.macOS))
-    func macOSHardenedRuntimeEnabledEntitlementsWithHardenedRuntimeDisabled() async throws {
+    func macOSHardenedRuntimeEnabledEntitlementsWithConflict() async throws {
         try await withTemporaryDirectory { tmpDirPath async throws -> Void in
             let testWorkspace = entitlementsTestWorkspace(
                 sourceRoot: tmpDirPath,
@@ -309,7 +352,14 @@ fileprivate struct EntitlementsBuildOperationTests: CoreBasedTests {
                     "PRODUCT_NAME": "$(TARGET_NAME)",
                     "INFOPLIST_FILE": "Info.plist",
                     "CODE_SIGN_IDENTITY": "-",
-                    "ENABLE_HARDENED_RUNTIME": "NO",
+                    "ENABLE_HARDENED_RUNTIME": "YES",
+                    "RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES": "YES",
+                    "RUNTIME_EXCEPTION_ALLOW_JIT": "NO",
+                    "RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY": "YES",
+                    "AUTOMATION_APPLE_EVENTS": "YES",
+                    "RUNTIME_EXCEPTION_DEBUGGING_TOOL": "YES",
+                    "RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION": "YES",
+                    "RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION": "YES",
                     "ENABLE_FILE_ACCESS_DOWNLOADS_FOLDER": "readwrite",
                     "ENABLE_FILE_ACCESS_PICTURE_FOLDER": "readonly",
                     "ENABLE_FILE_ACCESS_MUSIC_FOLDER": "readwrite",
@@ -327,9 +377,106 @@ fileprivate struct EntitlementsBuildOperationTests: CoreBasedTests {
                 ]
             )
 
-            try await buildTestBinaryAndValidateEntitlements(testWorkspace: testWorkspace, expectedEntitlements: [
-                "com.apple.application-identifier": "$(AppIdentifierPrefix)$(CFBundleIdentifier)",
-            ])
+            try await buildTestBinaryAndValidateEntitlements(
+                testWorkspace: testWorkspace,
+                expectedEntitlements: [
+                    "com.apple.application-identifier": "$(AppIdentifierPrefix)$(CFBundleIdentifier)",
+                    "com.apple.security.automation.apple-events": "1",
+                    "com.apple.security.cs.allow-dyld-environment-variables": "1",
+                    "com.apple.security.cs.allow-jit": "1",
+                    "com.apple.security.cs.allow-unsigned-executable-memory": "1",
+                    "com.apple.security.cs.debugger": "1",
+                    "com.apple.security.cs.disable-executable-page-protection": "1",
+                    "com.apple.security.cs.disable-library-validation": "1",
+                    "com.apple.security.device.audio-input": "1",
+                    "com.apple.security.device.bluetooth": "1",
+                    "com.apple.security.personal-information.calendars": "1",
+                    "com.apple.security.device.camera": "1",
+                    "com.apple.security.personal-information.addressbook": "1",
+                    "com.apple.security.personal-information.location": "1",
+                    "com.apple.security.personal-information.photos-library": "1",
+                    "com.apple.security.files.downloads.read-write": "1",
+                    "com.apple.security.assets.pictures.read-only": "1",
+                    "com.apple.security.assets.music.read-write": "1",
+                    "com.apple.security.assets.movies.read-only": "1",
+                    "com.apple.security.network.client": "1",
+                    "com.apple.security.network.server": "1",
+                ],
+                signedEntitlements: [
+                    "com.apple.application-identifier": "$(AppIdentifierPrefix)$(CFBundleIdentifier)",
+                    "com.apple.security.automation.apple-events": .plBool(true),
+                    "com.apple.security.cs.allow-dyld-environment-variables": .plBool(true),
+                    "com.apple.security.cs.allow-jit": .plBool(true),
+                    "com.apple.security.cs.allow-unsigned-executable-memory": .plBool(true),
+                    "com.apple.security.cs.debugger": .plBool(true),
+                    "com.apple.security.cs.disable-executable-page-protection": .plBool(true),
+                    "com.apple.security.cs.disable-library-validation": .plBool(true),
+                    "com.apple.security.device.audio-input": .plBool(false),
+                    "com.apple.security.device.bluetooth": .plBool(true),
+                    "com.apple.security.personal-information.calendars": .plBool(true),
+                    "com.apple.security.device.camera": .plBool(true),
+                    "com.apple.security.personal-information.addressbook": .plBool(true),
+                    "com.apple.security.personal-information.location": .plBool(true),
+                    "com.apple.security.personal-information.photos-library": .plBool(true),
+                    "com.apple.security.files.downloads.read-write": .plBool(true),
+                    "com.apple.security.assets.pictures.read-only": .plBool(true),
+                    "com.apple.security.assets.music.read-write": .plBool(true),
+                    "com.apple.security.assets.movies.read-only": .plBool(false),
+                    "com.apple.security.network.client": .plBool(true),
+                    "com.apple.security.network.server": .plBool(true),
+                ], expectedWarnings: SWBFeatureFlag.enableAppSandboxConflictingValuesEmitsWarning.value ? [
+                    "The \'ENABLE_RESOURCE_ACCESS_AUDIO_INPUT\' build setting is set to \'YES\', but entitlement \'com.apple.security.device.audio-input\' is set to \'NO\' in your entitlements file.\nTo enable \'ENABLE_RESOURCE_ACCESS_AUDIO_INPUT\', remove the entitlement from your entitlements file.\nTo disable \'ENABLE_RESOURCE_ACCESS_AUDIO_INPUT\', remove the entitlement from your entitlements file and disable \'ENABLE_RESOURCE_ACCESS_AUDIO_INPUT\' in  build settings. (in target \'App\' from project \'aProject\')",
+                    "The \'ENABLE_FILE_ACCESS_MOVIES_FOLDER\' build setting is set to \'readOnly\', but entitlement \'com.apple.security.assets.movies.read-only\' is set to \'NO\' in your entitlements file.\nTo enable \'ENABLE_FILE_ACCESS_MOVIES_FOLDER\', remove the entitlement from your entitlements file.\nTo disable \'ENABLE_FILE_ACCESS_MOVIES_FOLDER\', remove the entitlement from your entitlements file and disable \'ENABLE_FILE_ACCESS_MOVIES_FOLDER\' in  build settings. (in target \'App\' from project \'aProject\')",
+                ] : nil
+            )
+
+            try await buildTestBinaryAndValidateEntitlements(
+                testWorkspace: testWorkspace,
+                expectedEntitlements: [
+                    "com.apple.application-identifier": "$(AppIdentifierPrefix)$(CFBundleIdentifier)",
+                    "com.apple.security.automation.apple-events": "1",
+                    "com.apple.security.cs.allow-dyld-environment-variables": "1",
+                    "com.apple.security.cs.allow-unsigned-executable-memory": "1",
+                    "com.apple.security.cs.debugger": "1",
+                    "com.apple.security.cs.disable-executable-page-protection": "1",
+                    "com.apple.security.cs.disable-library-validation": "1",
+                    "com.apple.security.device.audio-input": "1",
+                    "com.apple.security.device.bluetooth": "1",
+                    "com.apple.security.personal-information.calendars": "1",
+                    "com.apple.security.device.camera": "1",
+                    "com.apple.security.personal-information.addressbook": "1",
+                    "com.apple.security.personal-information.location": "1",
+                    "com.apple.security.personal-information.photos-library": "1",
+                    "com.apple.security.files.downloads.read-write": "1",
+                    "com.apple.security.assets.pictures.read-only": "1",
+                    "com.apple.security.assets.music.read-write": "1",
+                    "com.apple.security.assets.movies.read-only": "1",
+                    "com.apple.security.network.client": "1",
+                    "com.apple.security.network.server": "1",
+                ],
+                signedEntitlements: [
+                    "com.apple.application-identifier": "$(AppIdentifierPrefix)$(CFBundleIdentifier)",
+                    "com.apple.security.automation.apple-events": .plBool(true),
+                    "com.apple.security.cs.allow-dyld-environment-variables": .plBool(true),
+                    "com.apple.security.cs.allow-unsigned-executable-memory": .plBool(true),
+                    "com.apple.security.cs.debugger": .plBool(true),
+                    "com.apple.security.cs.disable-executable-page-protection": .plBool(true),
+                    "com.apple.security.cs.disable-library-validation": .plBool(true),
+                    "com.apple.security.device.audio-input": .plBool(true),
+                    "com.apple.security.device.bluetooth": .plBool(true),
+                    "com.apple.security.personal-information.calendars": .plBool(true),
+                    "com.apple.security.device.camera": .plBool(true),
+                    "com.apple.security.personal-information.addressbook": .plBool(true),
+                    "com.apple.security.personal-information.location": .plBool(true),
+                    "com.apple.security.personal-information.photos-library": .plBool(true),
+                    "com.apple.security.files.downloads.read-write": .plBool(true),
+                    "com.apple.security.assets.pictures.read-only": .plBool(true),
+                    "com.apple.security.assets.music.read-write": .plBool(true),
+                    "com.apple.security.assets.movies.read-only": .plBool(true),
+                    "com.apple.security.network.client": .plBool(true),
+                    "com.apple.security.network.server": .plBool(true),
+                ]
+            )
         }
     }
 
@@ -374,7 +521,7 @@ fileprivate struct EntitlementsBuildOperationTests: CoreBasedTests {
 
             let parameters = BuildParameters(action: .build, configuration: "Debug")
             let entitlements: PropertyListItem = [
-                // Specify jsut the baseline entitlements, since other entitlements should be added via build settings.
+                // Specify just the baseline entitlements, since other entitlements should be added via build settings.
                 "com.apple.application-identifier": "$(AppIdentifierPrefix)$(CFBundleIdentifier)",
             ]
             let provisioningInputs = ["App": ProvisioningTaskInputs(identityHash: "-", signedEntitlements: entitlements, simulatedEntitlements: entitlements)]
@@ -411,6 +558,7 @@ fileprivate struct EntitlementsBuildOperationTests: CoreBasedTests {
                     targets: [
                         TestStandardTarget(
                             "App",
+                            type: .application,
                             buildPhases: [
                                 TestSourcesBuildPhase([
                                     "main.c",
@@ -425,7 +573,7 @@ fileprivate struct EntitlementsBuildOperationTests: CoreBasedTests {
         )
     }
 
-    private func buildTestBinaryAndValidateEntitlements(testWorkspace: TestWorkspace, expectedEntitlements: [String: PropertyListItem]) async throws {
+    private func buildTestBinaryAndValidateEntitlements(testWorkspace: TestWorkspace, expectedEntitlements: [String: PropertyListItem], signedEntitlements: [String: PropertyListItem] = [:], expectedWarnings: Set<String>? = nil) async throws {
         let tester = try await BuildOperationTester(getCore(), testWorkspace, simulated: false)
 
         // Write the file data.
@@ -437,17 +585,22 @@ fileprivate struct EntitlementsBuildOperationTests: CoreBasedTests {
 
         // Perform the initial for-launch build.
         let parameters = BuildParameters(action: .build, configuration: "Debug")
-        let entitlements: PropertyListItem = [
-            // Specify jsut the baseline entitlements, since other entitlements should be added via build settings.
-            "com.apple.application-identifier": "$(AppIdentifierPrefix)$(CFBundleIdentifier)",
-        ]
-        let provisioningInputs = ["App": ProvisioningTaskInputs(identityHash: "-", signedEntitlements: entitlements, simulatedEntitlements: [:])]
-        try await tester.checkBuild(parameters: parameters, persistent: true, signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs) { results in
+
+        var entitlements = signedEntitlements
+        entitlements["com.apple.application-identifier"] = .plString("$(AppIdentifierPrefix)$(CFBundleIdentifier)")
+
+        let provisioningInputs = ["App": ProvisioningTaskInputs(identityHash: "-", signedEntitlements: PropertyListItem(entitlements), simulatedEntitlements: [:])]
+        try await tester.checkBuild(parameters: parameters, runDestination: .macOS, persistent: true, signableTargets: Set(provisioningInputs.keys), signableTargetInputs: provisioningInputs) { results in
             // Make sure that the entitlements processing task ran.
             let entitlementsTask = try results.checkTask(.matchRuleType("ProcessProductPackaging")) { task throws in task }
             results.check(contains: .taskHadEvent(entitlementsTask, event: .started))
 
-            results.checkNoDiagnostics()
+            if let expectedWarnings {
+                let warnings = Set(results.getWarnings())
+                #expect(warnings == expectedWarnings)
+            } else {
+                results.checkNoDiagnostics()
+            }
 
             #expect(entitlementsTask.additionalOutput.count == 3)
 

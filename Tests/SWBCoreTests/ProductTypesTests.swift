@@ -1,15 +1,21 @@
+//===----------------------------------------------------------------------===//
 //
-//  ProductTypesTests.swift
-//  SWBCoreTests
+// This source file is part of the Swift open source project
 //
-//  Copyright © 2024 Apple Inc. All rights reserved.
+// Copyright (c) 2025 Apple Inc. and the Swift project authors
+// Licensed under Apache License v2.0 with Runtime Library Exception
 //
+// See http://swift.org/LICENSE.txt for license information
+// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+//
+//===----------------------------------------------------------------------===//
 
 import Testing
 
 @_spi(Testing) import SWBCore
 import SWBTestSupport
 import SWBUtil
+import SWBProtocol
 
 @Suite
 fileprivate struct ProductTypesTests: CoreBasedTests {
@@ -71,7 +77,7 @@ fileprivate struct ProductTypesTests: CoreBasedTests {
         let fs = PseudoFS()
 
         let tester = try TaskConstructionTester(core, testWorkspace)
-        await tester.checkBuild(BuildParameters(action: .install, configuration: "Release"), fs: fs) { results in
+        await tester.checkBuild(BuildParameters(action: .install, configuration: "Release"), runDestination: .macOS, fs: fs) { results in
             results.consumeTasksMatchingRuleTypes(["CreateBuildDirectory", "WriteAuxiliaryFile", "Gate", "RegisterExecutionPolicyException", "SetOwnerAndGroup", "SetMode", "ProcessInfoPlistFile", "ProcessProductPackaging", "ProcessProductPackagingDER", "ProcessInfoPlist"])
 
             results.checkTarget("aFramework") { target in

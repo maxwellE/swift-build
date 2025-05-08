@@ -15,6 +15,7 @@ import Testing
 
 @_spi(Testing) import SwiftBuild
 import SwiftBuildTestSupport
+import SWBBuildService
 
 import SWBCore
 import SWBUtil
@@ -93,6 +94,101 @@ fileprivate struct BuildOperationTests: CoreBasedTests {
                 request.parameters.configurationName = "Debug"
 
                 let events = try await testSession.runBuildOperation(request: request, delegate: TestBuildOperationDelegate())
+
+                XCTAssertLastBuildEvent(events)
+            }
+        }
+    }
+
+    @Test
+    func emptyBuildInProcessStatic() async throws {
+        try await withTemporaryDirectory { temporaryDirectory in
+            try await withAsyncDeferrable { deferrable in
+                let tmpDir = temporaryDirectory.path
+                let testSession = try await TestSWBSession(connectionMode: .inProcessStatic(swiftbuildServiceEntryPoint), temporaryDirectory: temporaryDirectory)
+                await deferrable.addBlock {
+                    await #expect(throws: Never.self) {
+                        try await testSession.close()
+                    }
+                }
+
+                let srcroot = tmpDir.join("Test")
+                let testProject = TestProject(
+                    "aProject",
+                    defaultConfigurationName: "Release",
+                    groupTree: TestGroup("Foo"),
+                    targets: [])
+                let testWorkspace = TestWorkspace("aWorkspace",
+                                                  sourceRoot: srcroot,
+                                                  projects: [testProject])
+
+                try await testSession.sendPIF(testWorkspace)
+
+                // Run a test build.
+                var request = SWBBuildRequest()
+                request.parameters = SWBBuildParameters()
+                request.parameters.action = "build"
+                request.parameters.configurationName = "Debug"
+
+                let events = try await testSession.runBuildOperation(request: request, delegate: TestBuildOperationDelegate())
+
+                XCTAssertLastBuildEvent(events)
+            }
+        }
+    }
+
+    @Test(.requireSDKs(.macOS), .requireHostOS(.macOS))
+    func multiFileAssembleBuild() async throws {
+        try await withTemporaryDirectory { (temporaryDirectory: NamedTemporaryDirectory) in
+            try await withAsyncDeferrable { deferrable in
+                let tmpDir = temporaryDirectory.path
+                let testSession = try await TestSWBSession(temporaryDirectory: temporaryDirectory)
+                await deferrable.addBlock {
+                    await #expect(throws: Never.self) {
+                        try await testSession.close()
+                    }
+                }
+
+                let srcroot = tmpDir.join("Test")
+                let testProject = TestProject(
+                    "aProject",
+                    defaultConfigurationName: "Release",
+                    groupTree: TestGroup("Foo", children: [TestFile("Test.c")]),
+                    targets: [
+                        TestAggregateTarget("All", dependencies: ["aFramework", "bFramework"]),
+                        TestStandardTarget("aFramework", type: .application, buildPhases: [TestSourcesBuildPhase([TestBuildFile("Test.c")])]),
+                        TestStandardTarget("bFramework", type: .application, buildPhases: [TestSourcesBuildPhase([TestBuildFile("Test.c")])]),
+                    ])
+                let testWorkspace = TestWorkspace("aWorkspace",
+                                                  sourceRoot: srcroot,
+                                                  projects: [testProject])
+
+                try await testSession.sendPIF(testWorkspace)
+
+                // Run a test build.
+                var request = SWBBuildRequest()
+                request.parameters = SWBBuildParameters()
+                request.parameters.action = "build"
+                request.parameters.configurationName = "Debug"
+                request.configuredTargets = testProject.targets.dropFirst().map { SWBConfiguredTarget(guid: $0.guid) }
+                request.buildCommand = .buildFiles(paths: [srcroot.join("Test.c").str], action: .assemble)
+
+                let events = try await testSession.runBuildOperation(request: request, delegate: TestBuildOperationDelegate())
+
+                let pathMap = try #require(events.compactMap({ msg in
+                    switch msg {
+                    case let .reportPathMap(msg):
+                        return msg.generatedFilesPathMap
+                    default:
+                        return nil
+                    }
+                }).only)
+                #expect(pathMap.count == 4)
+                for arch in ["arm64", "x86_64"] {
+                    for target in ["aFramework", "bFramework"] {
+                        #expect(try pathMap[AbsolutePath(validating: "\(srcroot.str)/aProject/build/aProject.build/Debug/\(target).build/Objects-normal/\(arch)/Test.s")] == AbsolutePath(validating: "\(srcroot.str)/Test.c"))
+                    }
+                }
 
                 XCTAssertLastBuildEvent(events)
             }
@@ -347,7 +443,7 @@ fileprivate struct BuildOperationTests: CoreBasedTests {
         }
     }
 
-    @Test(.requireSDKs(.macOS), .skipHostOS(.windows), .requireThreadSafeWorkingDirectory) // version info discovery isn't working on Windows
+    @Test(.requireSDKs(.host), .skipHostOS(.windows), .requireThreadSafeWorkingDirectory) // version info discovery isn't working on Windows
     func explicitBuildDescriptionID() async throws {
         try await withTemporaryDirectory { temporaryDirectory in
             try await withAsyncDeferrable { deferrable in
@@ -969,7 +1065,7 @@ fileprivate struct BuildOperationTests: CoreBasedTests {
                         TestHeadersBuildPhase([TestBuildFile("foo.h")]),
                     ],
                     provisioningSourceData: [
-                        ProvisioningSourceData(configurationName: "Debug", appIDHasFeaturesEnabled: false, provisioningStyle: .automatic, bundleIdentifierFromInfoPlist: "AppTarget"),
+                        ProvisioningSourceData(configurationName: "Debug", provisioningStyle: .automatic, bundleIdentifierFromInfoPlist: "AppTarget"),
                     ]
                 )
                 let testProject = TestProject(
@@ -1137,7 +1233,7 @@ fileprivate struct BuildOperationTests: CoreBasedTests {
     }
 
     /// Check some cancellation related semantics.
-    @Test
+    @Test(.requireSDKs(.host), .skipHostOS(.windows, "requires /usr/bin/yes"), .skipHostOS(.linux, "test occasionally hangs on Linux"))
     func cancellationBeforeStarting() async throws {
         try await withTemporaryDirectory { (temporaryDirectory: NamedTemporaryDirectory) in
             try await withAsyncDeferrable { deferrable in
@@ -1208,7 +1304,7 @@ fileprivate struct BuildOperationTests: CoreBasedTests {
     }
 
     /// Check some cancellation related semantics.
-    @Test
+    @Test(.requireSDKs(.host), .skipHostOS(.windows, "requires /usr/bin/yes"), .skipHostOS(.linux, "test occasionally hangs on Linux"))
     func cancellationImmediatelyAfterStart() async throws {
         try await withTemporaryDirectory { (temporaryDirectory: NamedTemporaryDirectory) in
             try await withAsyncDeferrable { deferrable in
@@ -1280,7 +1376,7 @@ fileprivate struct BuildOperationTests: CoreBasedTests {
     }
 
     /// Check some cancellation related semantics.
-    @Test(.requireSDKs(.macOS))
+    @Test(.requireSDKs(.host), .skipHostOS(.windows, "requires /usr/bin/yes"), .skipHostOS(.linux, "test occasionally hangs on Linux"))
     func cancellationAfterStart() async throws {
         try await withTemporaryDirectory { (temporaryDirectory: NamedTemporaryDirectory) in
             try await withAsyncDeferrable { deferrable in
@@ -1362,7 +1458,7 @@ fileprivate struct BuildOperationTests: CoreBasedTests {
     }
 
     /// Check some cancellation related semantics.
-    @Test
+    @Test(.requireSDKs(.host), .skipHostOS(.windows, "requires /usr/bin/yes"), .skipHostOS(.linux, "test occasionally hangs on Linux"))
     func cancellationAfterTaskStart() async throws {
         try await withTemporaryDirectory { (temporaryDirectory: NamedTemporaryDirectory) in
             try await withAsyncDeferrable { deferrable in
@@ -1442,7 +1538,7 @@ fileprivate struct BuildOperationTests: CoreBasedTests {
     }
 
     /// Check some cancellation related semantics.
-    @Test
+    @Test(.requireSDKs(.host), .skipHostOS(.windows, "requires /usr/bin/yes"), .skipHostOS(.linux, "test occasionally hangs on Linux"))
     func repeatedCancellation() async throws {
         try await withTemporaryDirectory { (temporaryDirectory: NamedTemporaryDirectory) in
             try await withAsyncDeferrable { deferrable in
@@ -1516,7 +1612,7 @@ fileprivate struct BuildOperationTests: CoreBasedTests {
     }
 
     /// Test that starting a build operation actually cancels indexing operations.
-    @Test(.requireHostOS(.macOS))
+    @Test(.requireSDKs(.host), .requireHostOS(.macOS))
     func indexingCancellation() async throws {
         try await withTemporaryDirectory { (temporaryDirectory: NamedTemporaryDirectory) in
             try await withAsyncDeferrable { deferrable in
@@ -1591,7 +1687,7 @@ fileprivate struct BuildOperationTests: CoreBasedTests {
     }
 
     /// Test session destruction
-    @Test
+    @Test(.requireSDKs(.host), .skipHostOS(.windows, "requires /usr/bin/yes"), .skipHostOS(.linux, "test occasionally hangs on Linux"))
     func sessionDestructionCancellation() async throws {
         try await withTemporaryDirectory { (temporaryDirectory: NamedTemporaryDirectory) in
             try await withAsyncDeferrable { deferrable in

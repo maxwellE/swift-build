@@ -14,6 +14,8 @@ import SWBUtil
 import SWBLibc
 public import SWBCore
 public import SWBLLBuild
+import Foundation
+import SWBProtocol
 
 public final class ClangCompileTaskAction: TaskAction, BuildValueValidatingTaskAction {
     public override class var toolIdentifier: String {
@@ -144,9 +146,8 @@ public final class ClangCompileTaskAction: TaskAction, BuildValueValidatingTaskA
                 taskKey: .precompileClangModule(precompileModuleTaskKey),
                 taskID: state.dynamicTaskBaseID,
                 singleUse: true,
-                workingDirectory: dependencyInfo.workingDirectory,
+                workingDirectory: Path.root,
                 environment: task.environment,
-                taskInputs: [],
                 forTarget: nil,
                 priority: .preferred,
                 showEnvironment: task.showEnvironment,
@@ -212,7 +213,7 @@ public final class ClangCompileTaskAction: TaskAction, BuildValueValidatingTaskA
         let commandLines = dependencyInfo.commands.map{$0.arguments}
 
         // By default, don't print the frontend command lines, to avoid introducing too much noise in the log.
-        if executionDelegate.userPreferences.enableDebugActivityLogs {
+        if executionDelegate.userPreferences.enableDebugActivityLogs || executionDelegate.emitFrontendCommandLines {
             for commandLine in commandLines {
                 let commandString = UNIXShellCommandCodec(
                     encodingStrategy: .backslashes,
@@ -289,7 +290,7 @@ public final class ClangCompileTaskAction: TaskAction, BuildValueValidatingTaskA
                     continue
                 default:
                     // Emit the frontend command which failed, unless we have debugging enabled and printed it already
-                    if !executionDelegate.userPreferences.enableDebugActivityLogs {
+                    if !executionDelegate.userPreferences.enableDebugActivityLogs && !executionDelegate.emitFrontendCommandLines {
                         let commandString = UNIXShellCommandCodec(
                             encodingStrategy: .backslashes,
                             encodingBehavior: .fullCommandLine
@@ -345,7 +346,6 @@ public final class ClangCompileTaskAction: TaskAction, BuildValueValidatingTaskA
                 singleUse: true,
                 workingDirectory: Path(""),
                 environment: .init(),
-                taskInputs: [],
                 forTarget: nil,
                 priority: .network,
                 showEnvironment: false,
@@ -369,10 +369,11 @@ public final class ClangCompileTaskAction: TaskAction, BuildValueValidatingTaskA
         }
         guard let cachedComp = try casDBs.getLocalCachedCompilation(cacheKey: cacheKey) else {
             if enableDiagnosticRemarks {
-                outputDelegate.remark("cache miss: \(cacheKey)")
+                outputDelegate.note("cache miss: \(cacheKey)")
             }
             outputDelegate.incrementClangCacheMiss()
             outputDelegate.incrementTaskCounter(.cacheMisses)
+            outputDelegate.emitOutput("Cache miss\n")
             return false
         }
 
@@ -380,23 +381,25 @@ public final class ClangCompileTaskAction: TaskAction, BuildValueValidatingTaskA
         for output in outputs {
             guard cachedComp.isOutputMaterialized(output) else {
                 if enableDiagnosticRemarks {
-                    outputDelegate.remark("missing CAS output \(output.name): \(output.casID)")
-                    outputDelegate.remark("cache miss: \(cacheKey)")
+                    outputDelegate.note("missing CAS output \(output.name): \(output.casID)")
+                    outputDelegate.note("cache miss: \(cacheKey)")
                 }
                 outputDelegate.incrementClangCacheMiss()
                 outputDelegate.incrementTaskCounter(.cacheMisses)
+                outputDelegate.emitOutput("Cache miss\n")
                 return false
             }
         }
         let diagnosticText = try cachedComp.replay(commandLine: command.arguments, workingDirectory: workingDirectory.str)
         if enableDiagnosticRemarks {
-            outputDelegate.remark("replayed cache hit: \(cacheKey)")
+            outputDelegate.note("replayed cache hit: \(cacheKey)")
             for output in outputs {
-                outputDelegate.remark("using CAS output \(output.name): \(output.casID)")
+                outputDelegate.note("using CAS output \(output.name): \(output.casID)")
             }
         }
         outputDelegate.incrementClangCacheHit()
         outputDelegate.incrementTaskCounter(.cacheHits)
+        outputDelegate.emitOutput("Cache hit\n")
         outputDelegate.emitOutput(ByteString(encodingAsUTF8: diagnosticText))
         return true
     }
@@ -415,7 +418,7 @@ public final class ClangCompileTaskAction: TaskAction, BuildValueValidatingTaskA
         guard let cachedComp = try casDBs.getLocalCachedCompilation(cacheKey: cacheKey) else {
             // This can happen if caching an invocation is skipped due to using date/time macros which makes the output non-deterministic.
             if enableDiagnosticRemarks {
-                outputDelegate.remark("compilation was not cached for key: \(cacheKey)")
+                outputDelegate.note("compilation was not cached for key: \(cacheKey)")
             }
             return
         }

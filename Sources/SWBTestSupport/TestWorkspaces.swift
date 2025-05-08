@@ -140,7 +140,7 @@ package final class TestFile: TestInternalStructureItem, CustomStringConvertible
     private let sourceTree: TestSourceTree
     private let expectedSignature: String?
 
-    /// We use stable GUIDs for file references, since they are indirected to.
+    /// We use stable GUIDs for file references, since they are referenced indirectly.
     ///
     /// Test projects are expected to not have collisions in these.
     package var guid: String {
@@ -273,6 +273,8 @@ package final class TestFile: TestInternalStructureItem, CustomStringConvertible
             return "text.json.xcstrings"
         case ".swift":
             return "sourcecode.swift"
+        case ".tbd":
+            return "sourcecode.text-based-dylib-definition"
         case ".tif", ".tiff":
             return "image.tiff"
         case ".txt":
@@ -1072,7 +1074,7 @@ package final class TestStandardTarget: TestInternalTarget, Sendable {
     private let approvedByUser: Bool
 
     /// Create a test target
-    package init(_ name: String, guid: String? = nil, type: TargetType = .application, buildConfigurations: [TestBuildConfiguration]? = nil, buildPhases: [any TestBuildPhase] = [], buildRules: [TestBuildRule] = [], customTasks: [TestCustomTask] = [], dependencies: [TestTargetDependency] = [], productReferenceName: String? = nil, predominantSourceCodeLanguage: SWBCore.StandardTarget.SourceCodeLanguage = .undefined, provisioningSourceData: [ProvisioningSourceData] = [], dynamicTargetVariantName: String? = nil, approvedByUser: Bool = true) {
+    package init(_ name: String, guid: String? = nil, type: TargetType, buildConfigurations: [TestBuildConfiguration]? = nil, buildPhases: [any TestBuildPhase] = [], buildRules: [TestBuildRule] = [], customTasks: [TestCustomTask] = [], dependencies: [TestTargetDependency] = [], productReferenceName: String? = nil, predominantSourceCodeLanguage: SWBCore.StandardTarget.SourceCodeLanguage = .undefined, provisioningSourceData: [ProvisioningSourceData] = [], dynamicTargetVariantName: String? = nil, approvedByUser: Bool = true) {
         self.name = name
         self.overriddenGuid = guid
         self.type = type

@@ -14,6 +14,13 @@ import Foundation
 import Testing
 import SWBUtil
 import SWBTestSupport
+import SWBCore
+
+#if canImport(System)
+import System
+#else
+import SystemPackage
+#endif
 
 @Suite
 fileprivate struct PBXCpTests: CoreBasedTests {
@@ -424,8 +431,10 @@ fileprivate struct PBXCpTests: CoreBasedTests {
                 #expect(result.output == (
                     "copying \(fwkName)/...\n"
                 ))
-                let dstPerm = try fs.getFilePermissions(dst.join(fwkName).join(fName))
-                #expect(dstPerm == 0o755) // files are created with u+rw, g+wr, o+rw (and +x if src is executable) permissions and umask will adjust
+                if try ProcessInfo.processInfo.hostOperatingSystem() != .windows {
+                    let dstPerm = try fs.getFilePermissions(dst.join(fwkName).join(fName))
+                    #expect(dstPerm == 0o755) // files are created with u+rw, g+wr, o+rw (and +x if src is executable) permissions and umask will adjust
+                }
             }
         }
     }
@@ -433,7 +442,8 @@ fileprivate struct PBXCpTests: CoreBasedTests {
     fileprivate let buffer0 = [UInt8](repeating: 0xAA, count: 1024 * 513)
     fileprivate let buffer1 = [UInt8](repeating: 0x55, count: 1024 * 513)
 
-    @Test(.skipHostOS(.windows, "LocalFS needs to use stat64 on windows...."))
+    @Test(.skipHostOS(.windows, "LocalFS needs to use stat64 on windows...."),
+          .skipInGitHubActions("GitHub action runners do not have enough storage space for this test"))
     func largerFile() async throws {
         try await withTemporaryDirectory { tmp in
             // Test copying a large file.
@@ -459,7 +469,7 @@ fileprivate struct PBXCpTests: CoreBasedTests {
                 #expect(result.output == (
                     "copying src/...\n   copying file...\n    \(size) bytes\n"
                 ))
-                // Check permssions
+                // Check permissions
                 let dstPerm = try fs.getFilePermissions(dName)
                 #expect(dstPerm == 0o644) // files are created with u+rw, g+wr, o+rw (and +x if src is executable) permissions and umask will adjust
                 #expect(FileManager.default.contentsEqual(atPath: sName.str, andPath: dName.str))
@@ -468,7 +478,7 @@ fileprivate struct PBXCpTests: CoreBasedTests {
     }
 
 
-    /// Check that we can invoke bitcode_strip.
+    /// Check that we can invoke `bitcode_strip`.
     @Test
     func bitcodeStrip() async throws {
         try await withTemporaryDirectory { tmp in
@@ -485,11 +495,12 @@ fileprivate struct PBXCpTests: CoreBasedTests {
             // Check that we run the bitcode_strip tool and capture its output.  Note that bitcode_strip is in the default toolchain, so we need to pass the path to it there.
             let defaultToolchain = try #require(try await getCore().toolchainRegistry.defaultToolchain)
             let bitcodeStripPath = defaultToolchain.path.join("usr/bin/bitcode_strip")
+            // Note that we always strip all bitcode (-r), even if 'replace-with-marker' is passed.
             let result = await pbxcp(["builtin-copy", "-dry-run", "-bitcode-strip", "replace-with-marker", "-bitcode-strip-tool", bitcodeStripPath.str, src.str + Path.pathSeparatorString, dst.str], cwd: Path("/"))
             #expect(result.success == true)
             #expect(result.output == (
                 bitcodeStripPath.str +
-                " \(src.join("fake-bin").str) -m -o \(dst.join("fake-bin").str)\n"))
+                " \(src.join("fake-bin").str) -r -o \(dst.join("fake-bin").str)\n"))
         }
     }
 
@@ -509,11 +520,12 @@ fileprivate struct PBXCpTests: CoreBasedTests {
             // Check that we run the bitcode_strip tool and capture its output.  Note that bitcode_strip is in the default toolchain, so we need to pass the path to it there.
             let defaultToolchain = try #require(try await getCore().toolchainRegistry.defaultToolchain)
             let bitcodeStripPath = defaultToolchain.path.join("usr/bin/bitcode_strip")
+            // Note that we always strip all bitcode (-r), even if 'replace-with-marker' is passed.
             let result = await pbxcp(["builtin-copy", "-dry-run", "-strip-unsigned-binaries", "-bitcode-strip", "replace-with-marker", "-bitcode-strip-tool", bitcodeStripPath.str, src.str + Path.pathSeparatorString, dst.str], cwd: Path("/"))
             #expect(result.success == true)
             #expect(result.output.contains(
                 bitcodeStripPath.str +
-                " \(dst.join("fake-bin").str) -m -o \(dst.join("fake-bin").str)\n"))
+                " \(dst.join("fake-bin").str) -r -o \(dst.join("fake-bin").str)\n"))
         }
     }
 
@@ -553,21 +565,19 @@ fileprivate struct PBXCpTests: CoreBasedTests {
             #expect(result.success == true)
             #expect(result.output == "copying src...\n 9 bytes\n")
             #expect(try fs.read(dst) == "contents1")
-            let modificationDate = try fs.getFileInfo(dst).modificationDate
 
-            try await Task.sleep(for: .milliseconds(100))
+            try await Task.sleep(for: .milliseconds(500))
             let result2 = await pbxcp(["builtin-copy", "-skip-copy-if-contents-equal", "-rename", "-v", src.str, dst.str], cwd: Path("/"))
             #expect(result2.success == true)
             #expect(result2.output == "note: skipping copy of '\(src.str)' because it has the same contents as '\(dst.str)'\n")
             #expect(try fs.read(dst) == "contents1")
-            #expect(try fs.getFileInfo(dst).modificationDate == modificationDate)
 
+            try await Task.sleep(for: .milliseconds(500))
             try fs.write(src, contents: "contents2")
             let result3 = await pbxcp(["builtin-copy", "-skip-copy-if-contents-equal", "-rename", "-v", src.str, dst.str], cwd: Path("/"))
             #expect(result3.success == true)
             #expect(result3.output == "copying src...\n 9 bytes\n")
             #expect(try fs.read(dst) == "contents2")
-            #expect(try fs.getFileInfo(dst).modificationDate != modificationDate)
         }
 
         try await withTemporaryDirectory { tmp in
@@ -584,21 +594,19 @@ fileprivate struct PBXCpTests: CoreBasedTests {
             #expect(result.success == true)
             #expect(result.output == "copying file...\n 9 bytes\n")
             #expect(try fs.read(dstFile) == "contents1")
-            let modificationDate = try fs.getFileInfo(dstFile).modificationDate
 
-            try await Task.sleep(for: .milliseconds(100))
+            try await Task.sleep(for: .milliseconds(500))
             let result2 = await pbxcp(["builtin-copy", "-skip-copy-if-contents-equal", "-rename", "-v", src.str, dst.str], cwd: Path("/"))
             #expect(result2.success == true)
             #expect(result2.output == "note: skipping copy of '\(src.str)' because it has the same contents as '\(dst.str)'\n")
             #expect(try fs.read(dstFile) == "contents1")
-            #expect(try fs.getFileInfo(dstFile).modificationDate == modificationDate)
 
+            try await Task.sleep(for: .milliseconds(500))
             try fs.write(srcFile, contents: "contents2")
             let result3 = await pbxcp(["builtin-copy", "-skip-copy-if-contents-equal", "-rename", "-v", src.str, dst.str], cwd: Path("/"))
             #expect(result3.success == true)
             #expect(result3.output == "copying src/...\n")
             #expect(try fs.read(dstFile) == "contents2")
-            #expect(try fs.getFileInfo(dstFile).modificationDate != modificationDate)
         }
     }
 

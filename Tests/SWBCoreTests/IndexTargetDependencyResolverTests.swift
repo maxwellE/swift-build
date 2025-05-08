@@ -24,6 +24,7 @@ import SWBUtil
 
         let macApp = TestStandardTarget(
             "macApp",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "macosx",
@@ -36,6 +37,7 @@ import SWBUtil
 
         let iosApp = TestStandardTarget(
             "iosApp",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "iphoneos",
@@ -48,6 +50,7 @@ import SWBUtil
 
         let macApp2 = TestStandardTarget(
             "macApp2",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "macosx",
@@ -64,6 +67,7 @@ import SWBUtil
 
         let iosApp2 = TestStandardTarget(
             "iosApp2",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "iphoneos",
@@ -130,7 +134,7 @@ import SWBUtil
                     ])])
 
         let tester = try await BuildOperationTester(core, workspace, simulated: false)
-        try await tester.checkIndexBuildGraph(targets: [macApp, macApp2, iosApp, iosApp2, fwkTarget_mac, fwkTarget_ios]) { results in
+        try await tester.checkIndexBuildGraph(targets: [macApp, macApp2, iosApp, iosApp2, fwkTarget_mac, fwkTarget_ios], workspaceOperation: true) { results in
             #expect(results.targets().map { results.targetNameAndPlatform($0) } == [
                 "FwkTarget_mac-macos", "macApp-macos", "macApp2-macos",
                 "FwkTarget_ios-iphoneos", "iosApp-iphoneos", "FwkTarget_ios-iphonesimulator", "iosApp-iphonesimulator", "iosApp2-iphoneos", "iosApp2-iphonesimulator",
@@ -164,6 +168,7 @@ import SWBUtil
 
         let macApp = TestStandardTarget(
             "macApp",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "macosx",
@@ -175,6 +180,7 @@ import SWBUtil
 
         let iosApp = TestStandardTarget(
             "iosApp",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "iphoneos",
@@ -254,7 +260,7 @@ import SWBUtil
                     ])])
 
         let tester = try await BuildOperationTester(core, workspace, simulated: false)
-        try await tester.checkIndexBuildGraph(targets: [macApp, iosApp, watchKitApp, watchKitExt]) { results in
+        try await tester.checkIndexBuildGraph(targets: [macApp, iosApp, watchKitApp, watchKitExt], workspaceOperation: true) { results in
             #expect(results.targets().map { results.targetNameAndPlatform($0) } == [
                 "macApp-macos", "iosApp-iphoneos", "iosApp-iphonesimulator",
                 "Watchable WatchKit Extension-watchos", "Watchable WatchKit App-watchos", "Watchable WatchKit Extension-watchsimulator", "Watchable WatchKit App-watchsimulator",
@@ -358,7 +364,7 @@ import SWBUtil
                     ])])
 
         let tester = try await BuildOperationTester(core, workspace, simulated: false)
-        try await tester.checkIndexBuildGraph(targets: [iosApp, watchApp, hostTool, hostToolDep]) { results in
+        try await tester.checkIndexBuildGraph(targets: [iosApp, watchApp, hostTool, hostToolDep], workspaceOperation: true) { results in
             #expect(results.targets().map { results.targetNameAndPlatform($0) } == [
                 "hostToolDep-macos", "hostTool-macos",
                 "iosApp-iphoneos", "iosApp-iphonesimulator",
@@ -446,7 +452,7 @@ import SWBUtil
                     ])])
 
         let tester = try await BuildOperationTester(core, workspace, simulated: false)
-        try await tester.checkIndexBuildGraph(targets: [iosApp, hostTool, commonDep]) { results in
+        try await tester.checkIndexBuildGraph(targets: [iosApp, hostTool, commonDep], workspaceOperation: true) { results in
             #expect(results.targets().map { results.targetNameAndPlatform($0) } == [
                 "commonDep-macos", "hostTool-macos", "commonDep-iphoneos", "iosApp-iphoneos", "commonDep-iphonesimulator", "iosApp-iphonesimulator", "commonDep-iosmac"
             ])
@@ -477,6 +483,7 @@ import SWBUtil
 
         let macApp = TestStandardTarget(
             "macApp",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "macosx",
@@ -490,6 +497,7 @@ import SWBUtil
 
         let iosApp = TestStandardTarget(
             "iosApp",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "iphoneos",
@@ -503,6 +511,7 @@ import SWBUtil
 
         let macApp2 = TestStandardTarget(
             "macApp2",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "macosx",
@@ -515,6 +524,7 @@ import SWBUtil
 
         let iosApp2 = TestStandardTarget(
             "iosApp2",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "iphoneos",
@@ -563,7 +573,7 @@ import SWBUtil
         var iosApp2_iosConfTarget: ConfiguredTarget!
 
         let tester = try await BuildOperationTester(core, workspace, simulated: false)
-        try await tester.checkIndexBuildGraph(targets: targetsToCheck) { results in
+        try await tester.checkIndexBuildGraph(targets: targetsToCheck, workspaceOperation: true) { results in
             #expect(results.targets().map { results.targetNameAndPlatform($0) } == [
                 "macApp2-macos",
                 "Aggregate-macos",
@@ -583,7 +593,7 @@ import SWBUtil
         }
 
         // Same request but with reversed order of top-level targets. Make sure the graph is same.
-        try await tester.checkIndexBuildGraph(targets: targetsToCheck.reversed()) { results in
+        try await tester.checkIndexBuildGraph(targets: targetsToCheck.reversed(), workspaceOperation: true) { results in
             #expect(results.targets().map { results.targetNameAndPlatform($0) } == [
                 "iosApp2-iphoneos",
                 "iosApp2-iphonesimulator",
@@ -598,11 +608,11 @@ import SWBUtil
             try checkDependencies(results)
         }
 
-        try await tester.checkIndexBuildGraph(targets: [macApp]) { results throws in
+        try await tester.checkIndexBuildGraph(targets: [macApp], workspaceOperation: true) { results throws in
             #expect(try results.target(.init(macApp2, "macos")).guid == macApp2_macosConfTarget.guid)
         }
 
-        try await tester.checkIndexBuildGraph(targets: [iosApp]) { results throws in
+        try await tester.checkIndexBuildGraph(targets: [iosApp], workspaceOperation: true) { results throws in
             #expect(try results.target(.init(iosApp2, "iphoneos")).guid == iosApp2_iosConfTarget.guid)
         }
     }
@@ -612,6 +622,7 @@ import SWBUtil
         let core = try await getCore()
         let catalystAppTarget1 = TestStandardTarget(
             "catalystApp1",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "iphoneos",
@@ -627,6 +638,7 @@ import SWBUtil
 
         let catalystAppTarget2 = TestStandardTarget(
             "catalystApp2",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "iphoneos",
@@ -643,6 +655,7 @@ import SWBUtil
 
         let catalystAppTarget3 = TestStandardTarget(
             "catalystApp3",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "iphoneos",
@@ -659,6 +672,7 @@ import SWBUtil
 
         let osxAppTarget = TestStandardTarget(
             "osxApp",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "macosx",
@@ -673,6 +687,7 @@ import SWBUtil
 
         let osxAppTarget_iosmac = TestStandardTarget(
             "osxApp_iosmac",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "macosx",
@@ -740,7 +755,7 @@ import SWBUtil
                     ])])
 
         let tester = try await BuildOperationTester(core, workspace, simulated: false)
-        try await tester.checkIndexBuildGraph(targets: [catalystAppTarget1, catalystAppTarget2, catalystAppTarget3, osxAppTarget, osxAppTarget_iosmac, fwkTarget, fwkTarget_osx]) { results in
+        try await tester.checkIndexBuildGraph(targets: [catalystAppTarget1, catalystAppTarget2, catalystAppTarget3, osxAppTarget, osxAppTarget_iosmac, fwkTarget, fwkTarget_osx], workspaceOperation: true) { results in
             #expect(results.targets().map { results.targetNameAndPlatform($0) } == [
                 "FwkTarget-iphoneos", "catalystApp1-iphoneos", "FwkTarget-iphonesimulator", "catalystApp1-iphonesimulator", "FwkTarget-iosmac", "catalystApp1-iosmac", "catalystApp2-iphoneos", "catalystApp2-iphonesimulator", "catalystApp2-iosmac", "catalystApp3-iphoneos", "catalystApp3-iphonesimulator", "catalystApp3-iosmac", "FwkTarget_osx-macos", "catalystApp3-macos", "osxApp-macos", "osxApp_iosmac-iosmac", "FwkTarget_osx-iosmac",
             ])
@@ -844,6 +859,7 @@ import SWBUtil
 
         let macAppTarget = TestStandardTarget(
             "macAppTarget",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "macosx",
@@ -859,6 +875,7 @@ import SWBUtil
 
         let iosAppTarget = TestStandardTarget(
             "iOSAppTarget",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "iphoneos",
@@ -895,7 +912,7 @@ import SWBUtil
                     ]), package])
 
         let tester = try await BuildOperationTester(core, workspace, simulated: false)
-        try await tester.checkIndexBuildGraph(targets: [macAppTarget, iosAppTarget]) { results in
+        try await tester.checkIndexBuildGraph(targets: [macAppTarget, iosAppTarget], workspaceOperation: true) { results in
             #expect(results.targets(macAppTarget).map { results.targetNameAndPlatform($0) } == [
                 "macAppTarget-macos",
             ])
@@ -944,6 +961,7 @@ import SWBUtil
 
         let iosApp = TestStandardTarget(
             "iosApp",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "macosx",
@@ -975,7 +993,7 @@ import SWBUtil
                     ])])
 
         let tester = try await BuildOperationTester(core, workspace, simulated: false)
-        try await tester.checkIndexBuildGraph(targets: [iosApp]) { results in
+        try await tester.checkIndexBuildGraph(targets: [iosApp], workspaceOperation: true) { results in
             #expect(results.targets().map { results.targetNameAndPlatform($0) } == [
                 "iosApp-iphoneos", "iosApp-iphonesimulator",
             ])
@@ -990,6 +1008,7 @@ import SWBUtil
         func createTarget(name: String, sdkRoot: String, archs: String) -> any TestTarget {
             return TestStandardTarget(
                 name,
+                type: .application,
                 buildConfigurations: [
                     TestBuildConfiguration("Debug", buildSettings: [
                         "SDKROOT": sdkRoot,
@@ -1029,7 +1048,7 @@ import SWBUtil
         func checkTargetArch(_ arch: String, expected: [String: String], sourceLocation: SourceLocation = #_sourceLocation) async throws {
             let tester = try await BuildOperationTester(core, workspace, simulated: false)
             tester.systemInfo = SystemInfo(operatingSystemVersion: Version(99, 98, 97), productBuildVersion: "99A98", nativeArchitecture: arch)
-            try await tester.checkIndexBuildGraph(targets: [macosApp, iosApp, driver]) { results in
+            try await tester.checkIndexBuildGraph(targets: [macosApp, iosApp, driver], workspaceOperation: true) { results in
                 var actual: [String: String] = [:]
                 for target in results.targets() {
                     actual[target.nameAndPlatform] = target.parameters.activeArchitecture

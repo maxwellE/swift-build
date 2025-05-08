@@ -53,6 +53,7 @@ extension TestProject {
             targets: [
                 TestStandardTarget(
                     "Foo",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug", buildSettings: appBuildSettings)
                     ],
@@ -62,7 +63,7 @@ extension TestProject {
                         TestCopyFilesBuildPhase([TestBuildFile(.target("BarClip"), platformFilters: appClipPlatformFilters)], destinationSubfolder: .builtProductsDir, destinationSubpath: "$(CONTENTS_FOLDER_PATH)/AppClips", onlyForDeployment: false),
                     ],
                     dependencies: [TestTargetDependency("BarClip", platformFilters: appClipPlatformFilters)],
-                    provisioningSourceData: [.init(configurationName: "Debug", appIDHasFeaturesEnabled: false, provisioningStyle: .automatic, bundleIdentifierFromInfoPlist: "com.foo.app")]),
+                    provisioningSourceData: [.init(configurationName: "Debug", provisioningStyle: .automatic, bundleIdentifierFromInfoPlist: "com.foo.app")]),
                 TestStandardTarget(
                     "BarClip",
                     type: .appClip,
@@ -77,7 +78,7 @@ extension TestProject {
                         TestSourcesBuildPhase(["Source.c"]),
                         TestResourcesBuildPhase(["Assets.xcassets"]),
                     ],
-                    provisioningSourceData: [.init(configurationName: "Debug", appIDHasFeaturesEnabled: false, provisioningStyle: .automatic, bundleIdentifierFromInfoPlist: "com.foo.app.clip")]),
+                    provisioningSourceData: [.init(configurationName: "Debug", provisioningStyle: .automatic, bundleIdentifierFromInfoPlist: "com.foo.app.clip")]),
             ])
 
         if let fs {

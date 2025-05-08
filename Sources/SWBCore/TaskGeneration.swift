@@ -313,11 +313,6 @@ extension CommandProducer {
     func expandedSearchPaths(for macro: PathListMacroDeclaration, scope: MacroEvaluationScope) -> [String] {
         return expandedSearchPaths(for: scope.evaluate(macro), scope: scope)
     }
-
-    /// Lookup the platform info for this producer
-    public func lookupPlatformInfo(platform: BuildVersion.Platform) -> (any PlatformInfoProvider)? {
-        return sdkVariant
-    }
 }
 
 /// Describes the context in which an individual invocation of a command line spec is being built.
@@ -691,7 +686,7 @@ public protocol TaskGenerationDelegate: AnyObject, TargetDiagnosticProducingDele
     ///
     /// This file will be added to the generated files headermap.
     //
-    // FIXME: Could we handle this automatically based simply on the declared outputs? We know from the file type which are soure files.
+    // FIXME: Could we handle this automatically based simply on the declared outputs? We know from the file type which are source files.
     func declareGeneratedSourceFile(_ path: Path)
 
     /// Declare a generated info plist addition.
@@ -741,7 +736,7 @@ public protocol TaskGenerationDelegate: AnyObject, TargetDiagnosticProducingDele
     /// Returns true if a file exists at `path`, and adds the path to the list of paths which invalidate the build description.
     func fileExists(at path: Path) -> Bool
 
-    /// Record an arbitrary attachment as part of the build desceription, which can be accessed at the returned path.
+    /// Record an arbitrary attachment as part of the build description, which can be accessed at the returned path.
     func recordAttachment(contents: ByteString) -> Path
 
     /// User preferences
@@ -773,7 +768,7 @@ extension CoreClientTargetDiagnosticProducingDelegate {
 private let externalToolExecutionQueue = AsyncOperationQueue(concurrentTasks: ProcessInfo.processInfo.activeProcessorCount)
 
 extension CoreClientDelegate {
-    func executeExternalTool(commandLine: [String], workingDirectory: String? = nil, environment: [String: String] = [:]) async throws -> Processes.ExecutionResult {
+    package func executeExternalTool(commandLine: [String], workingDirectory: String? = nil, environment: [String: String] = [:]) async throws -> Processes.ExecutionResult {
         switch try await executeExternalTool(commandLine: commandLine, workingDirectory: workingDirectory, environment: environment) {
         case .deferred:
             guard let url = commandLine.first.map(URL.init(fileURLWithPath:)) else {
@@ -781,7 +776,7 @@ extension CoreClientDelegate {
             }
 
             return try await externalToolExecutionQueue.withOperation {
-                try await Process.getOutput(url: url, arguments: Array(commandLine.dropFirst()), currentDirectoryURL: workingDirectory.map(URL.init(fileURLWithPath:)), environment: ProcessInfo.processInfo.cleanEnvironment.merging(environment, uniquingKeysWith: { _, new in new }))
+                try await Process.getOutput(url: url, arguments: Array(commandLine.dropFirst()), currentDirectoryURL: workingDirectory.map(URL.init(fileURLWithPath:)), environment: Environment.current.addingContents(of: .init(environment)))
             }
         case let .result(status, stdout, stderr):
             return Processes.ExecutionResult(exitStatus: status, stdout: stdout, stderr: stderr)
@@ -1083,6 +1078,8 @@ public struct TaskGeneratePreviewInfoOutput: Sendable {
     public let buildVariant: String
     /// The commandline to run to update the thunk.
     public let commandLine: [String]
+    /// Working directory of the task
+    public let workingDirectory: Path
     /// Input path of the task.
     public let input: Path
     /// Output path of the task.
@@ -1136,8 +1133,14 @@ public struct LocalizationBuildPortion: Hashable, Sendable {
     /// The name of the architecture we were building for.
     public let architecture: String
 
+    public init(effectivePlatformName: String, variant: String, architecture: String) {
+        self.effectivePlatformName = effectivePlatformName
+        self.variant = variant
+        self.architecture = architecture
+    }
+
     /// Returns a platform name to use for localization info purposes.
-    static func effectivePlatformName(scope: MacroEvaluationScope, sdkVariant: SDKVariant?) -> String {
+    public static func effectivePlatformName(scope: MacroEvaluationScope, sdkVariant: SDKVariant?) -> String {
         if let sdkVariant, sdkVariant.isMacCatalyst {
             // Treat Catalyst as a separate platform.
             return MacCatalystInfo.localizationEffectivePlatformName

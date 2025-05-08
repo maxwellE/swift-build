@@ -24,6 +24,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
     func multiPlatformTargets() async throws {
         let macApp = TestStandardTarget(
             "macApp",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "macosx",
@@ -36,6 +37,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
 
         let iosApp = TestStandardTarget(
             "iosApp",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "iphoneos",
@@ -96,7 +98,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
 
-        // Check that we get tasks for all the supported platforms, indepedent of the run destination in the build request.
+        // Check that we get tasks for all the supported platforms, independent of the run destination in the build request.
 
         func checkResults(_ results: TaskConstructionTester.PlanningResults) {
             results.checkTarget(macApp.name) { target in
@@ -364,7 +366,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
             results.checkNoDiagnostics()
         }
 
-        try await tester.checkIndexBuild(targets: [fwkTarget1]) { results in
+        try await tester.checkIndexBuild(targets: [fwkTarget1], workspaceOperation: true) { results in
             results.checkWriteAuxiliaryFileTask(.matchRulePattern(["WriteAuxiliaryFile", .suffix("VFS-iphonesimulator/all-product-headers.yaml")])) { task, contents in
                 #expect(contents == vfs_sim)
             }
@@ -509,6 +511,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration(
                             "Debug",
@@ -521,6 +524,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
                     ]),
                 TestStandardTarget(
                     "AppTargetNoRemap",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration(
                             "Debug",
@@ -541,6 +545,10 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
 
             try results.checkTask(.matchTargetName("AppTarget"), .matchRuleItem("SwiftDriver Compilation Requirements")) { task in
                 task.checkRuleInfo(["SwiftDriver Compilation Requirements", "AppTarget", "normal", "x86_64", "com.apple.xcode.tools.swift.compiler"])
+
+                // Explicit modules are disabled for semantic functionality currently, make sure it is also disabled
+                // for preparation in general.
+                task.checkCommandLineDoesNotContain("-explicit-module-build")
 
                 let skipFlag = swiftFeatures.has(.experimentalSkipAllFunctionBodies) ? "-experimental-skip-all-function-bodies" : "-experimental-skip-non-inlinable-function-bodies"
                 task.checkCommandLineContains(["-module-name", "AppTarget", "-Onone", "-Xfrontend", skipFlag, "-emit-dependencies", "-emit-module", "-emit-module-path", "-emit-objc-header", "-emit-objc-header-path"])
@@ -637,6 +645,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug", buildSettings: buildSettings)
                     ],
@@ -670,6 +679,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
         // EFFECTIVE_PLATFORM_NAME gets its own separate product directory.
         let target1 = TestStandardTarget(
             "Target1",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "PRODUCT_NAME": "Mod",
@@ -679,6 +689,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
         )
         let target2 = TestStandardTarget(
             "Target2",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "PRODUCT_NAME": "Mod",
@@ -754,6 +765,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration(
                             "Debug",
@@ -766,6 +778,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
                     ]),
                 TestStandardTarget(
                     "AppTargetNoRemap",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration(
                             "Debug",
@@ -784,8 +797,11 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
 
             results.checkNoTask(.matchCommandLineArgument("clang-stat-cache"))
 
-            try results.checkTask(.matchTargetName("AppTarget"), .matchRuleItem("CompileC")) { task in
+            // Explicit modules are disabled for semantic functionality currently, make sure it is also disabled
+            // for preparation in general.
+            results.checkNoTask(.matchRuleItem("ScanDependencies"))
 
+            try results.checkTask(.matchTargetName("AppTarget"), .matchRuleItem("CompileC")) { task in
                 if clangFeatures.has(.allowPcmWithCompilerErrors) {
                     task.checkCommandLineContains(["-Xclang", "-fallow-pcm-with-compiler-errors"])
                 } else {
@@ -850,6 +866,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         "App",
+                        type: .application,
                         buildPhases: [
                             TestSourcesBuildPhase(["file.c"]),
                         ]),
@@ -937,6 +954,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
                 targets: [
                     TestStandardTarget(
                         "AppTarget",
+                        type: .application,
                         buildPhases: [
                             TestSourcesBuildPhase(["main.c"])
                         ]),
@@ -984,6 +1002,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildPhases: [
                         TestSourcesBuildPhase(["main.c"]),
                         TestFrameworksBuildPhase(["Fwk.framework"]),
@@ -1028,6 +1047,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
     func scriptTargetWithoutOutputs() async throws {
         let appTarget = TestStandardTarget(
             "AppTarget",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "iphoneos",
@@ -1069,6 +1089,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
     func aggregateScriptDependentByMacCatalyst() async throws {
         let catalystAppTarget = TestStandardTarget(
             "catalystApp",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "iphoneos",
@@ -1086,6 +1107,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
 
         let appTarget = TestStandardTarget(
             "AppTarget1",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "macosx",
@@ -1162,6 +1184,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
     func macCatalystAppWithZipperedFramework() async throws {
         let catalystAppTarget = TestStandardTarget(
             "catalystApp",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "SDKROOT": "macosx",
@@ -1342,12 +1365,14 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
 
         let multiVariantTarget = TestStandardTarget(
             "multiVariantTarget",
+            type: .application,
             buildPhases: [
                 TestSourcesBuildPhase(["main.swift"]),
             ])
 
         let singleIndexVariantTarget = TestStandardTarget(
             "singleIndexVariantTarget",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "INDEX_BUILD_VARIANT": "dev",
@@ -1409,6 +1434,7 @@ fileprivate struct IndexBuildTaskConstructionTests: CoreBasedTests {
 
         let testTarget = TestStandardTarget(
             "testTarget",
+            type: .application,
             buildConfigurations: [
                 TestBuildConfiguration("Debug", buildSettings: [
                     "RUN_CLANG_STATIC_ANALYZER": "YES",

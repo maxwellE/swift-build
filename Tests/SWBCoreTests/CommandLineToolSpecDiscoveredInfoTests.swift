@@ -16,6 +16,7 @@ import SWBProtocol
 import SWBTestSupport
 import SWBUtil
 import Testing
+import SWBMacro
 
 @Suite fileprivate struct CommandLineToolSpecDiscoveredInfoTests: CoreBasedTests {
     @Test(.skipHostOS(.windows, "Failed to obtain command line tool spec info but no errors were emitted"))
@@ -67,6 +68,12 @@ import Testing
             #expect(info.clangVersion == nil)
             #expect(info.llvmVersion == Version(17))
         }
+
+        try await withSpec("com.apple.compilers.llvm.clang.1_0", .result(status: .exit(0), stdout: Data("#define __clang_version__ \"19.0.0 (https://android.googlesource.com/toolchain/llvm-project 97a699bf4812a18fb657c2779f5296a4ab2694d2)\"".utf8), stderr: Data())) { (info: DiscoveredClangToolSpecInfo) in
+            #expect(info.toolPath.basename == "clang")
+            #expect(info.clangVersion == nil)
+            #expect(info.llvmVersion == Version(19))
+        }
     }
 
     @Test
@@ -75,6 +82,11 @@ import Testing
         let toolchains = core.toolchainRegistry.toolchains
         #expect(toolchains.count > 0) // must be at least one toolchain (default)
         for toolchain in toolchains.sorted(by: \.identifier) {
+            if toolchain.identifier == "qnx" {
+                // QNX toolchains do not have clang
+                continue
+            }
+
             let clangPath = try #require(toolchain.executableSearchPaths.findExecutable(operatingSystem: core.hostOperatingSystem, basename: "clang"), "Unable to find clang in search paths for toolchain '\(toolchain.identifier)': \(toolchain.executableSearchPaths.environmentRepresentation)")
             let info = try await discoveredClangToolInfo(toolPath: clangPath, arch: "undefined_arch", sysroot: nil)
             #expect(info.toolPath == clangPath)
@@ -82,6 +94,8 @@ import Testing
 #if canImport(Darwin)
             if toolchain.identifier.hasPrefix("org.swift.") || toolchain.identifier.hasPrefix("org.swiftwasm.") {
                 #expect(info.clangVersion == nil, "Open Source toolchains are expected to NOT have a clang version")
+            } else if toolchain.identifier == "android" {
+                #expect(info.clangVersion == nil, "Android toolchains are expected to NOT have a clang version")
             } else {
                 #expect(info.clangVersion != nil, "Unable to find clang version for toolchain \(toolchain.identifier). Used clang at path \(clangPath.str).")
             }
@@ -141,34 +155,91 @@ import Testing
         }
     }
 
-    @Test(.skipHostOS(.windows, "Failed to obtain command line tool spec info but no errors were emitted"))
+    // Linker tool discovery is a bit more complex as it afffected by the ALTERNATE_LINKER build setting.
+    func ldMacroTable() async throws ->  MacroValueAssignmentTable {
+            let core = try await getCore()
+            return MacroValueAssignmentTable(namespace: core.specRegistry.internalMacroNamespace)
+    }
+
+    @Test
     func discoveredLdLinkerSpecInfo() async throws {
-        try await withSpec(LdLinkerSpec.self, .deferred) { (info: DiscoveredLdLinkerToolSpecInfo) in
+        var table = try await ldMacroTable()
+        table.push(BuiltinMacros._LD_MULTIARCH, literal: true)
+        // Default Linker, just check we have one.
+        try await withSpec(LdLinkerSpec.self, .deferred, additionalTable: table) { (info: DiscoveredLdLinkerToolSpecInfo) in
             #expect(!info.toolPath.isEmpty)
             #expect(info.toolVersion != nil)
             if let toolVersion = info.toolVersion {
                 #expect(toolVersion > Version(0, 0, 0))
             }
+        }
+    }
+
+    @Test(.requireSDKs(.macOS))
+    func discoveredLdLinkerSpecInfo_macOS() async throws {
+        var table = try await ldMacroTable()
+        table.push(BuiltinMacros._LD_MULTIARCH, literal: true)
+        // Default Linker
+        try await withSpec(LdLinkerSpec.self, .deferred, additionalTable: table) { (info: DiscoveredLdLinkerToolSpecInfo) in
+            #expect(!info.toolPath.isEmpty)
+            #expect(info.toolVersion != nil)
+            if let toolVersion = info.toolVersion {
+                #expect(toolVersion > Version(0, 0, 0))
+            }
+            #expect(info.linker == .ld64)
             // rdar://112109825 (ld_prime only reports arm64 and arm64e architectures in ld -version_details)
             // let expectedArchs = Set(["armv7", "armv7k", "armv7s", "arm64", "arm64e", "i386", "x86_64"])
             // XCTAssertEqual(info.architectures.intersection(expectedArchs), expectedArchs)
             // XCTAssertFalse(info.architectures.contains("(tvOS)"))
         }
-
-        try await withSpec(LdLinkerSpec.self, .result(status: .exit(0), stdout: Data("GNU ld (GNU Binutils for Debian) 2.40\n".utf8), stderr: Data())) { (info: DiscoveredLdLinkerToolSpecInfo) in
+    }
+    @Test(.requireSDKs(.linux))
+    func discoveredLdLinkerSpecInfo_Linux() async throws {
+        var table = try await ldMacroTable()
+        table.push(BuiltinMacros._LD_MULTIARCH, literal: true)
+        // Default Linker
+        try await withSpec(LdLinkerSpec.self, .deferred, additionalTable: table) { (info: DiscoveredLdLinkerToolSpecInfo) in
+            #expect(!info.toolPath.isEmpty)
+            #expect(info.toolVersion != nil)
+            if let toolVersion = info.toolVersion {
+                #expect(toolVersion > Version(0, 0, 0))
+            }
+            #expect(info.linker == .gnuld)
+        }
+        try await withSpec(LdLinkerSpec.self, .result(status: .exit(0), stdout: Data("GNU ld (GNU Binutils for Debian) 2.40\n".utf8), stderr: Data()), additionalTable: table) { (info: DiscoveredLdLinkerToolSpecInfo) in
             #expect(!info.toolPath.isEmpty)
             #expect(info.toolVersion == Version(2, 40))
             #expect(info.architectures == Set())
         }
 
-        try await withSpec(LdLinkerSpec.self, .result(status: .exit(0), stdout: Data("GNU ld version 2.29.1-31.amzn2.0.1\n".utf8), stderr: Data())) { (info: DiscoveredLdLinkerToolSpecInfo) in
+        try await withSpec(LdLinkerSpec.self, .result(status: .exit(0), stdout: Data("GNU ld version 2.29.1-31.amzn2.0.1\n".utf8), stderr: Data()), additionalTable: table) { (info: DiscoveredLdLinkerToolSpecInfo) in
             #expect(!info.toolPath.isEmpty)
             #expect(info.toolVersion == Version(2, 29, 1))
             #expect(info.architectures == Set())
         }
+        // llvm-ld
+        table.push(BuiltinMacros.ALTERNATE_LINKER, literal: "lld")
+        try await withSpec(LdLinkerSpec.self, .deferred, additionalTable: table) { (info: DiscoveredLdLinkerToolSpecInfo) in
+            #expect(!info.toolPath.isEmpty)
+            #expect(info.toolVersion != nil)
+            if let toolVersion = info.toolVersion {
+                #expect(toolVersion > Version(0, 0, 0))
+            }
+            #expect(info.linker == .lld)
+        }
+        // gold
+        table.push(BuiltinMacros.ALTERNATE_LINKER, literal: "gold")
+        try await withSpec(LdLinkerSpec.self, .deferred, additionalTable: table) { (info: DiscoveredLdLinkerToolSpecInfo) in
+            #expect(!info.toolPath.isEmpty)
+            #expect(info.toolVersion != nil)
+            if let toolVersion = info.toolVersion {
+                #expect(toolVersion > Version(0, 0, 0))
+            }
+            #expect(info.linker == .gold)
+        }
     }
 
-    @Test(.skipHostOS(.windows))
+    @Test(.skipHostOS(.windows), .requireSystemPackages(apt: "libtool", yum: "libtool"))
     func discoveredLibtoolSpecInfo() async throws {
         try await withSpec(LibtoolLinkerSpec.self, .deferred) { (info: DiscoveredLibtoolLinkerToolSpecInfo) in
             #expect(info.toolPath.basename == "libtool")

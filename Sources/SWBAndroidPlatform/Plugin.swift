@@ -16,16 +16,28 @@ import SWBMacro
 import Foundation
 
 @PluginExtensionSystemActor public func initializePlugin(_ manager: PluginManager) {
+    let plugin = AndroidPlugin()
     manager.register(AndroidPlatformSpecsExtension(), type: SpecificationsExtensionPoint.self)
-    manager.register(AndroidEnvironmentExtension(), type: EnvironmentExtensionPoint.self)
+    manager.register(AndroidEnvironmentExtension(plugin: plugin), type: EnvironmentExtensionPoint.self)
     manager.register(AndroidPlatformExtension(), type: PlatformInfoExtensionPoint.self)
-    manager.register(AndroidSDKRegistryExtension(), type: SDKRegistryExtensionPoint.self)
-    manager.register(AndroidToolchainRegistryExtension(), type: ToolchainRegistryExtensionPoint.self)
+    manager.register(AndroidSDKRegistryExtension(plugin: plugin), type: SDKRegistryExtensionPoint.self)
+    manager.register(AndroidToolchainRegistryExtension(plugin: plugin), type: ToolchainRegistryExtensionPoint.self)
+}
+
+final class AndroidPlugin: Sendable {
+    private let androidSDKInstallations = AsyncCache<OperatingSystem, [AndroidSDK]>()
+
+    func cachedAndroidSDKInstallations(host: OperatingSystem) async throws -> [AndroidSDK] {
+        try await androidSDKInstallations.value(forKey: host) {
+            // Always pass localFS because this will be cached, and executes a process on the host system so there's no reason to pass in any proxy.
+            try await AndroidSDK.findInstallations(host: host, fs: localFS)
+        }
+    }
 }
 
 struct AndroidPlatformSpecsExtension: SpecificationsExtension {
-    func specificationFiles() -> Bundle? {
-        .module
+    func specificationFiles(resourceSearchPaths: [Path]) -> Bundle? {
+        findResourceBundle(nameWhenInstalledInToolchain: "SwiftBuild_SWBAndroidPlatform", resourceSearchPaths: resourceSearchPaths, defaultBundle: Bundle.module)
     }
 
     func specificationDomains() -> [String : [String]] {
@@ -34,10 +46,12 @@ struct AndroidPlatformSpecsExtension: SpecificationsExtension {
 }
 
 struct AndroidEnvironmentExtension: EnvironmentExtension {
-    func additionalEnvironmentVariables(fs: any FSProxy) async throws -> [String: String] {
-        switch try ProcessInfo.processInfo.hostOperatingSystem() {
+    let plugin: AndroidPlugin
+
+    func additionalEnvironmentVariables(context: any EnvironmentExtensionAdditionalEnvironmentVariablesContext) async throws -> [String: String] {
+        switch context.hostOperatingSystem {
         case .windows, .macOS, .linux:
-            if let latest = try? await AndroidSDK.findInstallations(fs: fs).first {
+            if let latest = try? await plugin.cachedAndroidSDKInstallations(host: context.hostOperatingSystem).first {
                 return [
                     "ANDROID_SDK_ROOT": latest.path.str,
                     "ANDROID_NDK_ROOT": latest.ndkPath?.str,
@@ -55,7 +69,7 @@ struct AndroidPlatformExtension: PlatformInfoExtension {
         ["ANDROID_DEPLOYMENT_TARGET"]
     }
     
-    func additionalPlatforms() -> [(path: Path, data: [String: PropertyListItem])] {
+    func additionalPlatforms(context: any PlatformInfoExtensionAdditionalPlatformsContext) throws -> [(path: Path, data: [String: PropertyListItem])] {
         [
             (.root, [
                 "Type": .plString("Platform"),
@@ -71,20 +85,16 @@ struct AndroidPlatformExtension: PlatformInfoExtension {
 }
 
 struct AndroidSDKRegistryExtension: SDKRegistryExtension {
-    func additionalSDKs(platformRegistry: PlatformRegistry) async -> [(path: Path, platform: SWBCore.Platform?, data: [String: PropertyListItem])] {
-        guard let host = try? ProcessInfo.processInfo.hostOperatingSystem() else {
-            return []
-        }
+    let plugin: AndroidPlugin
 
-        guard let androidPlatform = platformRegistry.lookup(name: "android") else {
+    func additionalSDKs(context: any SDKRegistryExtensionAdditionalSDKsContext) async throws -> [(path: Path, platform: SWBCore.Platform?, data: [String: PropertyListItem])] {
+        let host = context.hostOperatingSystem
+        guard let androidPlatform = context.platformRegistry.lookup(name: "android") else {
             return []
         }
 
         let defaultProperties: [String: PropertyListItem] = [
             "SDK_STAT_CACHE_ENABLE": "NO",
-
-            // Workaround to avoid `-add_ast_path` on Linux, apparently this needs to perform some "swift modulewrap" step instead.
-            "GCC_GENERATE_DEBUGGING_SYMBOLS": .plString("NO"),
 
             // Workaround to avoid `-dependency_info` on Linux.
             "LD_DEPENDENCY_INFO_FILE": .plString(""),
@@ -102,7 +112,7 @@ struct AndroidSDKRegistryExtension: SDKRegistryExtension {
             "AR": .plString(host.imageFormat.executableName(basename: "llvm-ar")),
         ]
 
-        guard let androidSdk = try? await AndroidSDK.findInstallations(fs: localFS).first else {
+        guard let androidSdk = try? await plugin.cachedAndroidSDKInstallations(host: host).first else {
             return []
         }
 
@@ -144,11 +154,28 @@ struct AndroidSDKRegistryExtension: SDKRegistryExtension {
 }
 
 struct AndroidToolchainRegistryExtension: ToolchainRegistryExtension {
-    func additionalToolchains(fs: any FSProxy) async -> [Toolchain] {
-        guard let toolchainPath = try? await AndroidSDK.findInstallations(fs: fs).first?.toolchainPath else {
+    let plugin: AndroidPlugin
+
+    func additionalToolchains(context: any ToolchainRegistryExtensionAdditionalToolchainsContext) async throws -> [Toolchain] {
+        guard let toolchainPath = try? await plugin.cachedAndroidSDKInstallations(host: context.hostOperatingSystem).first?.toolchainPath else {
             return []
         }
 
-        return [Toolchain("android", "Android", Version(0, 0, 0), [], toolchainPath, [], [], [:], [:], [:], executableSearchPaths: [toolchainPath.join("bin")], fs: fs)]
+        return [
+            Toolchain(
+                identifier: "android",
+                displayName: "Android",
+                version: Version(0, 0, 0),
+                aliases: [],
+                path: toolchainPath,
+                frameworkPaths: [],
+                libraryPaths: [],
+                defaultSettings: [:],
+                overrideSettings: [:],
+                defaultSettingsWhenPrimary: [:],
+                executableSearchPaths: [toolchainPath.join("bin")],
+                testingLibraryPlatformNames: [],
+                fs: context.fs)
+        ]
     }
 }

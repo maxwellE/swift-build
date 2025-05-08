@@ -17,6 +17,8 @@ package import struct SWBProtocol.RunDestinationInfo
 package import SWBTaskConstruction
 import SWBTaskExecution
 package import Testing
+import SWBMacro
+import Foundation
 
 /// Helper class for testing task construction.
 package final class TaskConstructionTester {
@@ -120,6 +122,9 @@ package final class TaskConstructionTester {
         package func getDiagnosticMessage(_ pattern: StringPattern, kind: DiagnosticKind, checkDiagnostic: (Diagnostic) -> Bool) -> String? {
             for (target, targetDiagnostics) in diagnostics {
                 for (index, event) in targetDiagnostics.enumerated() {
+                    guard filterDiagnostic(message: event.formatLocalizedDescription(.debugWithoutBehavior)) != nil else {
+                        continue
+                    }
                     guard event.behavior == kind else {
                         continue
                     }
@@ -544,7 +549,7 @@ package final class TaskConstructionTester {
                             break
                         }
                     }
-                    // Note that the cycle reported here flows *downstream* (from producer task to output).  This is the reverse of the order in which cycles emitted by llbuild are printed (which shows the output first and then its producer task).  I don't remeber why I did it this way.
+                    // Note that the cycle reported here flows *downstream* (from producer task to output).  This is the reverse of the order in which cycles emitted by llbuild are printed (which shows the output first and then its producer task).  I don't remember why I did it this way.
                     Issue.record("dependency cycle found: \(cycle)", sourceLocation: sourceLocation)
                     return
                 }
@@ -638,7 +643,7 @@ package final class TaskConstructionTester {
                 return (try minimumDistance(from: Ref(origin), to: Ref(predecessor), successors: _successors))
             }
 
-            /// Compute the shortest path from a task to a potential precessor and return the list of nodes.
+            /// Compute the shortest path from a task to a potential predecessor and return the list of nodes.
             ///
             /// This will *not* include edges which traverse mutated nodes.
             func shortestPath(from origin: any PlannedTask, to predecessor: any PlannedTask) throws -> [Ref<any PlannedTask>]? {
@@ -763,7 +768,16 @@ package final class TaskConstructionTester {
         let parameters = parameters ?? BuildParameters(configuration: "Debug")
 
         // If the build parameters don't specify a run destination, but we were passed one, then use the one we were passed. (checkBuild() defaults this to .macOS.)
-        let runDestination = parameters.activeRunDestination ?? runDestination
+        let activeRunDestination: RunDestinationInfo? = switch (parameters.activeRunDestination, runDestination) {
+        case let (.some(lhs), (.some(rhs))):
+            preconditionFailure("Specified run destinations from both explicit build parameters and default destination: \(lhs), \(rhs)")
+        case let (.some(destination), nil):
+            destination
+        case let (nil, .some(destination)):
+            destination
+        case (nil, nil):
+            nil
+        }
 
         // Define a default set of overrides.
         var overrides = [
@@ -778,14 +792,14 @@ package final class TaskConstructionTester {
 
         // If we have a run destination, then we default ONLY_ACTIVE_ARCH to YES. This means when they build with a non-generic run destination, that run destination's architecture will be used rather than building universal.
         // If we don't have a run destination, then defaulting ONLY_ACTIVE_ARCH is probably the wrong thing to do.
-        if runDestination != nil {
+        if activeRunDestination != nil {
             overrides["ONLY_ACTIVE_ARCH"] = "YES"
         }
-        // Add overrides from the parameters we were passed, which will supercede the default overrides above.
+        // Add overrides from the parameters we were passed, which will supersede the default overrides above.
         overrides.addContents(of: parameters.overrides)
 
         // Create and return the effective parameters.
-        return BuildParameters(action: parameters.action, configuration: parameters.configuration, activeRunDestination: runDestination, activeArchitecture: parameters.activeArchitecture, overrides: overrides, commandLineOverrides: parameters.commandLineOverrides, commandLineConfigOverridesPath: parameters.commandLineConfigOverridesPath, commandLineConfigOverrides: parameters.commandLineConfigOverrides, environmentConfigOverridesPath: parameters.environmentConfigOverridesPath, environmentConfigOverrides: parameters.environmentConfigOverrides, arena: parameters.arena)
+        return BuildParameters(action: parameters.action, configuration: parameters.configuration, activeRunDestination: activeRunDestination, activeArchitecture: parameters.activeArchitecture, overrides: overrides, commandLineOverrides: parameters.commandLineOverrides, commandLineConfigOverridesPath: parameters.commandLineConfigOverridesPath, commandLineConfigOverrides: parameters.commandLineConfigOverrides, environmentConfigOverridesPath: parameters.environmentConfigOverridesPath, environmentConfigOverrides: parameters.environmentConfigOverrides, arena: parameters.arena)
     }
 
     /// Returns the effective build request to use for the build.
@@ -816,7 +830,7 @@ package final class TaskConstructionTester {
     /// Construct the tasks for the given build parameters, and test the result.
     /// - parameter runDestination: If the run destination in `parameter` is nil, then the value passed here will be used instead. Due to the defined default value, this means that tests build for macOS unless they specify otherwise.
     /// - parameter checkTaskGraphIntegrity: If `true` (the default), then the task graph's integrity will be checked, and test errors will be emitted for scenarios such as missing producers for nodes, and multiple producers for nodes.  A test may wish to pass `false` for this if it is deliberately constructing a bad task graph in order to examine the resulting errors.
-    package func checkBuild(_ inputParameters: BuildParameters? = nil, runDestination: SWBProtocol.RunDestinationInfo? = .macOS, targetName: String? = nil, buildRequest inputBuildRequest: BuildRequest? = nil, provisioningOverrides: ProvisioningTaskInputs? = nil, processEnvironment: [String: String] = [:], fs: any FSProxy = PseudoFS(), userPreferences: UserPreferences? = nil, clientDelegate: (any TaskPlanningClientDelegate)? = nil, checkTaskGraphIntegrity: Bool = true, useDefaultToolChainOverride: Bool = true, systemInfo: SystemInfo? = nil, sourceLocation: SourceLocation = #_sourceLocation, body: (PlanningResults) async throws -> Void) async rethrows {
+    package func checkBuild(_ inputParameters: BuildParameters? = nil, runDestination: SWBProtocol.RunDestinationInfo?, targetName: String? = nil, buildRequest inputBuildRequest: BuildRequest? = nil, provisioningOverrides: ProvisioningTaskInputs? = nil, processEnvironment: [String: String] = [:], fs: any FSProxy = PseudoFS(), userPreferences: UserPreferences? = nil, clientDelegate: (any TaskPlanningClientDelegate)? = nil, checkTaskGraphIntegrity: Bool = true, useDefaultToolChainOverride: Bool = true, systemInfo: SystemInfo? = nil, sourceLocation: SourceLocation = #_sourceLocation, body: (PlanningResults) async throws -> Void) async rethrows {
         // For test stability we modify the build parameters we were passed.
         let parameters = effectiveBuildParameters(inputParameters ?? inputBuildRequest?.parameters, runDestination: runDestination, useDefaultToolChainOverride: useDefaultToolChainOverride)
 
@@ -1006,7 +1020,7 @@ extension TaskConstructionTester {
             runDestination: runDestination,
             sourceLocation: sourceLocation
         )
-        return try await checkBuild(buildRequest: buildRequest, systemInfo: systemInfo, sourceLocation: sourceLocation, body: body)
+        return try await checkBuild(runDestination: runDestination, buildRequest: buildRequest, systemInfo: systemInfo, sourceLocation: sourceLocation, body: body)
     }
 }
 
@@ -1198,7 +1212,7 @@ package extension PlannedTaskInputsOutputs {
     }
 
     private func checkNodes(nodes: [any PlannedNode], name: String, contain patterns: [NodePattern], sourceLocation: SourceLocation = #_sourceLocation) {
-        #expect(nodes.count >= patterns.count, "too many patterns (\(patterns.count) > \(nodes.count)) for \(name)", sourceLocation: sourceLocation)
+        #expect(nodes.count >= patterns.count, "too many patterns for \(name) (\(nodes) vs \(patterns))", sourceLocation: sourceLocation)
         if nodes.count >= patterns.count {
             for pattern in patterns {
                 var foundPattern = false

@@ -21,7 +21,7 @@ package import SWBMacro
 
 /// This class adapts the TaskGenerationDelegate protocol used by the Core to that provided by the producer delegate API, for use inside the sources build phase.
 ///
-/// This delegate auto-attachs constructed tasks to the generated headers completion ordering gates, and chains to another delegate for performing the actual work.
+/// This delegate auto-attaches constructed tasks to the generated headers completion ordering gates, and chains to another delegate for performing the actual work.
 private final class SourcesPhaseBasedTaskGenerationDelegate: TaskGenerationDelegate {
     /// The producer we are operating on behalf of.
     let producer: SourcesTaskProducer
@@ -396,13 +396,61 @@ final class SourcesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBase
                     let parameters = self.context.configuredTarget?.parameters ?? BuildParameters(configuration: nil)
                     let settings = self.context.settingsForProductReferenceTarget(referenceTarget, parameters: parameters)
                     if referenceTarget.usesSwift(context: self.context, settings: settings) {
-                        for arch in scope.evaluate(BuiltinMacros.ARCHS) {
-                            let scope = settings.globalScope.subscope(binding: BuiltinMacros.archCondition, to: arch)
+                        var architectures = scope.evaluate(BuiltinMacros.ARCHS)
+                        var processedArchitectures: Set<String> = []
+                        while !architectures.isEmpty {
+                            let originalArch = architectures.removeFirst()
+                            guard !processedArchitectures.contains(originalArch) else {
+                                continue
+                            }
+                            processedArchitectures.insert(originalArch)
+                            let scope = settings.globalScope.subscope(binding: BuiltinMacros.archCondition, to: originalArch)
+                            // Binding the architecture may change how we evaluate $(ARCHS). Ensure we process any new architectures.
+                            for potentiallyNewArch in scope.evaluate(BuiltinMacros.ARCHS) {
+                                if !processedArchitectures.contains(potentiallyNewArch) {
+                                    architectures.append(potentiallyNewArch)
+                                }
+                            }
+                            // Recompute arch as it will be interpolated in settings below, in case binding the architecture condition produced a value other than the original literal.
+                            let arch = scope.evaluate(BuiltinMacros.CURRENT_ARCH)
+                            if arch == "undefined_arch" {
+                                // If we end up with an undefined architecture here, the settings we use to compute the
+                                // AST path and additional linker args below will be incorrect. This state is undesirable,
+                                // but recoverable, so do not record these incorrect paths.
+                                // FIXME: The `settingsForProductReferenceTarget` call above should always find settings for a
+                                // concrete configured target. However, there appears to be an issue currently when a root-level target
+                                // with package dependencies uses non-standard architectures. We should remove the `settingsForProductReferenceTarget` once that issue is resolved, and then this check should no longer
+                                // be needed.
+                                if context.workspaceContext.userPreferences.enableDebugActivityLogs {
+                                    context.warning("Could not determine settings for \(referenceTarget.name) when computing Swift AST paths for \(context.configuredTarget?.target.name ?? "<unknown>")")
+                                }
+                                continue
+                            }
                             let moduleName = scope.evaluate(BuiltinMacros.SWIFT_MODULE_NAME)
                             let moduleFileDir = scope.evaluate(BuiltinMacros.PER_ARCH_MODULE_FILE_DIR)
                             swiftModulePaths[arch] = moduleFileDir.join(moduleName + ".swiftmodule")
                             if scope.evaluate(BuiltinMacros.SWIFT_GENERATE_ADDITIONAL_LINKER_ARGS) {
                                 swiftModuleAdditionalLinkerArgResponseFilePaths[arch] = moduleFileDir.join("\(moduleName)-linker-args.resp")
+                            }
+                        }
+
+                        // Check if we can fill in information for missing architectures using a compatible architecture.
+                        for (arch, moduleFileDir) in swiftModulePaths {
+                            if let archSpec = context.workspaceContext.core.specRegistry.getSpec(arch, domain: scope.evaluate(BuiltinMacros.PLATFORM_NAME)) as? ArchitectureSpec {
+                                for compatibilityArch in archSpec.compatibilityArchs {
+                                    if swiftModulePaths[compatibilityArch] == nil {
+                                        swiftModulePaths[compatibilityArch] = moduleFileDir
+                                    }
+                                }
+                            }
+                        }
+                        for (arch, moduleFileDir) in swiftModuleAdditionalLinkerArgResponseFilePaths {
+                            if let archSpec = context.workspaceContext.core.specRegistry.getSpec(arch, domain: scope.evaluate(BuiltinMacros.PLATFORM_NAME)) as? ArchitectureSpec {
+                                for compatibilityArch in archSpec.compatibilityArchs {
+                                    if swiftModuleAdditionalLinkerArgResponseFilePaths[compatibilityArch] == nil {
+                                        swiftModuleAdditionalLinkerArgResponseFilePaths[compatibilityArch] = moduleFileDir
+                                    }
+                                }
                             }
                         }
                     }
@@ -619,8 +667,8 @@ final class SourcesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBase
     }
 
     func prepare() {
-        // CodeSigning in a monster... really, it is. Further, we don't actually have a model where we can perform proper pre-planning to determine what inputs will cause downstream outputs to end up in a particular location. Every source file has the potential to contribute some type of ouput that ends up in the wrapper.
-        // For example, every metal file creates a library that is embedded into the product wrapper. However, the build system doesn't actually *know* that, as the ouputs aren't really tracked in a way that the CodeSign task itself can depend on it.
+        // CodeSigning in a monster... really, it is. Further, we don't actually have a model where we can perform proper pre-planning to determine what inputs will cause downstream outputs to end up in a particular location. Every source file has the potential to contribute some type of output that ends up in the wrapper.
+        // For example, every metal file creates a library that is embedded into the product wrapper. However, the build system doesn't actually *know* that, as the outputs aren't really tracked in a way that the CodeSign task itself can depend on it.
         // What the build system does _know_, is that _all_ source files run tools that can potentially end up invalidating the code signature. Until we have a proper pre-planning (e.g. or dry-run) model (or a model that allows us to have dependencies on task producers), we need to be more conservative in our tracking of inputs, even if they can result in additional codesign work.
         // An additional note: if out output file, such as a metallib, is changed by something other than a source input, the codesign task will still not know about it, and that incremental build will fail to sign properly. That should be less likely to happen, but just goes to point out that we need to re-work how our codesign model works, in general.
 
@@ -769,7 +817,7 @@ final class SourcesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBase
                 // Process all of the groups.
                 //
                 // FIXME: We should do this in parallel.
-                let buildFilesContext = BuildFilesProcessingContext(scope, belongsToPreferedArch: preferredArch == nil || preferredArch == arch, currentArchSpec: currentArchSpec)
+                let buildFilesContext = BuildFilesProcessingContext(scope, belongsToPreferredArch: preferredArch == nil || preferredArch == arch, currentArchSpec: currentArchSpec)
                 var perArchTasks: [any PlannedTask] = []
                 await groupAndAddTasksForFiles(self, buildFilesContext, scope, filterToAPIRules: isForAPI, filterToHeaderRules: isForHeaders, &perArchTasks, extraResolvedBuildFiles: {
                     var result: [(Path, FileTypeSpec, Bool)] = []
@@ -788,6 +836,10 @@ final class SourcesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBase
 
                     if let embedInCodeAccessorResult {
                         result.append((embedInCodeAccessorResult.fileToBuild, embedInCodeAccessorResult.fileToBuildFileType, /* shouldUsePrefixHeader */ false))
+                    }
+
+                    if scope.evaluate(BuiltinMacros.GENERATE_TEST_ENTRY_POINT) {
+                        result.append((scope.evaluate(BuiltinMacros.GENERATED_TEST_ENTRY_POINT_PATH), context.lookupFileType(fileName: "sourcecode.swift")!,  /* shouldUsePrefixHeader */ false))
                     }
 
                     return result
@@ -813,14 +865,14 @@ final class SourcesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBase
                     }
                 }
 
-                // Handle linking master objects.  Presently we always do this if GENERATE_MASTER_OBJECT_FILE even if there are no other tasks, since PRELINK_LIBS or PRELINK_FLAGS might be set to values which will cause a master object file to be generated.
-                // FIXME: The implicitly means that if GENERATE_MASTER_OBJECT_FILE is enabled then we will always try to link.  That's arguably not correct.
-                if !isForAPI && scope.evaluate(BuiltinMacros.GENERATE_MASTER_OBJECT_FILE) {
-                    let executableName = scope.evaluate(BuiltinMacros.EXECUTABLE_NAME) + "-" + arch + "-master.o"
+                // Handle linking prelinked objects.  Presently we always do this if GENERATE_PRELINK_OBJECT_FILE even if there are no other tasks, since PRELINK_LIBS or PRELINK_FLAGS might be set to values which will cause a prelinked object file to be generated.
+                // FIXME: The implicitly means that if GENERATE_PRELINK_OBJECT_FILE is enabled then we will always try to link.  That's arguably not correct.
+                if !isForAPI && scope.evaluate(BuiltinMacros.GENERATE_PRELINK_OBJECT_FILE) {
+                    let executableName = scope.evaluate(BuiltinMacros.EXECUTABLE_NAME) + "-" + arch + "-prelink.o"
                     // FIXME: It would be more consistent to put this in the per-arch directory.
                     let output = Path(scope.evaluate(BuiltinMacros.PER_VARIANT_OBJECT_FILE_DIR)).join(executableName)
                     await appendGeneratedTasks(&perArchTasks, options: [.linking, .linkingRequirement, .unsignedProductRequirement]) { delegate in
-                        await context.masterObjectLinkSpec.constructTasks(CommandBuildContext(producer: context, scope: scope, inputs: linkerInputNodes.map { FileToBuild(context: context, absolutePath: $0.path) }, output: output), delegate)
+                        await context.prelinkedObjectLinkSpec.constructTasks(CommandBuildContext(producer: context, scope: scope, inputs: linkerInputNodes.map { FileToBuild(context: context, absolutePath: $0.path) }, output: output), delegate)
                     }
                     linkerInputNodes = [context.createNode(output)]
                 }
@@ -848,7 +900,7 @@ final class SourcesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBase
 
                 // If there is at least one object file that was built using Swift, ensure the Swift tool is present in the used tools to allow linker spec to add swift specific linker arguments.
                 if objectsInFrameworkPhase.contains(where: { !$0.swiftModulePaths.isEmpty }), !usedTools.keys.contains(context.swiftCompilerSpec) {
-                    usedTools[context.swiftCompilerSpec] = [context.lookupFileType(identifier: "sourcecode.swift")!]
+                    usedTools[context.swiftCompilerSpec] = [context.lookupFileType(identifier: "compiled.mach-o.objfile")!]
                 }
 
                 // If this is an API build, or there are no tasks and object files, don't link, so we don't produce a binary if we're not compiling any code.
@@ -860,7 +912,7 @@ final class SourcesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBase
                     continue
                 }
 
-                // Create the linker task.  If we have no input files but decide to create the task anyway, then this task will rely on gate tasks to be properly ordered (which is what happens for the master object file task above if there are no input files).
+                // Create the linker task.  If we have no input files but decide to create the task anyway, then this task will rely on gate tasks to be properly ordered (which is what happens for the prelinked object file task above if there are no input files).
                 if !linkerInputNodes.isEmpty || (components.contains("build") && scope.evaluate(BuiltinMacros.MERGE_LINKED_LIBRARIES)) {
                     // Compute the output path.
                     let output: Path
@@ -1103,7 +1155,7 @@ final class SourcesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBase
                 // Process all of the groups.
                 //
                 // FIXME: We should do this in parallel.
-                let buildFilesContext = BuildFilesProcessingContext(scope, belongsToPreferedArch: preferredArch == nil || preferredArch == arch, currentArchSpec: currentArchSpec)
+                let buildFilesContext = BuildFilesProcessingContext(scope, belongsToPreferredArch: preferredArch == nil || preferredArch == arch, currentArchSpec: currentArchSpec)
                 var perArchTasks: [any PlannedTask] = []
                 await groupAndAddTasksForFiles(self, buildFilesContext, scope, filterToAPIRules: isForAPI, filterToHeaderRules: isForHeaders, &perArchTasks, extraResolvedBuildFiles: {
                     if let packageTargetBundleAccessorResult {
@@ -1137,7 +1189,7 @@ final class SourcesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBase
                 let productBinaryPath = scope.evaluate(BuiltinMacros.TARGET_BUILD_DIR).join(scope.evaluate(BuiltinMacros.EXECUTABLE_PATH))
                 if singleArchBinaryPath != productBinaryPath {
                     await appendGeneratedTasks(&tasks, options: [.linking, .linkingRequirement, .unsignedProductRequirement]) { delegate in
-                        await context.copySpec.constructCopyTasks(CommandBuildContext(producer: context, scope: scope, inputs: [FileToBuild(context: context, absolutePath: singleArchBinaryPath)], output: productBinaryPath, commandOrderingOutputs: [linkedBinaryNode]), delegate, executionDescription: "Copy binary to product", stripUnsignedBinaries: false, stripBitcode: false)
+                        await context.copySpec.constructCopyTasks(CommandBuildContext(producer: context, scope: scope, inputs: [FileToBuild(context: context, absolutePath: singleArchBinaryPath)], output: productBinaryPath, commandOrderingOutputs: [linkedBinaryNode]), delegate, executionDescription: "Copy binary to product", stripUnsignedBinaries: false)
                     }
                 }
             }
@@ -1551,7 +1603,7 @@ final class SourcesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBase
         // Compute the resources directory.
         let resourcesDir = buildFilesContext.resourcesDir.join(group.regionVariantPathComponent)
 
-        let cbc = CommandBuildContext(producer: context, scope: scope, inputs: group.files, isPreferredArch: buildFilesContext.belongsToPreferedArch, currentArchSpec: buildFilesContext.currentArchSpec, buildPhaseInfo: buildFilesContext.buildPhaseInfo(for: rule), resourcesDir: resourcesDir, tmpResourcesDir: buildFilesContext.tmpResourcesDir, unlocalizedResourcesDir: buildFilesContext.resourcesDir)
+        let cbc = CommandBuildContext(producer: context, scope: scope, inputs: group.files, isPreferredArch: buildFilesContext.belongsToPreferredArch, currentArchSpec: buildFilesContext.currentArchSpec, buildPhaseInfo: buildFilesContext.buildPhaseInfo(for: rule), resourcesDir: resourcesDir, tmpResourcesDir: buildFilesContext.tmpResourcesDir, unlocalizedResourcesDir: buildFilesContext.resourcesDir)
         await constructTasksForRule(rule, cbc, delegate)
     }
 
@@ -1703,8 +1755,8 @@ final class SourcesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBase
                 NSBundle.mainBundle.bundleURL
             ];
 
-            for (NSURL* candiate in candidates) {
-                NSURL *bundlePath = [candiate URLByAppendingPathComponent:[NSString stringWithFormat:@"%@.bundle", bundleName]];
+            for (NSURL* candidate in candidates) {
+                NSURL *bundlePath = [candidate URLByAppendingPathComponent:[NSString stringWithFormat:@"%@.bundle", bundleName]];
 
                 NSBundle *bundle = [NSBundle bundleWithURL:bundlePath];
                 if (bundle != nil) {
@@ -1907,7 +1959,7 @@ final class SourcesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBase
     /// `ENABLE_DEBUG_DYLIB` is set on the main target, we need to add the previews
     /// dylib to the list of libraries to link for the test target.
     ///
-    /// `TEST_HOST` and `BUNDLE_LOADER` in fluence the `hostTargetForTargets` mapping.
+    /// `TEST_HOST` and `BUNDLE_LOADER` influence the `hostTargetForTargets` mapping.
     /// So if this target is present in there, we have a host we need to check.
     ///
     /// If the host has `EXECUTABLE_DEBUG_DYLIB_PATH`, then it had the preview dylib
@@ -1967,7 +2019,7 @@ private extension Target {
         return (self as? StandardTarget)?.sourcesBuildPhase?.buildFiles.compactMap { try? context.resolveBuildFileReference($0).fileType }.filter { $0.conformsTo(context.getSpec("sourcecode.swift") as! FileTypeSpec) }.count ?? 0 > 0
     }
 
-    /// Check whether a target has atleast one asset catalog.
+    /// Check whether a target has at least one asset catalog.
     func hasAssetCatalog(scope: MacroEvaluationScope, context: TaskProducerContext, includeGenerated: Bool) -> Bool {
         guard let standardTarget = (self as? StandardTarget) else { return false }
         let buildPhases = [standardTarget.resourcesBuildPhase, standardTarget.sourcesBuildPhase].compactMap { $0 }

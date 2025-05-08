@@ -10,6 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+import Synchronization
+
 /// Supports using an evicting base cache but temporarily preventing eviction during `cache.keepAlive { ... }`.
 ///
 /// - It doesn't prevent the base cache from evicting, but instead temporarily uses an additional non-evicting store
@@ -20,7 +22,7 @@ public final class ScopedKeepAliveCache<Key: Hashable & Sendable, Value: Sendabl
     private typealias Store = Registry<Key, Value>
 
     private struct State {
-        /// Tracks the number of active invoations of `keepAlive`
+        /// Tracks the number of active invocations of `keepAlive`
         var keepAliveCount = UInt(0)
 
         /// Used to store cache entries when `keepAlive` is active

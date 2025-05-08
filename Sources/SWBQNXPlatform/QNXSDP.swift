@@ -28,16 +28,18 @@ struct QNXSDP: Sendable {
         self.sysroot = sysroot
         self.configurationPath = configurationPath
 
-        let environment = [
+        var environment: Environment = [
             "QNX_TARGET": sysroot.str,
-            "QNX_HOST": hostPath?.str,
             "QNX_CONFIGURATION_EXCLUSIVE": configurationPath.str,
-        ].compactMapValues { $0 }
+        ]
+        if let hostPath {
+            environment["QNX_HOST"] = hostPath.str
+        }
         self.environment = environment
 
         self.version = try await {
             if let compilerPath = hostPath?.join("usr").join("bin").join(host.imageFormat.executableName(basename: "qcc")) {
-                let output = try await Process.getMergedOutput(url: URL(fileURLWithPath: compilerPath.str), arguments: ["-dM", "E", "-x", "c", "-c", Path.null.str], environment: environment)
+                let output = try await Process.getMergedOutput(url: URL(fileURLWithPath: compilerPath.str), arguments: ["-dM", "E", "-x", "c", "-c", Path.null.str, "-o", Path.null.str], environment: environment)
                 if output.exitStatus.isSuccess, !output.output.isEmpty {
                     let prefix = "#define __QNX__ "
                     if let versionString = String(decoding: output.output, as: UTF8.self).split(separator: "\n").map(String.init).first(where: { $0.hasPrefix(prefix) })?.dropFirst(prefix.count), let version = Int(versionString) {
@@ -60,7 +62,7 @@ struct QNXSDP: Sendable {
     /// Equivalent to `QNX_HOST`.
     public let hostPath: Path?
 
-    public let environment: [String: String]
+    public let environment: Environment
 
     private static func hostPath(host: OperatingSystem, path: Path) -> Path? {
         switch host {
@@ -75,8 +77,7 @@ struct QNXSDP: Sendable {
         }
     }
 
-    public static func findInstallations(fs: any FSProxy) async throws -> [QNXSDP] {
-        let host = try ProcessInfo.processInfo.hostOperatingSystem()
+    public static func findInstallations(host: OperatingSystem, fs: any FSProxy) async throws -> [QNXSDP] {
         var searchPaths = [Path.homeDirectory]
         if host == .windows {
             if let systemDrive = getEnvironmentVariable("SystemDrive") {

@@ -20,6 +20,7 @@ import SWBTestSupport
 import SWBUtil
 
 import SWBTaskConstruction
+import SWBMacro
 
 @Suite
 fileprivate struct PlatformTaskConstructionTests: CoreBasedTests {
@@ -48,6 +49,7 @@ fileprivate struct PlatformTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug",
                                                buildSettings: [
@@ -218,7 +220,7 @@ fileprivate struct PlatformTaskConstructionTests: CoreBasedTests {
                 // There should be one product validation task.
                 results.checkTask(.matchTarget(target), .matchRuleType("Validate"), .matchRuleItemBasename("AppTarget.app")) { task in
                     task.checkRuleInfo(["Validate", "\(SRCROOT)/build/Debug-iphoneos/AppTarget.app"])
-                    task.checkCommandLine(["builtin-validationUtility", "\(SRCROOT)/build/Debug-iphoneos/AppTarget.app", "-infoplist-subpath", "Info.plist"])
+                    task.checkCommandLine(["builtin-validationUtility", "\(SRCROOT)/build/Debug-iphoneos/AppTarget.app", "-shallow-bundle", "-infoplist-subpath", "Info.plist"])
 
                     task.checkInputs([
                         .path("\(SRCROOT)/build/Debug-iphoneos/AppTarget.app"),
@@ -253,7 +255,7 @@ fileprivate struct PlatformTaskConstructionTests: CoreBasedTests {
         }
 
         // Check the debug build, for the simulator.
-        await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .iOSSimulator), fs: fs) { results in
+        await tester.checkBuild(runDestination: .iOSSimulator, fs: fs) { results in
             // Ignore tasks we don't want to specifically check.
             results.checkTasks(.matchRuleType("Gate")) { _ in }
             results.checkTasks(.matchRuleType("WriteAuxiliaryFile")) { _ in }
@@ -350,7 +352,7 @@ fileprivate struct PlatformTaskConstructionTests: CoreBasedTests {
                 // There should be one product validation task.
                 results.checkTask(.matchTarget(target), .matchRuleType("Validate"), .matchRuleItemBasename("AppTarget.app")) { task in
                     task.checkRuleInfo(["Validate", "\(SRCROOT)/build/Debug-iphonesimulator/AppTarget.app"])
-                    task.checkCommandLine(["builtin-validationUtility", "\(SRCROOT)/build/Debug-iphonesimulator/AppTarget.app", "-infoplist-subpath", "Info.plist"])
+                    task.checkCommandLine(["builtin-validationUtility", "\(SRCROOT)/build/Debug-iphonesimulator/AppTarget.app", "-shallow-bundle", "-infoplist-subpath", "Info.plist"])
 
                     task.checkInputs([
                         .path("\(SRCROOT)/build/Debug-iphonesimulator/AppTarget.app"),
@@ -403,6 +405,7 @@ fileprivate struct PlatformTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug",
                                                buildSettings: [
@@ -437,7 +440,7 @@ fileprivate struct PlatformTaskConstructionTests: CoreBasedTests {
                 // There should be one product validation task.
                 results.checkTask(.matchTarget(target), .matchRuleType("Validate"), .matchRuleItemBasename("AppTarget.app")) { task in
                     task.checkRuleInfo(["Validate", "\(srcRoot.str)/build/Debug-iphoneos/AppTarget.app"])
-                    task.checkCommandLine(["builtin-validationUtility", "\(srcRoot.str)/build/Debug-iphoneos/AppTarget.app", "-infoplist-subpath", "Info.plist"])
+                    task.checkCommandLine(["builtin-validationUtility", "\(srcRoot.str)/build/Debug-iphoneos/AppTarget.app", "-shallow-bundle", "-infoplist-subpath", "Info.plist"])
 
                     task.checkOutputs([
                         .path("\(srcRoot.str)/build/Debug-iphoneos/AppTarget.app"),
@@ -540,9 +543,9 @@ fileprivate struct PlatformTaskConstructionTests: CoreBasedTests {
 
         // Create files in the filesystem so they're known to exist.
         let fs = PseudoFS()
-        try fs.createDirectory(core.developerPath.join("usr/bin"), recursive: true)
-        try await fs.writeFileContents(core.developerPath.join("usr/bin/actool")) { $0 <<< "binary" }
-        try await fs.writeFileContents(core.developerPath.join("usr/bin/ibtool")) { $0 <<< "binary" }
+        try fs.createDirectory(core.developerPath.path.join("usr/bin"), recursive: true)
+        try await fs.writeFileContents(core.developerPath.path.join("usr/bin/actool")) { $0 <<< "binary" }
+        try await fs.writeFileContents(core.developerPath.path.join("usr/bin/ibtool")) { $0 <<< "binary" }
 
         try fs.createDirectory(Path("/Users/whoever/Library/MobileDevice/Provisioning Profiles"), recursive: true)
         try fs.write(Path("/Users/whoever/Library/MobileDevice/Provisioning Profiles/8db0e92c-592c-4f06-bfed-9d945841b78d.mobileprovision"), contents: "profile")
@@ -597,7 +600,7 @@ fileprivate struct PlatformTaskConstructionTests: CoreBasedTests {
                 results.checkTask(.matchTarget(target), .matchRule(["CopyAndPreserveArchs", "/tmp/Test/aProject/build/Debug-iphoneos/StickerTarget.appex/StickerTarget"])) { task in
                     task.checkCommandLineMatches([
                         "lipo",
-                        "\(core.developerPath.str)/Platforms/iPhoneOS.platform/Library/Application Support/MessagesApplicationExtensionStub/MessagesApplicationExtensionStub",
+                        "\(core.developerPath.path.str)/Platforms/iPhoneOS.platform/Library/Application Support/MessagesApplicationExtensionStub/MessagesApplicationExtensionStub",
                         "-output",
                         "/tmp/Test/aProject/build/Debug-iphoneos/StickerTarget.appex/StickerTarget",
                         "-extract",
@@ -695,7 +698,7 @@ fileprivate struct PlatformTaskConstructionTests: CoreBasedTests {
         let macosOverrides = [
             "ARCHS": archs.joined(separator: " "),
         ]
-        await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .anyMacCatalyst, overrides: macosOverrides)) { results in
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: macosOverrides), runDestination: .anyMacCatalyst) { results in
             results.checkNoDiagnostics()
 
             // Match tasks we know we're not interested in.
@@ -742,7 +745,7 @@ fileprivate struct PlatformTaskConstructionTests: CoreBasedTests {
                                                      "-target", "\(arch)-apple-ios\(IPHONEOS_DEPLOYMENT_TARGET)-macabi",
                                                      "-isysroot", core.loadSDK(.macOS).path.str,
                                                      "-L\(core.loadSDK(.macOS).path.str)/System/iOSSupport/usr/lib",
-                                                     "-L\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/maccatalyst",
+                                                     "-L\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/maccatalyst",
                                                      "-iframework", "\(core.loadSDK(.macOS).path.str)/System/iOSSupport/System/Library/Frameworks",
                                                      "-o", "\(SRCROOT)/build/aProject.build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.build/Objects-normal/\(arch)/Binary/AppTarget",
                         ]
@@ -767,7 +770,7 @@ fileprivate struct PlatformTaskConstructionTests: CoreBasedTests {
         let fs = PseudoFS()
         try fs.createDirectory(Path("/Users/whoever/Library/MobileDevice/Provisioning Profiles"), recursive: true)
         try fs.write(Path("/Users/whoever/Library/MobileDevice/Provisioning Profiles/8db0e92c-592c-4f06-bfed-9d945841b78d.mobileprovision"), contents: "profile")
-        await tester.checkBuild(BuildParameters(configuration: "Debug"), fs: fs) { results in
+        await tester.checkBuild(runDestination: .macOS, fs: fs) { results in
             results.checkNoDiagnostics()
 
             // Match tasks we know we're not interested in.
@@ -876,7 +879,7 @@ fileprivate struct PlatformTaskConstructionTests: CoreBasedTests {
         let SRCROOT = tester.workspace.projects[0].sourceRoot.str
 
         // Test with the public SDK.
-        await tester.checkBuild(BuildParameters(configuration: "Debug", activeRunDestination: .macCatalyst)) { results in
+        await tester.checkBuild(runDestination: .macCatalyst) { results in
             results.checkNoDiagnostics()
 
             // Match tasks we know we're not interested in.
@@ -921,7 +924,7 @@ fileprivate struct PlatformTaskConstructionTests: CoreBasedTests {
                                                  "-isysroot", core.loadSDK(.macOS).path.str,
                                                  "-L/usr/local/lib",
                                                  "-L\(core.loadSDK(.macOS).path.str)/System/iOSSupport/usr/lib",
-                                                 "-L\(core.developerPath.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/maccatalyst",
+                                                 "-L\(core.developerPath.path.str)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/maccatalyst",
                                                  "-iframework", "/Library/Frameworks",
                                                  "-iframework", "\(core.loadSDK(.macOS).path.str)/System/iOSSupport/System/Library/Frameworks",
                                                  "-o", "\(SRCROOT)/build/Debug\(MacCatalystInfo.publicSDKBuiltProductsDirSuffix)/AppTarget.app/Contents/MacOS/AppTarget",
@@ -1002,7 +1005,7 @@ fileprivate struct PlatformTaskConstructionTests: CoreBasedTests {
             ])
         let tester = try TaskConstructionTester(core, testProject)
 
-        await tester.checkBuild() { results in
+        await tester.checkBuild(runDestination: .macOS) { results in
             results.checkNoDiagnostics()
 
             results.checkTarget("MacTarget") { target in

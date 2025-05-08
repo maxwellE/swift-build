@@ -16,6 +16,12 @@ import SWBUtil
 
 public import Foundation
 
+#if canImport(System)
+import System
+#else
+import SystemPackage
+#endif
+
 typealias swb_build_service_connection_message_handler_t = @Sendable (UInt64, SWBDispatchData) -> Void
 
 /// Represents and manages a connection to an Swift Build service subprocess.  Clients do not normally talk directly to the connection; instead, they almost always go through a SWBBuildService object, which provides higher-level operations.  The connection doesn’t know about the service-specific semantics, but instead provides general machinery for sending synchronous and asynchronous messages over one or more muxed communication “channels”, and for controlling the subprocess.
@@ -249,7 +255,7 @@ typealias swb_build_service_connection_message_handler_t = @Sendable (UInt64, SW
         }
     }
 
-    /// Suspends the connection (but doesn’t terminate or even suspend the Swift Build service process).  After suspending the connection, no futher messages will be dispatched until it is resumed again.  Does nothing if the connection is already suspended.
+    /// Suspends the connection (but doesn’t terminate or even suspend the Swift Build service process).  After suspending the connection, no further messages will be dispatched until it is resumed again.  Does nothing if the connection is already suspended.
     public func suspend() {
         // If we are already suspended, do nothing.
         // Otherwise, mark the connection as suspended.
@@ -382,7 +388,7 @@ extension SWBBuildServiceConnection {
         }
     }
 
-    /// Enqueues `data` to be sent on the specified channel, and returns immediately.  The channel must be one that has already been opened using the `openChannel(messageHandler:)` method, and it must not have been closed again.  Any replies will be sent to the block that was associated with the channed when it was opened.  It is valid for `data` to be empty, but not to be `nil`.
+    /// Enqueues `data` to be sent on the specified channel, and returns immediately.  The channel must be one that has already been opened using the `openChannel(messageHandler:)` method, and it must not have been closed again.  Any replies will be sent to the block that was associated with the channel when it was opened.  It is valid for `data` to be empty, but not to be `nil`.
     func send(_ data: SWBDispatchData, onChannel channel: UInt64) {
         // Immediately reply with an error if the service has been terminated.
         // We only do this for "real" channels; the zero channel is used for special one-way messages.
@@ -633,7 +639,7 @@ extension SWBBuildServiceConnectionMode {
     fileprivate func createTransport(variant: SWBBuildServiceVariant, serviceBundleURL: URL?, stdinPipe: IOPipe, stdoutPipe: IOPipe) throws -> any ConnectionTransport {
         switch self {
         case let .inProcessStatic(startFunc):
-            return try InProcessStaticConnection(stdinPipe: stdinPipe, stdoutPipe: stdoutPipe, startFunc: startFunc)
+            return try InProcessStaticConnection(serviceBundleURL: serviceBundleURL, stdinPipe: stdinPipe, stdoutPipe: stdoutPipe, startFunc: startFunc)
         case .inProcess:
             return try InProcessConnection(variant: variant, serviceBundleURL: serviceBundleURL, stdinPipe: stdinPipe, stdoutPipe: stdoutPipe)
         case .outOfProcess:
@@ -658,11 +664,13 @@ fileprivate protocol ConnectionTransport: AnyObject, Sendable {
 fileprivate final class InProcessStaticConnection: ConnectionTransport {
     private let stdinPipe: IOPipe
     private let stdoutPipe: IOPipe
+    private let serviceBundleURL: URL?
     private let done = WaitCondition()
     private let _state: LockedValue<SWBBuildServiceConnection.State> = .init(.running)
     private let startFunc: @Sendable (Int32, Int32, URL?, @Sendable @escaping ((any Error)?) -> Void) -> Void
 
-    init(stdinPipe: IOPipe, stdoutPipe: IOPipe, startFunc: @Sendable @escaping (Int32, Int32, URL?, @Sendable @escaping ((any Error)?) -> Void) -> Void) throws {
+    init(serviceBundleURL: URL?, stdinPipe: IOPipe, stdoutPipe: IOPipe, startFunc: @Sendable @escaping (Int32, Int32, URL?, @Sendable @escaping ((any Error)?) -> Void) -> Void) throws {
+        self.serviceBundleURL = serviceBundleURL
         self.stdinPipe = stdinPipe
         self.stdoutPipe = stdoutPipe
         self.startFunc = startFunc
@@ -685,11 +693,22 @@ fileprivate final class InProcessStaticConnection: ConnectionTransport {
             }
         }
 
-        let path = Library.locate(SWBBuildServiceConnection.self)
-        let buildServicePlugInsDirectory = URL(fileURLWithPath: path.dirname.str, isDirectory: true)
         let inputFD = stdinPipe.readEnd.rawValue
         let outputFD = stdoutPipe.writeEnd.rawValue
 
+        let buildServiceLocation = SWBBuildServiceConnection.buildServiceLocation(for: .normal, overridingServiceBundleURL: serviceBundleURL)
+        let buildServicePlugInsDirectory: URL?
+        if let buildServiceLocation, let buildServiceBundle = buildServiceLocation.bundle {
+            buildServicePlugInsDirectory = buildServiceBundle.builtInPlugInsURL
+        } else if let buildServiceLocation: SWBBuildServiceConnection.BuildServiceLocation {
+            let path = SWBUtil.Path(buildServiceLocation.executable.path)
+            buildServicePlugInsDirectory = URL(fileURLWithPath: path.dirname.str, isDirectory: true)
+        } else {
+            // If the build service executable is unbundled, then try to find the build service entry point in this executable.
+            let path = Library.locate(SWBBuildServiceConnection.self)
+            // If the build service executable is unbundled, assume that any plugins that may exist are next to our executable.
+            buildServicePlugInsDirectory = URL(fileURLWithPath: path.dirname.str, isDirectory: true)
+        }
         launched = true
         self.startFunc(Int32(inputFD), Int32(outputFD), buildServicePlugInsDirectory, { [done, terminationHandler] error in
             defer { done.signal() }
@@ -842,7 +861,7 @@ fileprivate final class OutOfProcessConnection: ConnectionTransport {
         var updatedEnvironment = ProcessInfo.processInfo.environment
         // Add the contents of the SWBBuildServiceEnvironmentOverrides user default.
         updatedEnvironment = updatedEnvironment.addingContents(of: (UserDefaults.standard.dictionary(forKey: "SWBBuildServiceEnvironmentOverrides") as? [String: String]) ?? [:])
-        // Remove inferior DYLD_LIBRARY_PATH paths into toolchains, or which contain a compiler library known to cause issues when mismatched. Swift Build does not need these when used by an inferior Xcode, and they can intefere with loading of correct clang and swift libraries.
+        // Remove inferior DYLD_LIBRARY_PATH paths into toolchains, or which contain a compiler library known to cause issues when mismatched. Swift Build does not need these when used by an inferior Xcode, and they can interfere with loading of correct clang and swift libraries.
         if let libraryPaths = updatedEnvironment["DYLD_LIBRARY_PATH"]?.components(separatedBy: ":") {
             updatedEnvironment["DYLD_LIBRARY_PATH"] = try libraryPaths.filter {
                 var path = Path($0).normalize()
@@ -931,7 +950,7 @@ fileprivate final class OutOfProcessConnection: ConnectionTransport {
             // If IBAutoAttach is enabled, send the message so Xcode will attach to the inferior.
             try Debugger.requestXcodeAutoAttachIfEnabled(task.processIdentifier)
         } catch {
-            // Terminate the subprocess if start() is going to throw, so that close() will not hang
+            // Terminate the subprocess if start() is going to throw, so that close() will not get stuck.
             task.terminate()
         }
         #endif

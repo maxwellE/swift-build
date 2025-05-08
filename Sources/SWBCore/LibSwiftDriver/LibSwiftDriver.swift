@@ -47,22 +47,19 @@ public protocol SwiftGlobalExplicitDependencyGraph : AnyObject {
 }
 
 /// Keeps track of all of the explicit module dependency build jobs as depended on by individual target builds
-private struct GlobalExplicitDepependencyTracker {
+private struct GlobalExplicitDependencyTracker {
     /// Maps a SwiftDriverJob's UniqueID to its index in this store
     private var uniqueIndexMap: [Int: Int] = [:]
 
     /// The collection of *all* explicit module dependency build jobs found so far
     fileprivate private(set) var plannedExplicitDependencyJobs: [LibSwiftDriver.PlannedBuild.PlannedSwiftDriverJob] = []
 
-    /// Next unique job ID in the `uniqueIndexMap`
-    private var nextIndex: Int = 0
-
     mutating func addExplicitDependencyBuildJobs(_ jobs: [SwiftDriverJob], workingDirectory: Path,
                                                  producerMap: inout [Path: LibSwiftDriver.JobKey]) throws -> Set<LibSwiftDriver.JobKey> {
         // Filter out "new" unique jobs and populate the `producerMap`
         var jobKeys: Set<LibSwiftDriver.JobKey> = []
-        var jobKeyIndices: [(Int, LibSwiftDriver.JobIndex)] = []
-        for (index, job) in jobs.enumerated() {
+        var jobsWithIndices: [(SwiftDriverJob, LibSwiftDriver.JobIndex)] = []
+        for job in jobs {
             guard case let .explicitModule(uniqueID) = job.kind else {
                 throw StubError.error("Unexpected job in explicit module builds: \(job.descriptionForLifecycle).")
             }
@@ -71,16 +68,14 @@ private struct GlobalExplicitDepependencyTracker {
                 trackerIndex = existingIndex
                 jobKeys.insert(LibSwiftDriver.JobKey.explicitDependencyJob(trackerIndex))
             } else {
-                trackerIndex = nextIndex
-                nextIndex = nextIndex + 1
-                jobKeyIndices.append((index, trackerIndex))
+                trackerIndex = plannedExplicitDependencyJobs.endIndex + jobsWithIndices.count
+                jobsWithIndices.append((job, trackerIndex))
             }
             try LibSwiftDriver.PlannedBuild.addProducts(of: job, index: .explicitDependencyJob(trackerIndex), knownJobs: [], to: &producerMap)
         }
 
         // Once the producerMap has been populated, create the actual PlannedDriverJobs
-        for (jobIndex, trackerIndex) in jobKeyIndices {
-            let job = jobs[jobIndex]
+        for (job, trackerIndex) in jobsWithIndices {
             guard case let .explicitModule(uniqueID) = job.kind else {
                 throw StubError.error("Unexpected job in explicit module builds: \(job.descriptionForLifecycle).")
             }
@@ -88,15 +83,32 @@ private struct GlobalExplicitDepependencyTracker {
             let inputs = job.inputs.compactMap { producerMap[$0] }
             let dependencies = Set(inputs).sorted()
             let plannedJob = LibSwiftDriver.PlannedBuild.PlannedSwiftDriverJob(key: jobKey, driverJob: job, dependencies: dependencies, workingDirectory: workingDirectory)
+            assert(trackerIndex == plannedExplicitDependencyJobs.endIndex)
             plannedExplicitDependencyJobs.append(plannedJob)
             uniqueIndexMap[uniqueID] = trackerIndex
             jobKeys.insert(jobKey)
         }
+
+        assert(jobKeys.count == jobs.count)
         return jobKeys
     }
 
     func getExplicitDependencyBuildJobs(for keys: [LibSwiftDriver.JobKey]) -> [LibSwiftDriver.PlannedBuild.PlannedSwiftDriverJob] {
-        plannedExplicitDependencyJobs.enumerated().filter { keys.contains(.explicitDependencyJob($0.offset)) }.map { $0.element }
+        var jobs: [LibSwiftDriver.PlannedBuild.PlannedSwiftDriverJob] = []
+        for key in keys {
+            guard case .explicitDependencyJob(let index) = key else {
+                assertionFailure("Unexpectedly found a regular job in 'plannedExplicitDependencyJobs'")
+                continue
+            }
+            guard plannedExplicitDependencyJobs.indices.contains(index) else {
+                assertionFailure("Unexpectedly found an out of bounds job index into 'plannedExplicitDependencyJobs'")
+                continue
+            }
+            let job = plannedExplicitDependencyJobs[index]
+            assert(job.key == key)
+            jobs.append(job)
+        }
+        return jobs
     }
 
     public func plannedExplicitDependencyBuildJob(for key: LibSwiftDriver.JobKey) -> LibSwiftDriver.PlannedBuild.PlannedSwiftDriverJob? {
@@ -120,7 +132,7 @@ public final class SwiftModuleDependencyGraph: SwiftGlobalExplicitDependencyGrap
 
     private let registryQueue = SWBQueue(label: "SwiftModuleDependencyGraph", autoreleaseFrequency: .workItem)
     private var registry: [String: LibSwiftDriver] = [:]
-    private var globalExplicitDepependencyTracker = GlobalExplicitDepependencyTracker()
+    private var globalExplicitDependencyTracker = GlobalExplicitDependencyTracker()
 
     public init() {}
 
@@ -165,6 +177,81 @@ public final class SwiftModuleDependencyGraph: SwiftGlobalExplicitDependencyGrap
         }
     }
 
+    public func querySwiftmodulesNeedingRegistrationForDebugging(for key: String) throws -> [String] {
+        let graph = try registryQueue.blocking_sync {
+            guard let driver = registry[key] else {
+                throw StubError.error("Unable to find jobs for key \(key). Be sure to plan the build ahead of fetching results.")
+            }
+            return driver.intermoduleDependencyGraph
+        }
+        guard let graph else { return [] }
+        var swiftmodulePaths: [String] = []
+        swiftmodulePaths.reserveCapacity(graph.modules.values.count)
+        for (_, moduleInfo) in graph.modules.sorted(byKey: { $0.moduleName < $1.moduleName }) {
+            guard moduleInfo != graph.mainModule else {
+                continue
+            }
+            switch moduleInfo.details {
+            case .swift:
+                if let modulePath = VirtualPath.lookup(moduleInfo.modulePath.path).absolutePath {
+                    swiftmodulePaths.append(modulePath.pathString)
+                }
+            case .swiftPrebuiltExternal(let details):
+                if let modulePath = VirtualPath.lookup(details.compiledModulePath.path).absolutePath {
+                    swiftmodulePaths.append(modulePath.pathString)
+                }
+            case .clang, .swiftPlaceholder:
+                break
+            }
+        }
+        return swiftmodulePaths
+    }
+
+    public func queryPlanningDependencies(for key: String) throws -> [String] {
+        let graph = try registryQueue.blocking_sync {
+            guard let driver = registry[key] else {
+                throw StubError.error("Unable to find jobs for key \(key). Be sure to plan the build ahead of fetching results.")
+            }
+            return driver.intermoduleDependencyGraph
+        }
+        guard let graph else { return [] }
+        var fileDependencies: [String] = []
+        fileDependencies.reserveCapacity(graph.modules.values.count * 10)
+        for (_, moduleInfo) in graph.modules.sorted(byKey: { $0.moduleName < $1.moduleName }) {
+            guard moduleInfo != graph.mainModule else {
+                continue
+            }
+            fileDependencies.append(contentsOf: moduleInfo.sourceFiles ?? [])
+            switch moduleInfo.details {
+            case .swift:
+                break
+            case .swiftPlaceholder:
+                break
+            case .swiftPrebuiltExternal(let details):
+                if let modulePath = VirtualPath.lookup(details.compiledModulePath.path).absolutePath {
+                    fileDependencies.append(modulePath.pathString)
+                }
+            case .clang:
+                break
+            }
+        }
+        return fileDependencies
+    }
+
+    public func queryTransitiveDependencyModuleNames(for key: String) async throws -> [String] {
+        let graph = try await registryQueue.sync {
+            guard let driver = self.registry[key] else {
+                throw StubError.error("Unable to find jobs for key \(key). Be sure to plan the build ahead of fetching results.")
+            }
+            return driver.intermoduleDependencyGraph
+        }
+        guard let graph else { return [] }
+        // This calculation is a bit awkward because we cannot directly access the ID of the main module, just its info object
+        let directDependencies = graph.mainModule.directDependencies ?? []
+        let transitiveDependencies = Set(directDependencies + SWBUtil.transitiveClosure(directDependencies, successors: { moduleID in graph.modules[moduleID]?.directDependencies ?? [] }).0)
+        return transitiveDependencies.map(\.moduleName)
+    }
+
     /// Serialize incremental build state for the given key and removes its state from memory
     public func cleanUpForAllKeys() {
         registryQueue.async {
@@ -199,35 +286,35 @@ public final class SwiftModuleDependencyGraph: SwiftGlobalExplicitDependencyGrap
     public func addExplicitDependencyBuildJobs(_ jobs: [SwiftDriverJob], workingDirectory: Path,
                                                producerMap: inout [Path: LibSwiftDriver.JobKey]) throws -> Set<LibSwiftDriver.JobKey> {
         try registryQueue.blocking_sync {
-            try globalExplicitDepependencyTracker.addExplicitDependencyBuildJobs(jobs, workingDirectory: workingDirectory, producerMap: &producerMap)
+            try globalExplicitDependencyTracker.addExplicitDependencyBuildJobs(jobs, workingDirectory: workingDirectory, producerMap: &producerMap)
         }
     }
     public func getExplicitDependencyBuildJobs(for keys: [LibSwiftDriver.JobKey]) -> [LibSwiftDriver.PlannedBuild.PlannedSwiftDriverJob] {
         registryQueue.blocking_sync {
-            globalExplicitDepependencyTracker.getExplicitDependencyBuildJobs(for: keys)
+            globalExplicitDependencyTracker.getExplicitDependencyBuildJobs(for: keys)
         }
     }
     public func plannedExplicitDependencyBuildJob(for key: LibSwiftDriver.JobKey) -> LibSwiftDriver.PlannedBuild.PlannedSwiftDriverJob? {
         registryQueue.blocking_sync {
-            globalExplicitDepependencyTracker.plannedExplicitDependencyBuildJob(for: key)
+            globalExplicitDependencyTracker.plannedExplicitDependencyBuildJob(for: key)
         }
     }
     public func explicitDependencies(for job: LibSwiftDriver.PlannedBuild.PlannedSwiftDriverJob) -> [LibSwiftDriver.PlannedBuild.PlannedSwiftDriverJob] {
         registryQueue.blocking_sync {
-            globalExplicitDepependencyTracker.explicitDependencies(for: job)
+            globalExplicitDependencyTracker.explicitDependencies(for: job)
         }
     }
 
     public var isEmpty: Bool {
         registryQueue.blocking_sync {
-            globalExplicitDepependencyTracker.plannedExplicitDependencyJobs.isEmpty
+            globalExplicitDependencyTracker.plannedExplicitDependencyJobs.isEmpty
         }
     }
 
     public func generatePrecompiledModulesReport(in directory: Path, fs: any FSProxy) async throws -> String {
         // Collect DependencyInfo of every module built during the current build.
         var jobsByModuleID: [String: [SwiftDriverJob]] = [:]
-        for job in globalExplicitDepependencyTracker.plannedExplicitDependencyJobs {
+        for job in globalExplicitDependencyTracker.plannedExplicitDependencyJobs {
             let qualifier: String
             switch job.driverJob.ruleInfoType {
             case "CompileModuleFromInterface":
@@ -248,12 +335,19 @@ public final class SwiftModuleDependencyGraph: SwiftGlobalExplicitDependencyGrap
             summaryCSV.writeRow([moduleID, "\(jobs.count)"])
             summaryMessage += "\(moduleID): \(jobs.count == 1 ? "1 variant" : "\(jobs.count) variants")\n"
 
-            let mergeResult = nWayMerge(jobs.map { $0.commandLine.map { $0.asString } }).filter {
+            let mergeResult = nWayMerge(jobs.map { $0.commandLine.filter {
+                if ["pcm", "dia", "d"].contains(Path($0).fileExtension) {
+                    // Filter differences in module paths, they are a function of the other args
+                    return false
+                } else if $0.hasPrefix("llvmcas://") {
+                    // Filter differences in CAS URLs, they are a function of the other args
+                    return false
+                } else {
+                    return true
+                }
+            }.map { $0.asString } }).filter {
                 if $0.elementOf.count == jobs.count {
                     // Don't report args common to all variants
-                    return false
-                } else if ["pcm", "dia", "d"].contains(Path($0.element).fileExtension) {
-                    // Don't report differences in module paths, they are a function of the other args
                     return false
                 } else {
                     return true
@@ -394,6 +488,15 @@ public final class LibSwiftDriver {
         case path(Path)
         case library(libSwiftScanPath: Path)
 
+        public var compilerOrLibraryPath: Path {
+            switch self {
+            case .path(let path):
+                return path
+            case .library(let path):
+                return path
+            }
+        }
+
         public var description: String {
             switch self {
             case .path(let path):
@@ -433,6 +536,8 @@ public final class LibSwiftDriver {
         return try! PlannedBuild(workload: .all([]), argsResolver: self.resolver, explicitModulesResolver: self.explicitModulesResolver, jobExecutionDelegate: nil, globalExplicitDependencyJobGraph: nil, workingDirectory: workingDirectory, eagerCompilationEnabled: self.eagerCompilationEnabled)
     }
 
+    var intermoduleDependencyGraph: InterModuleDependencyGraph?
+
     private init(graph: SwiftModuleDependencyGraph?, compilerLocation: CompilerLocation, target: ConfiguredTarget?, workingDirectory: Path, tempDirPath: Path, explicitModulesTempDirPath: Path, commandLine: [String], environment: [String: String], eagerCompilationEnabled: Bool, diagnosticsEngine: TSCBasic.DiagnosticsEngine, casOptions: CASOptions?) throws {
         self.target = target
         self.workingDirectory = workingDirectory
@@ -458,7 +563,7 @@ public final class LibSwiftDriver {
             // Remove lib/swift/host/lib_InternalSwiftScan.dylib and add bin/swift-frontend to get a fake path to the compiler frontend.
             let fakeFrontendPath = path.dirname.dirname.dirname.dirname.join("bin/swift-frontend")
             env = environment.merging(["SWIFT_DRIVER_SWIFT_FRONTEND_EXEC": fakeFrontendPath.str, "SWIFT_DRIVER_SWIFTSCAN_LIB": path.str], uniquingKeysWith: { first, second in first })
-            compilerExecutableDir = nil
+            compilerExecutableDir = try TSCBasic.AbsolutePath(validating: fakeFrontendPath.dirname.str)
         }
         let key = SwiftModuleDependencyGraph.OracleRegistryKey(compilerLocation: compilerLocation, casOpts: casOptions)
         let oracle = graph?.oracleRegistry.getOrInsert(key, { InterModuleDependencyOracle() })
@@ -481,6 +586,7 @@ public final class LibSwiftDriver {
                 try driver.run(jobs: jobs)
                 if let plannedBuild = executor.movePlannedBuild() {
                     _plannedBuild = plannedBuild
+                    intermoduleDependencyGraph = driver.intermoduleDependencyGraph
                 } else {
                     throw StubError.error("Swift driver build planning failed")
                 }
@@ -682,6 +788,14 @@ public final class SwiftCASDatabases {
     init(_ cas: SwiftScanCAS) {
         self.cas = cas
     }
+
+    public var supportsSizeManagement: Bool { cas.supportsSizeManagement }
+
+    public func getStorageSize() throws -> Int64? { try cas.getStorageSize() }
+
+    public func setSizeLimit(_ size: Int64) throws { try cas.setSizeLimit(size) }
+
+    public func prune() throws { try cas.prune() }
 
     public func queryCacheKey(_ key: String, globally: Bool) async throws -> SwiftCachedCompilation? {
         guard let comp = try await cas.queryCacheKey(key, globally: globally) else { return nil }

@@ -18,6 +18,11 @@ import SwiftBuildTestSupport
 import struct SWBProtocol.RunDestinationInfo
 import SWBCore
 import class SwiftBuild.SWBBuildService
+import SWBTaskExecution
+
+#if canImport(Darwin)
+import MachO
+#endif
 
 @Suite(.requireXcode16())
 fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
@@ -83,6 +88,7 @@ fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
                                     TestBuildConfiguration("Debug",
                                                            buildSettings: [
                                                             "INSTALL_PATH": "/Applications",
+                                                            "SKIP_EMBEDDED_FRAMEWORKS_VALIDATION": "YES",
                                                            ]),
                                 ],
                                 buildPhases: [
@@ -187,7 +193,7 @@ fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
             do {
                 let buildType = "Debug"
                 let (SYMROOT, OBJROOT, DSTROOT) = buildDirs(in: tmpDirPath, for: buildType)
-                let parameters = BuildParameters(configuration: "Debug", activeRunDestination: .iOS, overrides: [
+                let parameters = BuildParameters(configuration: "Debug", overrides: [
                     "SYMROOT": SYMROOT,
                     "OBJROOT": OBJROOT,
                     "DSTROOT": DSTROOT,
@@ -197,7 +203,7 @@ fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
                 ])
                 let targets = tester.workspace.projects[0].targets.map({ BuildRequest.BuildTargetInfo(parameters: parameters, target: $0) })
                 let request = BuildRequest(parameters: parameters, buildTargets: targets, continueBuildingAfterErrors: false, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
-                try await tester.checkBuild(buildType, parameters: parameters, buildRequest: request, persistent: true, signableTargets: signableTargets) { results in
+                try await tester.checkBuild(buildType, parameters: parameters, runDestination: .iOS, buildRequest: request, persistent: true, signableTargets: signableTargets) { results in
                     // Abort if the build failed (build errors are a proxy for this as the build result is not encoded in the result object).  checkBuild() will emit test issues for any build issues generated.
                     if !results.getDiagnostics(.error).isEmpty {
                         return
@@ -365,7 +371,7 @@ fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
             do {
                 let buildType = "Release"
                 let (SYMROOT, OBJROOT, DSTROOT) = buildDirs(in: tmpDirPath, for: buildType)
-                let parameters = BuildParameters(configuration: "Debug", activeRunDestination: .iOS, overrides: [
+                let parameters = BuildParameters(configuration: "Debug", overrides: [
                     "SYMROOT": SYMROOT,
                     "OBJROOT": OBJROOT,
                     "DSTROOT": DSTROOT,
@@ -377,7 +383,7 @@ fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
                 ])
                 let targets = tester.workspace.projects[0].targets.map({ BuildRequest.BuildTargetInfo(parameters: parameters, target: $0) })
                 let request = BuildRequest(parameters: parameters, buildTargets: targets, continueBuildingAfterErrors: false, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
-                try await tester.checkBuild(buildType, parameters: parameters, buildRequest: request, persistent: true, signableTargets: signableTargets) { results in
+                try await tester.checkBuild(buildType, parameters: parameters, runDestination: .iOS, buildRequest: request, persistent: true, signableTargets: signableTargets) { results in
                     // Abort if the build failed (build errors are a proxy for this as the build result is not encoded in the result object).  checkBuild() will emit test issues for any build issues generated.
                     if !results.getDiagnostics(.error).isEmpty {
                         return
@@ -553,8 +559,8 @@ fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
                                 "INSTALL_GROUP": "",
                                 "INSTALL_MODE_FLAG": "",
                                 "SDK_STAT_CACHE_ENABLE": "NO",
-
-                                "ASSETCATALOG_COMPILER_SKIP_APP_STORE_DEPLOYMENT": useAppStoreCodelessFrameworksWorkaround ? "NO" : "YES"
+                                "ASSETCATALOG_COMPILER_SKIP_APP_STORE_DEPLOYMENT": useAppStoreCodelessFrameworksWorkaround ? "NO" : "YES",
+                                "SKIP_EMBEDDED_FRAMEWORKS_VALIDATION": "YES",
                             ])
                         ],
                         targets: [
@@ -668,7 +674,7 @@ fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
             do {
                 let buildType = "Debug"
                 let (SYMROOT, OBJROOT, DSTROOT) = buildDirs(in: tmpDirPath, for: buildType)
-                let parameters = BuildParameters(configuration: "Debug", activeRunDestination: .iOS, overrides: [
+                let parameters = BuildParameters(configuration: "Debug", overrides: [
                     "SYMROOT": SYMROOT,
                     "OBJROOT": OBJROOT,
                     "DSTROOT": DSTROOT,
@@ -678,7 +684,7 @@ fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
                 ])
                 let targets = tester.workspace.projects[0].targets.map({ BuildRequest.BuildTargetInfo(parameters: parameters, target: $0) })
                 let request = BuildRequest(parameters: parameters, buildTargets: targets, continueBuildingAfterErrors: false, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
-                try await tester.checkBuild(buildType, parameters: parameters, buildRequest: request, persistent: true, signableTargets: signableTargets) { results in
+                try await tester.checkBuild(buildType, parameters: parameters, runDestination: .iOS, buildRequest: request, persistent: true, signableTargets: signableTargets) { results in
                     // Abort if the build failed (build errors are a proxy for this as the build result is not encoded in the result object).  checkBuild() will emit test issues for any build issues generated.
                     if !results.getDiagnostics(.error).isEmpty {
                         return
@@ -822,7 +828,7 @@ fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
             do {
                 let buildType = "Release"
                 let (SYMROOT, OBJROOT, DSTROOT) = buildDirs(in: tmpDirPath, for: buildType)
-                let parameters = BuildParameters(configuration: "Config", activeRunDestination: .iOS, overrides: [
+                let parameters = BuildParameters(configuration: "Config", overrides: [
                     "SYMROOT": SYMROOT,
                     "OBJROOT": OBJROOT,
                     "DSTROOT": DSTROOT,
@@ -835,7 +841,7 @@ fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
                 ])
                 let targets = tester.workspace.projects[0].targets.map({ BuildRequest.BuildTargetInfo(parameters: parameters, target: $0) })
                 let request = BuildRequest(parameters: parameters, buildTargets: targets, continueBuildingAfterErrors: false, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
-                try await tester.checkBuild(buildType, parameters: parameters, buildRequest: request, persistent: true, signableTargets: signableTargets) { results in
+                try await tester.checkBuild(buildType, parameters: parameters, runDestination: .iOS, buildRequest: request, persistent: true, signableTargets: signableTargets) { results in
                     // Abort if the build failed (build errors are a proxy for this as the build result is not encoded in the result object).  checkBuild() will emit test issues for any build issues generated.
                     if !results.getDiagnostics(.error).isEmpty {
                         return
@@ -1029,6 +1035,7 @@ fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
                                                            buildSettings: [
                                                             "INSTALL_PATH": "/Applications",
                                                             "MERGE_LINKED_LIBRARIES": "$(APP_MERGE_LINKED_LIBRARIES)",      // Builds below can override APP_MERGE_LINKED_LIBRARIES to NO to disable merging.
+                                                            "SKIP_EMBEDDED_FRAMEWORKS_VALIDATION": "YES",
                                                            ]),
                                 ],
                                 buildPhases: [
@@ -1077,7 +1084,7 @@ fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
                 let buildType = "Merge"
                 let runDestination = RunDestinationInfo.iOS
                 let (SYMROOT, OBJROOT, DSTROOT) = buildDirs(in: tmpDirPath, for: buildType)
-                let parameters = BuildParameters(configuration: CONFIGURATION, activeRunDestination: runDestination, overrides: [
+                let parameters = BuildParameters(configuration: CONFIGURATION, overrides: [
                     "SYMROOT": SYMROOT,
                     "OBJROOT": OBJROOT,
                     "DSTROOT": DSTROOT,
@@ -1090,7 +1097,7 @@ fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
                 let BUILT_PRODUCTS_DIR = "\(SYMROOT)/\(CONFIGURATION)" + (runDestination != .macOS ? "-\(runDestination.platform)" : "")
                 let targets = tester.workspace.projects[0].targets.map({ BuildRequest.BuildTargetInfo(parameters: parameters, target: $0) })
                 let request = BuildRequest(parameters: parameters, buildTargets: targets, continueBuildingAfterErrors: false, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
-                try await tester.checkBuild(buildType, parameters: parameters, buildRequest: request, persistent: true, signableTargets: signableTargets) { results in
+                try await tester.checkBuild(buildType, parameters: parameters, runDestination: runDestination, buildRequest: request, persistent: true, signableTargets: signableTargets) { results in
                     // Abort if the build failed (build errors are a proxy for this as the build result is not encoded in the result object).  checkBuild() will emit test issues for any build issues generated.
                     if !results.getDiagnostics(.error).isEmpty {
                         return
@@ -1189,7 +1196,7 @@ fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
                 let buildType = "Link"
                 let runDestination = RunDestinationInfo.iOS
                 let (SYMROOT, OBJROOT, DSTROOT) = buildDirs(in: tmpDirPath, for: buildType)
-                let parameters = BuildParameters(configuration: CONFIGURATION, activeRunDestination: runDestination, overrides: [
+                let parameters = BuildParameters(configuration: CONFIGURATION, overrides: [
                     "SYMROOT": SYMROOT,
                     "OBJROOT": OBJROOT,
                     "DSTROOT": DSTROOT,
@@ -1203,7 +1210,7 @@ fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
                 let BUILT_PRODUCTS_DIR = "\(SYMROOT)/\(CONFIGURATION)" + (runDestination != .macOS ? "-\(runDestination.platform)" : "")
                 let targets = tester.workspace.projects[0].targets.map({ BuildRequest.BuildTargetInfo(parameters: parameters, target: $0) })
                 let request = BuildRequest(parameters: parameters, buildTargets: targets, continueBuildingAfterErrors: false, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
-                try await tester.checkBuild(buildType, parameters: parameters, buildRequest: request, persistent: true, signableTargets: signableTargets) { results in
+                try await tester.checkBuild(buildType, parameters: parameters, runDestination: runDestination, buildRequest: request, persistent: true, signableTargets: signableTargets) { results in
                     // Abort if the build failed (build errors are a proxy for this as the build result is not encoded in the result object).  checkBuild() will emit test issues for any build issues generated.
                     if !results.getDiagnostics(.error).isEmpty {
                         return
@@ -1396,6 +1403,7 @@ fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
                                     TestBuildConfiguration(CONFIGURATION,
                                                            buildSettings: [
                                                             "INSTALL_PATH": "/Applications",
+                                                            "SKIP_EMBEDDED_FRAMEWORKS_VALIDATION": "YES",
                                                            ]),
                                 ],
                                 buildPhases: [
@@ -1467,7 +1475,7 @@ fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
                 let buildType = "Merge"
                 let runDestination = RunDestinationInfo.iOS
                 let (SYMROOT, OBJROOT, DSTROOT) = buildDirs(in: tmpDirPath, for: buildType)
-                let parameters = BuildParameters(configuration: CONFIGURATION, activeRunDestination: runDestination, overrides: [
+                let parameters = BuildParameters(configuration: CONFIGURATION, overrides: [
                     "SYMROOT": SYMROOT,
                     "OBJROOT": OBJROOT,
                     "DSTROOT": DSTROOT,
@@ -1480,7 +1488,7 @@ fileprivate struct MergeableLibrariesBuildOperationTests: CoreBasedTests {
                 let BUILT_PRODUCTS_DIR = "\(SYMROOT)/\(CONFIGURATION)" + (runDestination != .macOS ? "-\(runDestination.platform)" : "")
                 let targets = tester.workspace.projects[0].targets.map({ BuildRequest.BuildTargetInfo(parameters: parameters, target: $0) })
                 let request = BuildRequest(parameters: parameters, buildTargets: targets, continueBuildingAfterErrors: false, useParallelTargets: true, useImplicitDependencies: true, useDryRun: false)
-                try await tester.checkBuild(buildType, parameters: parameters, buildRequest: request, persistent: true, signableTargets: signableTargets) { results in
+                try await tester.checkBuild(buildType, parameters: parameters, runDestination: runDestination, buildRequest: request, persistent: true, signableTargets: signableTargets) { results in
                     // Abort if the build failed (build errors are a proxy for this as the build result is not encoded in the result object).  checkBuild() will emit test issues for any build issues generated.
                     if !results.getDiagnostics(.error).isEmpty {
                         return

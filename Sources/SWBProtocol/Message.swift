@@ -416,6 +416,11 @@ public struct ProductTypeSupportsMacCatalystRequest: RequestMessage, Equatable, 
 
 // MARK: Session Management
 
+public enum DeveloperPath: Sendable, Hashable, Codable {
+    case xcode(Path)
+    case swiftToolchain(Path)
+}
+
 public struct CreateSessionRequest: RequestMessage, Equatable, SerializableCodable {
     public typealias ResponseMessage = CreateSessionResponse
 
@@ -423,6 +428,8 @@ public struct CreateSessionRequest: RequestMessage, Equatable, SerializableCodab
 
     public let name: String
     public let developerPath: Path?
+    public let developerPath2: DeveloperPath?
+    public let resourceSearchPaths: [Path]?
     public let appPath: Path?
     public let cachePath: Path?
     public let inferiorProductsPath: Path?
@@ -432,10 +439,32 @@ public struct CreateSessionRequest: RequestMessage, Equatable, SerializableCodab
         self.init(name: name, developerPath: developerPath, cachePath: cachePath, inferiorProductsPath: inferiorProductsPath, environment: nil)
     }
 
-    public init(name: String, developerPath: Path?, cachePath: Path?, inferiorProductsPath: Path?, environment: [String:String]?) {
+    public init(name: String, developerPath: Path?, cachePath: Path?, inferiorProductsPath: Path?, environment: [String:String]?) { // ABI Compatibility
+        self.init(name: name, developerPath: developerPath, resourceSearchPaths: [], cachePath: cachePath, inferiorProductsPath: inferiorProductsPath, environment: environment)
+    }
+
+    public init(name: String, developerPath: Path?, resourceSearchPaths: [Path], cachePath: Path?, inferiorProductsPath: Path?, environment: [String:String]?) { // API/ABI compatibility
         self.name = name
         self.developerPath = developerPath
+        self.developerPath2 = nil
+        self.resourceSearchPaths = resourceSearchPaths
         self.appPath = developerPath?.dirname.dirname
+        self.cachePath = cachePath
+        self.inferiorProductsPath = inferiorProductsPath
+        self.environment = environment
+    }
+
+    public init(name: String, developerPath: DeveloperPath?, resourceSearchPaths: [Path], cachePath: Path?, inferiorProductsPath: Path?, environment: [String:String]?) {
+        self.name = name
+        self.developerPath2 = developerPath
+        switch developerPath {
+        case .xcode(let path), .swiftToolchain(let path):
+            self.developerPath = path
+        case nil:
+            self.developerPath = nil
+        }
+        self.resourceSearchPaths = resourceSearchPaths
+        self.appPath = self.developerPath?.dirname.dirname
         self.cachePath = cachePath
         self.inferiorProductsPath = inferiorProductsPath
         self.environment = environment
@@ -446,6 +475,8 @@ public struct CreateSessionRequest: RequestMessage, Equatable, SerializableCodab
         self.name = try deserializer.deserialize()
         self.appPath = try deserializer.deserialize()
         self.developerPath = count >= 5 ? try deserializer.deserialize() : appPath?.join("Contents").join("Developer")
+        self.developerPath2 = nil
+        self.resourceSearchPaths = []
         self.cachePath = try deserializer.deserialize()
         self.inferiorProductsPath = try deserializer.deserialize()
         self.environment = nil

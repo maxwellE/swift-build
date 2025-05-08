@@ -15,6 +15,7 @@ import Testing
 import SWBUtil
 import SWBCore
 import SWBTestSupport
+import SWBProtocol
 
 @Suite fileprivate struct ShellScriptEnvironmentTests: CoreBasedTests {
     @Test(.requireHostOS(.macOS))
@@ -72,7 +73,6 @@ import SWBTestSupport
             "DERIVED_SOURCES_DIR": srcroot.join("build/aProject.build/Debug/Target1.build/DerivedSources").str,
             "DOCUMENTATION_FOLDER_PATH": "Target1.app/Contents/Resources/English.lproj/Documentation",
             "DWARF_DSYM_FILE_NAME": "Target1.app.dSYM",
-            "ENABLE_BITCODE": "NO",
             "ENABLE_ON_DEMAND_RESOURCES": "NO",
             "ENABLE_TESTABILITY": "NO",
             "EXECUTABLES_FOLDER_PATH": "Target1.app/Contents/Executables",
@@ -157,7 +157,7 @@ import SWBTestSupport
     }
 
     /// Test that default and overriding build settings defined in a toolchain are exported.
-    @Test(.skipIfEnvironmentVariableSet(key: "EXTERNAL_TOOLCHAINS_DIR"))
+    @Test(.requireHostOS(.macOS), .skipIfEnvironmentVariableSet(key: .externalToolchainsDir))
     func exportingToolchainSettings() async throws {
         try await withTemporaryDirectory { tmpDirPath in
             // Toolchains are only loaded from the localFS, so we can't use a PseudoFS here.
@@ -178,8 +178,8 @@ import SWBTestSupport
             ])
 
             // Configure the test data.
-            let environment = ["EXTERNAL_TOOLCHAINS_DIR": toolchainDirPath.str]
-            let core = try await Self.makeCore(environment: environment)
+            let environment: Environment = [.externalToolchainsDir: toolchainDirPath.str]
+            let core = try await Self.makeCore(environment: .init(environment))
             let testWorkspace = try TestWorkspace(
                 "Workspace",
                 projects: [TestProject(
@@ -201,7 +201,7 @@ import SWBTestSupport
                         )
                     ])
                 ]).load(core)
-            let context = try await contextForTestData(testWorkspace, core: core, environment: environment)
+            let context = try await contextForTestData(testWorkspace, core: core, environment: .init(environment))
             let buildRequestContext = BuildRequestContext(workspaceContext: context)
             let testProject = context.workspace.projects[0]
             let testTarget = testProject.targets[0]

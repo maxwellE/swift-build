@@ -16,6 +16,7 @@ import SWBCore
 import SWBTestSupport
 import SWBUtil
 import SWBTaskConstruction
+import SWBProtocol
 
 @Suite
 fileprivate struct IntermediateStubTaskConstructionTests: CoreBasedTests {
@@ -48,7 +49,7 @@ fileprivate struct IntermediateStubTaskConstructionTests: CoreBasedTests {
             ])
         let core = try await getCore()
         let tester = try TaskConstructionTester(core, testProject)
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug")) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .macOS) { results in
             results.checkTask(.matchRuleType("GenerateTAPI")) { task in
                 task.checkInputs([.path("/tmp/Test/aProject/build/Debug/Fwk.framework/Versions/A/Fwk"),
                                   .namePattern(.suffix("-ProductPostprocessingTaskProducer")),
@@ -88,7 +89,7 @@ fileprivate struct IntermediateStubTaskConstructionTests: CoreBasedTests {
                     ]),
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug")) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .macOS) { results in
             results.checkTask(.matchRule(["GenerateTAPI", "/tmp/Test/aProject/build/Debug/Fwk.framework/Versions/A/Fwk.tbd", "normal", "x86_64"])) { _ in }
             results.checkNoTask(.matchRuleType("GenerateTAPI"))
         }
@@ -122,43 +123,8 @@ fileprivate struct IntermediateStubTaskConstructionTests: CoreBasedTests {
                     ]),
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug")) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .macOS) { results in
             results.checkNoTask(.matchRuleType("GenerateTAPI"))
-        }
-    }
-
-    @Test(.requireSDKs(.iOS), .userDefaults(["EnableBitcodeSupport": "1"]))
-    func targetWithFullBitcodeGeneratesNoStubs() async throws {
-        let testProject = try await TestProject(
-            "aProject",
-            groupTree: TestGroup(
-                "SomeFiles", path: "Sources",
-                children: [
-                    TestFile("Fwk.swift"),
-                ]),
-            buildConfigurations: [
-                TestBuildConfiguration("Debug", buildSettings: [
-                    "CODE_SIGN_IDENTITY": "",
-                    "PRODUCT_NAME": "$(TARGET_NAME)",
-                    "SDKROOT": "iphoneos",
-                    "SWIFT_EXEC": swiftCompilerPath.str,
-                    "SWIFT_VERSION": swiftVersion,
-                    "TAPI_EXEC": tapiToolPath.str,
-                    "ENABLE_BITCODE": "YES",
-                    "BITCODE_GENERATION_MODE": "bitcode"
-                ])],
-            targets: [
-                TestStandardTarget(
-                    "Fwk",
-                    type: .framework,
-                    buildPhases: [
-                        TestSourcesBuildPhase(["Fwk.swift"])
-                    ]),
-            ])
-        let tester = try await TaskConstructionTester(getCore(), testProject)
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", activeRunDestination: .iOS)) { results in
-            results.checkNoTask(.matchRuleType("GenerateTAPI"))
-            results.checkWarning(.contains("Building with bitcode is deprecated"))
         }
     }
 
@@ -190,7 +156,7 @@ fileprivate struct IntermediateStubTaskConstructionTests: CoreBasedTests {
                     ]),
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug")) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug"), runDestination: .macOS) { results in
             results.checkTask(.matchRule(["GenerateTAPI", "/tmp/Test/aProject/build/Debug/Fwk.framework/Versions/A/Fwk.tbd"])) { _ in }
             results.checkNoTask(.matchRuleType("GenerateTAPI"))
         }
@@ -223,11 +189,11 @@ fileprivate struct IntermediateStubTaskConstructionTests: CoreBasedTests {
                     ]),
             ])
         let tester = try await TaskConstructionTester(getCore(), testProject)
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", overrides: ["REEXPORTED_FRAMEWORK_NAMES": "Foundation"])) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", overrides: ["REEXPORTED_FRAMEWORK_NAMES": "Foundation"]), runDestination: .macOS) { results in
             results.checkNoTask(.matchRuleType("GenerateTAPI"))
         }
 
-        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", overrides: ["OTHER_LDFLAGS": "-reexport-lfoo"])) { results in
+        await tester.checkBuild(BuildParameters(action: .build, configuration: "Debug", overrides: ["OTHER_LDFLAGS": "-reexport-lfoo"]), runDestination: .macOS) { results in
             results.checkNoTask(.matchRuleType("GenerateTAPI"))
         }
     }

@@ -34,6 +34,7 @@ struct ArenaIndexingInfoTests: CoreBasedTests {
 
                 let macApp = TestStandardTarget(
                     "macApp",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug", buildSettings: [
                             "SDKROOT": "macosx",
@@ -155,6 +156,7 @@ struct ArenaIndexingInfoTests: CoreBasedTests {
 
                 let macApp = TestStandardTarget(
                     "macApp",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug", buildSettings: [
                             "SDKROOT": "macosx",
@@ -236,6 +238,7 @@ struct ArenaIndexingInfoTests: CoreBasedTests {
 
                 let appTarget1 = TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug",
                                                buildSettings: [
@@ -297,7 +300,9 @@ struct ArenaIndexingInfoTests: CoreBasedTests {
                 // Simulate adding a file to the existing target and send new PIF data.
 
                 let appTarget2 = TestStandardTarget(
-                    "AppTarget", guid: appTarget1.guid,
+                    "AppTarget",
+                    guid: appTarget1.guid,
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug")
                     ],
@@ -370,6 +375,7 @@ struct ArenaIndexingInfoTests: CoreBasedTests {
 
                 let appTarget = TestStandardTarget(
                     "AppTarget",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug")
                     ],
@@ -422,6 +428,7 @@ struct ArenaIndexingInfoTests: CoreBasedTests {
                 let appTarget = TestStandardTarget(
                     "AppTarget",
                     guid: "Foo",
+                    type: .application,
                     buildConfigurations: [
                         TestBuildConfiguration("Debug")
                     ],
@@ -770,7 +777,7 @@ struct ArenaIndexingInfoTests: CoreBasedTests {
                 let info = try await IndexingInfoResults(infoProducer.generateIndexingInfo(target, .macOS, filePath: projectDir.join("main.c").str))
                 await info.checkIndexingInfo { info in
                     do {
-                        // We should be able to successfuly run the resulting command line from indexing info
+                        // We should be able to successfully run the resulting command line from indexing info
                         let success = try await Process.run(url: URL(fileURLWithPath: clangCompilerPath.str), arguments: info.clang.commandLineAsByteStrings.map { $0.asString }).isSuccess
                         #expect(success)
                     } catch {
@@ -853,7 +860,7 @@ struct ArenaIndexingInfoTests: CoreBasedTests {
                 let info = try await IndexingInfoResults(infoProducer.generateIndexingInfo(target, .macOS, filePath: projectDir.join("main.swift").str))
                 await info.checkIndexingInfo { info in
                     do {
-                        // We should be able to successfuly run the resulting command line from indexing info
+                        // We should be able to successfully run the resulting command line from indexing info
                         let success = try await Process.run(url: URL(fileURLWithPath: swiftCompilerPath.str), arguments: info.swift.commandLineAsByteStrings.map { $0.asString }).isSuccess
                         #expect(success)
                     } catch {

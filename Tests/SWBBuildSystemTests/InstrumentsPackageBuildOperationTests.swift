@@ -13,7 +13,8 @@
 import SWBCore
 import SWBTestSupport
 import SWBUtil
-import Testing
+import SWBProtocol
+import SwiftBuildTestSupport
 
 import Testing
 
@@ -67,7 +68,7 @@ fileprivate struct InstrumentsPackageBuildOperationTests: CoreBasedTests {
                 </package>
                 """)
 
-            try await tester.checkBuild(parameters: BuildParameters(action: .install, configuration: "Debug")) { results in
+            try await tester.checkBuild(parameters: BuildParameters(action: .install, configuration: "Debug"), runDestination: .macOS) { results in
                 // Check that there are no warnings or errors.  If the Instruments package processing tool doesn't declare a virtual output then the post-processing tasks will not be able to be ordered with respect to it.
                 results.checkNoDiagnostics()
 

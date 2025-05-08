@@ -18,6 +18,7 @@ package import struct SWBProtocol.BuildOperationTaskEnded
 package import struct SWBProtocol.TargetDependencyRelationship
 import class SWBTaskConstruction.ProductPlan
 package import SWBMacro
+import Synchronization
 
 /// The delegate for constructing a build description.
 package protocol BuildDescriptionConstructionDelegate: ActivityReporter {
@@ -50,7 +51,7 @@ package extension BuildDescriptionConstructionDelegate {
 
 /// Persistable representation of the complete set of tasks needed for a build.
 ///
-/// This representation primarily is in the form of a build file suitable for use with llbuild's BuildSystem library, but also contains additional task-specific data used for the xecution of internal tasks, as well as metadata to allow matching up status information from llbuild to the corresponding Swift Build and PIF objects.
+/// This representation primarily is in the form of a build file suitable for use with llbuild's BuildSystem library, but also contains additional task-specific data used for the execution of internal tasks, as well as metadata to allow matching up status information from llbuild to the corresponding Swift Build and PIF objects.
 package final class BuildDescription: Serializable, Sendable, Encodable, CacheableValue {
 
     enum CodingKeys: CodingKey {
@@ -138,7 +139,17 @@ package final class BuildDescription: Serializable, Sendable, Encodable, Cacheab
     private let allOutputPaths: Set<Path>
 
     private let rootPathsPerTarget: [ConfiguredTarget: [Path]]
-    private let moduleCachePathPerTarget: [ConfiguredTarget: Path]
+    private let moduleCachePathsPerTarget: [ConfiguredTarget: [Path]]
+
+    /// A description of a CAS for validation, including how it is configured
+    /// and which llvm-cas should be used to validate it.
+    package struct CASValidationInfo {
+        package var options: CASOptions
+        package var llvmCasExec: Path
+    }
+
+    /// The list of all CAS directories for validation.
+    package let casValidationInfos: [CASValidationInfo]
 
     private let dependencyValidationPerTarget: [ConfiguredTarget: BooleanWarningLevel]
 
@@ -187,14 +198,19 @@ package final class BuildDescription: Serializable, Sendable, Encodable, Cacheab
     /// `true` if this description's task graph allows targets to build in parallel. Should be preferred over querying the build request, which is not always respected.
     package let targetsBuildInParallel: Bool
 
+    /// `true` if builds using this description should emit frontend command lines. This setting is important for debugging workflows, so we want the ability to enable it conveniently via build setting.
+    /// However, it should be consistent across all tasks in a build to avoid introducing unnecessary variants of dynamic compile tasks. To address this, we store it as a bit on the build description.
+    package let emitFrontendCommandLines: Bool
+
     /// Load a build description from the given path.
-    fileprivate init(inDir dir: Path, signature: BuildDescriptionSignature, taskStore: FrozenTaskStore, allOutputPaths: Set<Path>, rootPathsPerTarget: [ConfiguredTarget: [Path]], moduleCachePathPerTarget: [ConfiguredTarget: Path], settingsPerTarget: [ConfiguredTarget: Settings], enableStaleFileRemoval: Bool = true, taskActionMap: [String: TaskAction.Type], targetTaskCounts: [ConfiguredTarget: Int], moduleSessionFilePath: Path?, diagnostics: [ConfiguredTarget?: [Diagnostic]], fs: any FSProxy, invalidationPaths: [Path], recursiveSearchPathResults: [RecursiveSearchPathResolver.CachedResult], copiedPathMap: [String: String], targetDependencies: [TargetDependencyRelationship], definingTargetsByModuleName: [String: OrderedSet<ConfiguredTarget>], capturedBuildInfo: CapturedBuildInfo?, bypassActualTasks: Bool, targetsBuildInParallel: Bool) throws {
+    fileprivate init(inDir dir: Path, signature: BuildDescriptionSignature, taskStore: FrozenTaskStore, allOutputPaths: Set<Path>, rootPathsPerTarget: [ConfiguredTarget: [Path]], moduleCachePathsPerTarget: [ConfiguredTarget: [Path]], casValidationInfos: [CASValidationInfo], settingsPerTarget: [ConfiguredTarget: Settings], enableStaleFileRemoval: Bool = true, taskActionMap: [String: TaskAction.Type], targetTaskCounts: [ConfiguredTarget: Int], moduleSessionFilePath: Path?, diagnostics: [ConfiguredTarget?: [Diagnostic]], fs: any FSProxy, invalidationPaths: [Path], recursiveSearchPathResults: [RecursiveSearchPathResolver.CachedResult], copiedPathMap: [String: String], targetDependencies: [TargetDependencyRelationship], definingTargetsByModuleName: [String: OrderedSet<ConfiguredTarget>], capturedBuildInfo: CapturedBuildInfo?, bypassActualTasks: Bool, targetsBuildInParallel: Bool, emitFrontendCommandLines: Bool) throws {
         self.dir = dir
         self.signature = signature
         self.taskStore = taskStore
         self.allOutputPaths = allOutputPaths
         self.rootPathsPerTarget = rootPathsPerTarget
-        self.moduleCachePathPerTarget = moduleCachePathPerTarget
+        self.moduleCachePathsPerTarget = moduleCachePathsPerTarget
+        self.casValidationInfos = casValidationInfos
         self.dependencyValidationPerTarget = settingsPerTarget.mapValues { $0.globalScope.evaluate(BuiltinMacros.VALIDATE_DEPENDENCIES) }
         self.taskActionMap = taskActionMap
         self.targetTaskCounts = targetTaskCounts
@@ -210,6 +226,7 @@ package final class BuildDescription: Serializable, Sendable, Encodable, Cacheab
         self.capturedBuildInfo = capturedBuildInfo
         self.bypassActualTasks = bypassActualTasks
         self.targetsBuildInParallel = targetsBuildInParallel
+        self.emitFrontendCommandLines = emitFrontendCommandLines
     }
 
     // MARK: Client API
@@ -266,8 +283,10 @@ package final class BuildDescription: Serializable, Sendable, Encodable, Cacheab
         }
 
         // Only consider paths which _aren't_ in the module cache, which isn't tracked by the build system at present (this may change in future with explicit modules). Normally such paths would be excluded by the root paths check below, but the module cache path may be under one of the other root paths in certain configurations (e.g. overridden SYMROOT).
-        if moduleCachePathPerTarget[target]?.isAncestor(of: path) == true {
-            return false
+        for cachePath in moduleCachePathsPerTarget[target, default: []] {
+            if cachePath.isAncestor(of: path) == true {
+                return false
+            }
         }
 
         // Only consider build directories as those which the build system itself has created.
@@ -312,13 +331,13 @@ package final class BuildDescription: Serializable, Sendable, Encodable, Cacheab
     package func serialize<T: Serializer>(to serializer: T) {
         guard serializer.delegate is BuildDescriptionSerializerDelegate else { fatalError("delegate must be a BuildDescriptionSerializerDelegate") }
 
-        serializer.beginAggregate(18)
+        serializer.beginAggregate(20)
         serializer.serialize(dir)
         serializer.serialize(signature)
         // Serialize the tasks first so we can index into this array during deserialization.
         serializer.serialize(allOutputPaths)
         serializer.serialize(rootPathsPerTarget)
-        serializer.serialize(moduleCachePathPerTarget)
+        serializer.serialize(moduleCachePathsPerTarget)
         serializer.serialize(dependencyValidationPerTarget)
         serializer.beginAggregate(taskActionMap.count)
         for (tool, taskActionClass) in taskActionMap.sorted(byKey: <) {
@@ -343,6 +362,8 @@ package final class BuildDescription: Serializable, Sendable, Encodable, Cacheab
         serializer.serialize(definingTargetsByModuleName)
         serializer.serialize(bypassActualTasks)
         serializer.serialize(targetsBuildInParallel)
+        serializer.serialize(emitFrontendCommandLines)
+        serializer.serialize(casValidationInfos)
         serializer.endAggregate()
     }
 
@@ -350,12 +371,12 @@ package final class BuildDescription: Serializable, Sendable, Encodable, Cacheab
         // Check that we have the appropriate delegate.
         guard let delegate = deserializer.delegate as? BuildDescriptionDeserializerDelegate else { throw DeserializerError.invalidDelegate("delegate must be a BuildDescriptionDeserializerDelegate") }
 
-        try deserializer.beginAggregate(18)
+        try deserializer.beginAggregate(20)
         self.dir = try deserializer.deserialize()
         self.signature = try deserializer.deserialize()
         self.allOutputPaths = try deserializer.deserialize()
         self.rootPathsPerTarget = try deserializer.deserialize()
-        self.moduleCachePathPerTarget = try deserializer.deserialize()
+        self.moduleCachePathsPerTarget = try deserializer.deserialize()
         self.dependencyValidationPerTarget = try deserializer.deserialize()
         var taskActionMap = [String: TaskAction.Type]()
         let taskActionMapCount = try deserializer.beginAggregate()
@@ -381,10 +402,12 @@ package final class BuildDescription: Serializable, Sendable, Encodable, Cacheab
         self.capturedBuildInfo = nil
         self.bypassActualTasks = try deserializer.deserialize()
         self.targetsBuildInParallel = try deserializer.deserialize()
+        self.emitFrontendCommandLines = try deserializer.deserialize()
         guard let taskStore = delegate.taskStore else {
             throw DeserializerError.deserializationFailed("Expected delegate to provide a TaskStore")
         }
         self.taskStore = taskStore
+        self.casValidationInfos = try deserializer.deserialize()
     }
 
     package var cost: Int {
@@ -446,6 +469,9 @@ package final class BuildDescriptionBuilder {
 
     /// `true` if the task graph allows targets to build in parallel.
     private let targetsBuildInParallel: Bool
+
+    /// `true` if build using this description should emit frontend command lines.
+    private let emitFrontendCommandLines: Bool
 
     /// A set of additional inputs to automatically add to tasks.
     ///
@@ -518,7 +544,10 @@ package final class BuildDescriptionBuilder {
     private let rootPathsPerTarget: [ConfiguredTarget: [Path]]
 
     // The map of module cache path per configured target.
-    private let moduleCachePathPerTarget: [ConfiguredTarget: Path]
+    private let moduleCachePathsPerTarget: [ConfiguredTarget: [Path]]
+
+    /// The set of all CAS directories and their corresponding CASOptions.
+    private let casValidationInfos: [BuildDescription.CASValidationInfo]
 
     // The map of stale file removal identifier per configured target.
     private let staleFileRemovalIdentifierPerTarget: [ConfiguredTarget?: String]
@@ -537,7 +566,7 @@ package final class BuildDescriptionBuilder {
     /// - Parameters:
     ///   - path: The path of a directory to store the build description to.
     ///   - bypassActualTasks: If enabled, replace tasks with fake ones (`/usr/bin/true`).
-    init(path: Path, signature: BuildDescriptionSignature, buildCommand: BuildCommand, taskAdditionalInputs: [Ref<any PlannedTask>: NodeList], mutatedNodes: Set<Ref<any PlannedNode>>, mutatingTasks: [Ref<any PlannedTask>: MutatingTaskInfo], bypassActualTasks: Bool, targetsBuildInParallel: Bool, moduleSessionFilePath: Path?, invalidationPaths: [Path], recursiveSearchPathResults: [RecursiveSearchPathResolver.CachedResult], copiedPathMap: [String: String], outputPathsPerTarget: [ConfiguredTarget?: [Path]], allOutputPaths: Set<Path>, rootPathsPerTarget: [ConfiguredTarget: [Path]], moduleCachePathPerTarget: [ConfiguredTarget: Path], staleFileRemovalIdentifierPerTarget: [ConfiguredTarget?: String], settingsPerTarget: [ConfiguredTarget: Settings], targetDependencies: [TargetDependencyRelationship], definingTargetsByModuleName: [String: OrderedSet<ConfiguredTarget>], workspace: Workspace, capturedBuildInfo: CapturedBuildInfo?) {
+    init(path: Path, signature: BuildDescriptionSignature, buildCommand: BuildCommand, taskAdditionalInputs: [Ref<any PlannedTask>: NodeList], mutatedNodes: Set<Ref<any PlannedNode>>, mutatingTasks: [Ref<any PlannedTask>: MutatingTaskInfo], bypassActualTasks: Bool, targetsBuildInParallel: Bool, emitFrontendCommandLines: Bool, moduleSessionFilePath: Path?, invalidationPaths: [Path], recursiveSearchPathResults: [RecursiveSearchPathResolver.CachedResult], copiedPathMap: [String: String], outputPathsPerTarget: [ConfiguredTarget?: [Path]], allOutputPaths: Set<Path>, rootPathsPerTarget: [ConfiguredTarget: [Path]], moduleCachePathsPerTarget: [ConfiguredTarget: [Path]], casValidationInfos: [BuildDescription.CASValidationInfo], staleFileRemovalIdentifierPerTarget: [ConfiguredTarget?: String], settingsPerTarget: [ConfiguredTarget: Settings], targetDependencies: [TargetDependencyRelationship], definingTargetsByModuleName: [String: OrderedSet<ConfiguredTarget>], workspace: Workspace, capturedBuildInfo: CapturedBuildInfo?) {
         self.path = path
         self.signature = signature
         self.taskAdditionalInputs = taskAdditionalInputs
@@ -545,6 +574,7 @@ package final class BuildDescriptionBuilder {
         self.mutatingTasks = mutatingTasks
         self.bypassActualTasks = bypassActualTasks
         self.targetsBuildInParallel = targetsBuildInParallel
+        self.emitFrontendCommandLines = emitFrontendCommandLines
         self.moduleSessionFilePath = moduleSessionFilePath
         self.invalidationPaths = invalidationPaths
         self.recursiveSearchPathResults = recursiveSearchPathResults
@@ -552,7 +582,8 @@ package final class BuildDescriptionBuilder {
         self.outputPathsPerTarget = outputPathsPerTarget
         self.allOutputPaths = allOutputPaths
         self.rootPathsPerTarget = rootPathsPerTarget
-        self.moduleCachePathPerTarget = moduleCachePathPerTarget
+        self.moduleCachePathsPerTarget = moduleCachePathsPerTarget
+        self.casValidationInfos = casValidationInfos
         self.staleFileRemovalIdentifierPerTarget = staleFileRemovalIdentifierPerTarget
         self.settingsPerTarget = settingsPerTarget
         self.targetDependencies = targetDependencies
@@ -665,7 +696,7 @@ package final class BuildDescriptionBuilder {
         // Create the build description.
         let buildDescription: BuildDescription
         do {
-            buildDescription = try BuildDescription(inDir: path, signature: signature, taskStore: frozenTaskStore, allOutputPaths: allOutputPaths, rootPathsPerTarget: rootPathsPerTarget, moduleCachePathPerTarget: moduleCachePathPerTarget, settingsPerTarget: settingsPerTarget, taskActionMap: taskActionMap, targetTaskCounts: targetTaskCounts, moduleSessionFilePath: moduleSessionFilePath, diagnostics: diagnosticsEngines.mapValues { engine in engine.diagnostics }, fs: fs, invalidationPaths: invalidationPaths, recursiveSearchPathResults: recursiveSearchPathResults, copiedPathMap: copiedPathMap, targetDependencies: targetDependencies, definingTargetsByModuleName: definingTargetsByModuleName, capturedBuildInfo: capturedBuildInfo, bypassActualTasks: bypassActualTasks, targetsBuildInParallel: targetsBuildInParallel)
+            buildDescription = try BuildDescription(inDir: path, signature: signature, taskStore: frozenTaskStore, allOutputPaths: allOutputPaths, rootPathsPerTarget: rootPathsPerTarget, moduleCachePathsPerTarget: moduleCachePathsPerTarget, casValidationInfos: casValidationInfos, settingsPerTarget: settingsPerTarget, taskActionMap: taskActionMap, targetTaskCounts: targetTaskCounts, moduleSessionFilePath: moduleSessionFilePath, diagnostics: diagnosticsEngines.mapValues { engine in engine.diagnostics }, fs: fs, invalidationPaths: invalidationPaths, recursiveSearchPathResults: recursiveSearchPathResults, copiedPathMap: copiedPathMap, targetDependencies: targetDependencies, definingTargetsByModuleName: definingTargetsByModuleName, capturedBuildInfo: capturedBuildInfo, bypassActualTasks: bypassActualTasks, targetsBuildInParallel: targetsBuildInParallel, emitFrontendCommandLines: emitFrontendCommandLines)
         }
         catch {
             throw StubError.error("unable to create build description: \(error)")
@@ -915,7 +946,7 @@ package final class BuildDescriptionBuilder {
     }
 
     package static func computeShellToolSignature(args: [ByteString], environment: EnvironmentBindings?, dependencyData: DependencyDataStyle?, isUnsafeToInterrupt: Bool, additionalSignatureData: String) -> ByteString {
-        let ctx = MD5Context()
+        let ctx = InsecureHashContext()
         for arg in args {
             ctx.add(bytes: arg)
         }
@@ -953,13 +984,17 @@ package final class BuildDescriptionBuilder {
         let inputs = amendedInputsForTask(task, inputs)
         let outputs = amendedOutputsForTask(task, outputs)
 
-        processTaskLock.withLock {
+        try processTaskLock.withLock {
             // Record the custom tool type.
             // FIXME: This cast is unfortunate.
             let execTask = task.execTask as! Task
-            assert(execTask.action != nil)
-            assert(taskActionMap[tool] == nil || taskActionMap[tool]! == type(of: execTask.action!))
-            taskActionMap[tool] = type(of: execTask.action!)
+            guard let execTaskAction = execTask.action else {
+                throw StubError.error("INTERNAL ERROR: custom command with tool identifier '\(tool)' is missing a task action implementation")
+            }
+            if let existingTaskAction = taskActionMap[tool], existingTaskAction != type(of: execTaskAction) {
+                throw StubError.error("INTERNAL ERROR: task action implementation types \(existingTaskAction) and \(type(of: execTaskAction)) have conflicting tool identifier '\(tool)'; tool identifiers must be globally unique across all task action implementation types")
+            }
+            taskActionMap[tool] = type(of: execTaskAction)
         }
 
         // Add the command definition.
@@ -995,7 +1030,7 @@ extension BuildDescription {
     // FIXME: Bypass actual tasks should go away, eventually.
     //
     // FIXME: This layering isn't working well, we are plumbing a bunch of stuff through here just because we don't want to talk to TaskConstruction.
-    static package func construct(workspace: Workspace, tasks: [any PlannedTask], path: Path, signature: BuildDescriptionSignature, buildCommand: BuildCommand, diagnostics: [ConfiguredTarget?: [Diagnostic]] = [:], indexingInfo: [(forTarget: ConfiguredTarget?, path: Path, indexingInfo: any SourceFileIndexingInfo)] = [], fs: any FSProxy = localFS, bypassActualTasks: Bool = false, targetsBuildInParallel: Bool = true, moduleSessionFilePath: Path? = nil, invalidationPaths: [Path] = [], recursiveSearchPathResults: [RecursiveSearchPathResolver.CachedResult] = [], copiedPathMap: [String: String] = [:], rootPathsPerTarget: [ConfiguredTarget:[Path]] = [:], moduleCachePathPerTarget: [ConfiguredTarget: Path] = [:], staleFileRemovalIdentifierPerTarget: [ConfiguredTarget?: String] = [:], settingsPerTarget: [ConfiguredTarget: Settings] = [:], delegate: any BuildDescriptionConstructionDelegate, targetDependencies: [TargetDependencyRelationship] = [], definingTargetsByModuleName: [String: OrderedSet<ConfiguredTarget>], capturedBuildInfo: CapturedBuildInfo?, userPreferences: UserPreferences) async throws -> BuildDescription? {
+    static package func construct(workspace: Workspace, tasks: [any PlannedTask], path: Path, signature: BuildDescriptionSignature, buildCommand: BuildCommand, diagnostics: [ConfiguredTarget?: [Diagnostic]] = [:], indexingInfo: [(forTarget: ConfiguredTarget?, path: Path, indexingInfo: any SourceFileIndexingInfo)] = [], fs: any FSProxy = localFS, bypassActualTasks: Bool = false, targetsBuildInParallel: Bool = true, emitFrontendCommandLines: Bool = false, moduleSessionFilePath: Path? = nil, invalidationPaths: [Path] = [], recursiveSearchPathResults: [RecursiveSearchPathResolver.CachedResult] = [], copiedPathMap: [String: String] = [:], rootPathsPerTarget: [ConfiguredTarget:[Path]] = [:], moduleCachePathsPerTarget: [ConfiguredTarget: [Path]] = [:], casValidationInfos: [BuildDescription.CASValidationInfo] = [], staleFileRemovalIdentifierPerTarget: [ConfiguredTarget?: String] = [:], settingsPerTarget: [ConfiguredTarget: Settings] = [:], delegate: any BuildDescriptionConstructionDelegate, targetDependencies: [TargetDependencyRelationship] = [], definingTargetsByModuleName: [String: OrderedSet<ConfiguredTarget>], capturedBuildInfo: CapturedBuildInfo?, userPreferences: UserPreferences) async throws -> BuildDescription? {
         var diagnostics = diagnostics
 
         // We operate on the sorted tasks here to ensure that the list of task additional inputs is deterministic.
@@ -1258,7 +1293,7 @@ extension BuildDescription {
         }
 
         // Create the builder.
-        let builder = BuildDescriptionBuilder(path: path, signature: signature, buildCommand: buildCommand, taskAdditionalInputs: taskAdditionalInputs, mutatedNodes: Set(mutableNodes.keys), mutatingTasks: mutatingTasks, bypassActualTasks: bypassActualTasks, targetsBuildInParallel: targetsBuildInParallel, moduleSessionFilePath: moduleSessionFilePath, invalidationPaths: invalidationPaths, recursiveSearchPathResults: recursiveSearchPathResults, copiedPathMap: copiedPathMap, outputPathsPerTarget: outputPathsPerTarget, allOutputPaths: Set(producers.keys.map { $0.instance.path }), rootPathsPerTarget: rootPathsPerTarget, moduleCachePathPerTarget: moduleCachePathPerTarget, staleFileRemovalIdentifierPerTarget: staleFileRemovalIdentifierPerTarget, settingsPerTarget: settingsPerTarget, targetDependencies: targetDependencies, definingTargetsByModuleName: definingTargetsByModuleName, workspace: workspace, capturedBuildInfo: capturedBuildInfo)
+        let builder = BuildDescriptionBuilder(path: path, signature: signature, buildCommand: buildCommand, taskAdditionalInputs: taskAdditionalInputs, mutatedNodes: Set(mutableNodes.keys), mutatingTasks: mutatingTasks, bypassActualTasks: bypassActualTasks, targetsBuildInParallel: targetsBuildInParallel, emitFrontendCommandLines: emitFrontendCommandLines, moduleSessionFilePath: moduleSessionFilePath, invalidationPaths: invalidationPaths, recursiveSearchPathResults: recursiveSearchPathResults, copiedPathMap: copiedPathMap, outputPathsPerTarget: outputPathsPerTarget, allOutputPaths: Set(producers.keys.map { $0.instance.path }), rootPathsPerTarget: rootPathsPerTarget, moduleCachePathsPerTarget: moduleCachePathsPerTarget, casValidationInfos: casValidationInfos, staleFileRemovalIdentifierPerTarget: staleFileRemovalIdentifierPerTarget, settingsPerTarget: settingsPerTarget, targetDependencies: targetDependencies, definingTargetsByModuleName: definingTargetsByModuleName, workspace: workspace, capturedBuildInfo: capturedBuildInfo)
         for (target, diagnostics) in diagnostics {
             let engine = builder.diagnosticsEngines.getOrInsert(target, { DiagnosticsEngine() })
             for diag in diagnostics {
@@ -1317,7 +1352,7 @@ extension BuildDescription {
                         }
                     }
 
-                    // the above task of emitting the status messages overlaps with the parllel processing of Gate/Constructed tasks
+                    // the above task of emitting the status messages overlaps with the parallel processing of Gate/Constructed tasks
                     try await sortedTasks.enumerated().parallelForEach(group: &group, maximumParallelism: 100) { _, task in
                         try _Concurrency.Task.checkCancellation()
                         progressContinuation.yield(())
@@ -1341,7 +1376,7 @@ extension BuildDescription {
         // Diagnose attempts to define multiple producers (tasks) for an output.
         var outputsSet = Set<Ref<any PlannedNode>>() // for identifying duplicate output nodes across tasks
         for (_, task) in sortedTasks.enumerated() {
-            let amendedOutputs = builder.taskOutputMap[Ref(task)] ?? [] // get the amended ouputs of the task
+            let amendedOutputs = builder.taskOutputMap[Ref(task)] ?? [] // get the amended outputs of the task
             for output in amendedOutputs {
                 if outputsSet.contains(Ref(output)) {
                     // This condition should almost never appear on a user projects, but we surface   it as an error versus an assert in case there are valid situations where the user can author a project    that would hit it.
@@ -1353,6 +1388,20 @@ extension BuildDescription {
 
         delegate.updateProgress(statusMessage: "Writing build description", showInLog: false)
         return try builder.construct(fs: fs, delegate: delegate)
+    }
+}
+
+package final class TaskActionRegistry: Sendable {
+    private let implementations: [SerializableTypeCode: any PolymorphicSerializable.Type]
+
+    @PluginExtensionSystemActor @_spi(Testing) public init(pluginManager: PluginManager) throws {
+        implementations = try TaskActionExtensionPoint.taskActionImplementations(pluginManager: pluginManager)
+    }
+
+    func withSerializationContext<T>(_ block: () throws -> T) rethrows -> T {
+        try TaskAction.$taskActionImplementations.withValue(implementations) {
+            try block()
+        }
     }
 }
 
@@ -1369,7 +1418,10 @@ package final class BuildDescriptionSerializerDelegate: SerializerDelegate, Conf
 
     package let uniquingCoordinator = UniquingSerializationCoordinator()
 
-    package init() {
+    let taskActionRegistry: TaskActionRegistry
+
+    package init(taskActionRegistry: TaskActionRegistry) {
+        self.taskActionRegistry = taskActionRegistry
     }
 }
 
@@ -1402,11 +1454,14 @@ package final class BuildDescriptionDeserializerDelegate: DeserializerDelegate, 
 
     package var taskStore: FrozenTaskStore? = nil
 
-    package init(workspace: Workspace, platformRegistry: PlatformRegistry, sdkRegistry: SDKRegistry, specRegistry: SpecRegistry) {
+    let taskActionRegistry: TaskActionRegistry
+
+    package init(workspace: Workspace, platformRegistry: PlatformRegistry, sdkRegistry: SDKRegistry, specRegistry: SpecRegistry, taskActionRegistry: TaskActionRegistry) {
         self.workspace = workspace
         self.platformRegistry = platformRegistry
         self.sdkRegistry = sdkRegistry
         self.specRegistry = specRegistry
+        self.taskActionRegistry = taskActionRegistry
     }
 }
 
@@ -1442,5 +1497,33 @@ package extension PlannedNode {
         default:
             fatalError("unknown node: \(self)")
         }
+    }
+}
+
+extension BuildDescription.CASValidationInfo: Serializable {
+    package func serialize<T>(to serializer: T) where T : Serializer {
+        serializer.serializeAggregate(2) {
+            serializer.serialize(options)
+            serializer.serialize(llvmCasExec)
+        }
+    }
+
+    package init(from deserializer: any Deserializer) throws {
+        try deserializer.beginAggregate(2)
+        self.options = try deserializer.deserialize()
+        self.llvmCasExec = try deserializer.deserialize()
+    }
+}
+
+// Note: for the purposes of validation we intentionally ignore irrelevant
+// differences in CASOptions. However, we need to keep the llvm-cas executable
+// in case there are multiple cas format versions sharing the path.
+extension BuildDescription.CASValidationInfo: Hashable {
+    package func hash(into hasher: inout Hasher) {
+        hasher.combine(options.casPath)
+        hasher.combine(llvmCasExec)
+    }
+    static package func ==(lhs: Self, rhs: Self) -> Bool {
+        return lhs.options.casPath == rhs.options.casPath && lhs.llvmCasExec == rhs.llvmCasExec
     }
 }

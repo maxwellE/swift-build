@@ -14,6 +14,8 @@ private import Foundation
 @_spi(Testing) package import SWBCore
 package import SWBUtil
 import SWBTaskConstruction
+import SWBTaskExecution
+import SWBServiceCore
 
 #if USE_STATIC_PLUGIN_INITIALIZATION
 private import SWBAndroidPlatform
@@ -32,14 +34,14 @@ extension Core {
     /// This core is uninitialized, and is not expected to be suitable for general use. It is useful for performance testing specific parts of the Core loading mechanisms.
     static func createTestingCore() async throws -> (Core, [Diagnostic]) {
         let hostOperatingSystem = try ProcessInfo.processInfo.hostOperatingSystem()
-        let developerPath: String
+        let developerPath: Core.DeveloperPath
         if hostOperatingSystem == .macOS {
-            developerPath = try await Xcode.getActiveDeveloperDirectoryPath().str
+            developerPath = .xcode(try await Xcode.getActiveDeveloperDirectoryPath())
         } else {
-            developerPath = "/"
+            developerPath = .fallback(Path.root)
         }
         let delegate = TestingCoreDelegate()
-        return await (try Core(delegate: delegate, hostOperatingSystem: hostOperatingSystem, pluginManager: PluginManager(skipLoadingPluginIdentifiers: []), developerPath: developerPath, inferiorProductsPath: nil, additionalContentPaths: [], environment: [:], buildServiceModTime: Date(), connectionMode: .inProcess), delegate.diagnostics)
+        return await (try Core(delegate: delegate, hostOperatingSystem: hostOperatingSystem, pluginManager: PluginManager(skipLoadingPluginIdentifiers: []), developerPath: developerPath, resourceSearchPaths: [], inferiorProductsPath: nil, additionalContentPaths: [], environment: [:], buildServiceModTime: Date(), connectionMode: .inProcess), delegate.diagnostics)
     }
 
     /// Get an initialized Core suitable for testing.
@@ -49,7 +51,19 @@ extension Core {
         // When this code is being loaded directly via unit tests, find the running Xcode path.
         //
         // This is a "well known" launch parameter set in Xcode's schemes.
-        let developerPath = getEnvironmentVariable("XCODE_DEVELOPER_DIR_PATH").map(Path.init)
+        let developerPath: DeveloperPath?
+        if let xcodeDeveloperDirPath = getEnvironmentVariable("XCODE_DEVELOPER_DIR_PATH").map(Path.init) {
+            developerPath = .xcode(xcodeDeveloperDirPath)
+        } else {
+            // In the context of auto-generated package schemes, try to infer the active Xcode.
+            let potentialDeveloperPath = getEnvironmentVariable("PATH")?.components(separatedBy: String(Path.pathEnvironmentSeparator)).first.map(Path.init)?.dirname.dirname
+            let versionInfo = potentialDeveloperPath?.dirname.join("version.plist")
+            if let versionInfo = versionInfo, (try? PropertyList.fromPath(versionInfo, fs: localFS))?.dictValue?["ProjectName"] == "IDEApplication" {
+                developerPath = potentialDeveloperPath.map { .xcode($0) }
+            } else {
+                developerPath = nil
+            }
+        }
 
         // Unset variables which may interfere with testing in Swift CI
         for variable in ["SWIFT_EXEC", "SWIFT_DRIVER_SWIFT_FRONTEND_EXEC", "SWIFT_DRIVER_SWIFT_EXEC"] {
@@ -76,11 +90,15 @@ extension Core {
             pluginManager.registerExtensionPoint(EnvironmentExtensionPoint())
             pluginManager.registerExtensionPoint(InputFileGroupingStrategyExtensionPoint())
             pluginManager.registerExtensionPoint(TaskProducerExtensionPoint())
+            pluginManager.registerExtensionPoint(DeveloperDirectoryExtensionPoint())
             pluginManager.registerExtensionPoint(DiagnosticToolingExtensionPoint())
             pluginManager.registerExtensionPoint(SDKVariantInfoExtensionPoint())
             pluginManager.registerExtensionPoint(FeatureAvailabilityExtensionPoint())
+            pluginManager.registerExtensionPoint(TaskActionExtensionPoint())
 
             pluginManager.register(BuiltinSpecsExtension(), type: SpecificationsExtensionPoint.self)
+
+            pluginManager.register(BuiltinTaskActionsExtension(), type: TaskActionExtensionPoint.self)
 
             for path in pluginPaths {
                 pluginManager.load(at: path)
@@ -140,6 +158,9 @@ extension Core {
 
         // Force the spec registry to load.
         await core.initializeSpecRegistry()
+
+        // 'loadAllSpecs' uses the platform registry, and needs to be initalized since core.platformRegistry is a delayed init property.
+        await core.initializePlatformRegistry()
 
         core.loadAllSpecs()
     }

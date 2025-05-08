@@ -14,6 +14,8 @@ import SWBUtil
 import SWBLibc
 public import SWBCore
 public import enum SWBLLBuild.BuildValueKind
+import Foundation
+import SWBProtocol
 
 open class SwiftDriverJobSchedulingTaskAction: TaskAction {
     public override class var toolIdentifier: String {
@@ -96,7 +98,6 @@ open class SwiftDriverJobSchedulingTaskAction: TaskAction {
                                                             singleUse: true,
                                                             workingDirectory: task.workingDirectory,
                                                             environment: task.environment,
-                                                            taskInputs: [],
                                                             forTarget: task.forTarget,
                                                             priority: .unblocksDownstreamTasks,
                                                             showEnvironment: task.showEnvironment,
@@ -138,7 +139,7 @@ open class SwiftDriverJobSchedulingTaskAction: TaskAction {
                         return
                     }
 
-                    let signatureCtx = MD5Context()
+                    let signatureCtx = InsecureHashContext()
                     signatureCtx.add(string: task.identifier.rawValue)
                     signatureCtx.add(string: "swiftdriverjobdiscoveryactivity")
                     signatureCtx.add(number: dependencyID)
@@ -219,6 +220,38 @@ open class SwiftDriverJobSchedulingTaskAction: TaskAction {
             if shouldReportSkippedJobs(driverPayload: driverPayload) {
                 try reportSkippedJobs(task, outputDelegate: outputDelegate, driverPayload: driverPayload, plannedBuild: plannedBuild, dynamicExecutionDelegate: dynamicExecutionDelegate)
             }
+
+            let planningDependencies = try graph.queryPlanningDependencies(for: driverPayload.uniqueID)
+            if executionDelegate.userPreferences.enableDebugActivityLogs {
+                outputDelegate.emitOutput(ByteString(encodingAsUTF8: "Discovered dependency nodes:\n" + planningDependencies.joined(separator: "\n") + "\n"))
+            }
+
+            if driverPayload.verifyScannerDependencies {
+                if case .makefileIgnoringSubsequentOutputs(let makefilePath) = task.dependencyData {
+                    // This is a very rudimentary parser for make-style dependencies as emitted by swiftc.
+                    let contents = try executionDelegate.fs.read(makefilePath)
+                    let firstLine = contents.asString.split("\n").0
+                    let inputs = firstLine.split(":").1.components(separatedBy: " ").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                    let makeStyleInputs = Set(inputs)
+                    let scannerInputs = Set(planningDependencies)
+                    let inputsMissedByScanner = makeStyleInputs.subtracting(scannerInputs)
+                    for missedInput in inputsMissedByScanner.sorted() {
+                        outputDelegate.emitError("Dependency scanner failed to report input '\(missedInput)' present in '\(makefilePath.str)'")
+                    }
+                }
+            }
+
+            let dependencyFilteringRootPathString = driverPayload.dependencyFilteringRootPath?.str
+            for dep in planningDependencies {
+                if let dependencyFilteringRootPathString {
+                    // We intentionally do a prefix check instead of an ancestor check here, for performance reasons. The filtering path (SDK path) and paths returned by the compiler are guaranteed to be normalized, which makes this safe.
+                    if !dep.hasPrefix(dependencyFilteringRootPathString) {
+                        dynamicExecutionDelegate.discoveredDependencyNode(ExecutionNode(identifier: dep))
+                    }
+                } else {
+                    dynamicExecutionDelegate.discoveredDependencyNode(ExecutionNode(identifier: dep))
+                }
+            }
         } catch {
             outputDelegate.error(error)
             return .failed
@@ -259,7 +292,7 @@ open class SwiftDriverJobSchedulingTaskAction: TaskAction {
             } else {
                 // Other jobs are reported as skipped/up-to-date in the usual way.
                 let taskKey = SwiftDriverJobTaskKey(identifier: driverPayload.uniqueID, variant: driverPayload.variant, arch: driverPayload.architecture, driverJobKey: job.key, driverJobSignature: job.driverJob.signature, isUsingWholeModuleOptimization: driverPayload.isUsingWholeModuleOptimization, compilerLocation: driverPayload.compilerLocation, casOptions: driverPayload.casOptions)
-                let dynamicTask = DynamicTask(toolIdentifier: SwiftDriverJobTaskAction.toolIdentifier, taskKey: .swiftDriverJob(taskKey), workingDirectory: task.workingDirectory, environment: task.environment, taskInputs: [], target: task.forTarget, showEnvironment: task.showEnvironment)
+                let dynamicTask = DynamicTask(toolIdentifier: SwiftDriverJobTaskAction.toolIdentifier, taskKey: .swiftDriverJob(taskKey), workingDirectory: task.workingDirectory, environment: task.environment, target: task.forTarget, showEnvironment: task.showEnvironment)
                 let subtask = try spec.buildExecutableTask(dynamicTask: dynamicTask, context: dynamicExecutionDelegate.operationContext)
                 outputDelegate.subtaskUpToDate(subtask)
             }
@@ -271,7 +304,6 @@ open class SwiftDriverJobSchedulingTaskAction: TaskAction {
         let key: DynamicTaskKey
         if plannedJob.driverJob.categorizer.isExplicitDependencyBuild {
             key = .swiftDriverExplicitDependencyJob(SwiftDriverExplicitDependencyJobTaskKey(
-                variant: driverPayload.variant,
                 arch: driverPayload.architecture,
                 driverJobKey: plannedJob.key,
                 driverJobSignature: plannedJob.driverJob.signature,
@@ -310,7 +342,6 @@ open class SwiftDriverJobSchedulingTaskAction: TaskAction {
                 singleUse: true,
                 workingDirectory: plannedJob.workingDirectory,
                 environment: task.environment,
-                taskInputs: plannedJob.driverJob.inputs.map({ ExecutionNode(identifier: $0.str) }),
                 forTarget: isExplicitDependencyBuildJob ? nil : task.forTarget,
                 priority: plannedJob.driverJob.categorizer.priority,
                 showEnvironment: task.showEnvironment,

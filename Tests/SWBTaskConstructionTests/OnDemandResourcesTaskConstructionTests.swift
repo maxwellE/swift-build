@@ -17,6 +17,7 @@ import SWBProtocol
 import SWBTaskConstruction
 import SWBTestSupport
 import SWBUtil
+import SWBCore
 
 @Suite
 fileprivate struct OnDemandResourcesTaskConstructionTests: CoreBasedTests {
@@ -52,6 +53,7 @@ fileprivate struct OnDemandResourcesTaskConstructionTests: CoreBasedTests {
             targets: [
                 TestStandardTarget(
                     "App",
+                    type: .application,
                     buildPhases: [
                         TestResourcesBuildPhase([
                             TestBuildFile("A.dat", assetTags: Set(["foo"])),

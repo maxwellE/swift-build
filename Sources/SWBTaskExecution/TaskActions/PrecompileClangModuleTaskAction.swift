@@ -75,7 +75,7 @@ final public class PrecompileClangModuleTaskAction: TaskAction, BuildValueValida
     public override func taskSetup(_ task: any ExecutableTask, executionDelegate: any TaskExecutionDelegate, dynamicExecutionDelegate: any DynamicTaskExecutionDelegate) {
         let clangModuleDependencyGraph = dynamicExecutionDelegate.operationContext.clangModuleDependencyGraph
 
-        // If a precompile task action is executing, it is expected that the scanning action already happend, so the
+        // If a precompile task action is executing, it is expected that the scanning action already happened, so the
         // dependencies for this module should already be present in the ModuleDependencyGraph.
         let dependencyInfo: ClangModuleDependencyGraph.DependencyInfo
         do {
@@ -101,9 +101,8 @@ final public class PrecompileClangModuleTaskAction: TaskAction, BuildValueValida
                 taskKey: .precompileClangModule(taskKey),
                 taskID: taskID,
                 singleUse: false,
-                workingDirectory: dependencyInfo.workingDirectory,
+                workingDirectory: Path.root,
                 environment: task.environment,
-                taskInputs: [],
                 forTarget: task.forTarget,
                 priority: .preferred,
                 showEnvironment: task.showEnvironment,
@@ -159,7 +158,7 @@ final public class PrecompileClangModuleTaskAction: TaskAction, BuildValueValida
         }
         let commandLine = command.arguments
 
-        if executionDelegate.userPreferences.enableDebugActivityLogs {
+        if executionDelegate.userPreferences.enableDebugActivityLogs || executionDelegate.emitFrontendCommandLines {
             let commandString = UNIXShellCommandCodec(
                 encodingStrategy: .backslashes,
                 encodingBehavior: .fullCommandLine
@@ -189,7 +188,7 @@ final public class PrecompileClangModuleTaskAction: TaskAction, BuildValueValida
                 if try ClangCompileTaskAction.replayCachedCommand(
                     command,
                     casDBs: casDBs,
-                    workingDirectory: task.workingDirectory,
+                    workingDirectory: dependencyInfo.workingDirectory,
                     outputDelegate: outputDelegate,
                     enableDiagnosticRemarks: key.casOptions!.enableDiagnosticRemarks
                 ) {
@@ -199,7 +198,7 @@ final public class PrecompileClangModuleTaskAction: TaskAction, BuildValueValida
 
             let delegate = TaskProcessDelegate(outputDelegate: outputDelegate)
             // The frontend invocations should be unaffected by the environment, pass an empty one.
-            try await spawn(commandLine: commandLine, environment: [:], workingDirectory: task.workingDirectory.str, dynamicExecutionDelegate: dynamicExecutionDelegate, clientDelegate: clientDelegate, processDelegate: delegate)
+            try await spawn(commandLine: commandLine, environment: [:], workingDirectory: dependencyInfo.workingDirectory.str, dynamicExecutionDelegate: dynamicExecutionDelegate, clientDelegate: clientDelegate, processDelegate: delegate)
 
             let result = delegate.commandResult ?? .failed
             if result == .succeeded {
@@ -216,7 +215,7 @@ final public class PrecompileClangModuleTaskAction: TaskAction, BuildValueValida
                         enableStrictCASErrors: key.casOptions!.enableStrictCASErrors
                     )
                 }
-            } else if result == .failed && !executionDelegate.userPreferences.enableDebugActivityLogs {
+            } else if result == .failed && !executionDelegate.userPreferences.enableDebugActivityLogs && !executionDelegate.emitFrontendCommandLines {
                 let commandString = UNIXShellCommandCodec(
                     encodingStrategy: .backslashes,
                     encodingBehavior: .fullCommandLine

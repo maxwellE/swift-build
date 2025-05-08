@@ -1,0 +1,134 @@
+#[[
+This source file is part of the Swift open source project
+
+Copyright (c) 2014 - 2025 Apple Inc. and the Swift project authors
+Licensed under Apache License v2.0 with Runtime Library Exception
+
+See http://swift.org/LICENSE.txt for license information
+See http://swift.org/CONTRIBUTORS.txt for Swift project authors
+]]
+
+add_library(SWBApplePlatform
+  AppIntentsMetadataCompiler.swift
+  AppIntentsMetadataTaskProducer.swift
+  AppIntentsSSUTrainingCompiler.swift
+  AssetCatalogCompiler.swift
+  CopyTiffFile.swift
+  CoreDataCompiler.swift
+  CoreMLCompiler.swift
+  DittoTool.swift
+  ExtensionPointsCompiler.swift
+  IIGCompiler.swift
+  InstrumentsPackageBuilderSpec.swift
+  IntentsCompiler.swift
+  InterfaceBuilderCompiler.swift
+  InterfaceBuilderShared.swift
+  MetalCompiler.swift
+  MiGCompiler.swift
+  OpenCLCompiler.swift
+  RealityAssetsCompilerSpec.swift
+  ReferenceObjectCompiler.swift
+  ResMergerLinkerSpec.swift
+  SceneKitToolSpec.swift
+  StoryboardLinker.swift
+  XCStringsCompiler.swift
+  ActoolInputFileGroupingStrategy.swift
+  AssetCatalogCompilerOutputParser.swift
+  CMakeLists.txt
+  DevelopmentAssetsTaskProducer.swift
+  ImageScaleFactorsInputFileGroupingStrategy.swift
+  InterfaceBuilderCompilerOutputParser.swift
+  LocalizationInputFileGroupingStrategy.swift
+  MacCatalystInfoExtension.swift
+  Plugin.swift
+  RealityAssetsTaskProducer.swift
+  StringCatalogCompilerOutputParser.swift
+  StubBinaryTaskProducer.swift
+  XCStringsInputFileGroupingStrategy.swift)
+SwiftBuild_Bundle(MODULE SWBApplePlatform FILES
+  Specs/AppIntentsMetadata.xcspec
+  Specs/AppIntentsNLTraining.xcspec
+  Specs/AppShortcutStringsMetadata.xcspec
+  Specs/AssetCatalogCompiler.xcspec
+  Specs/CompileSkybox.xcspec
+  Specs/CopyPNGFile.xcspec
+  Specs/CopyTiffFile.xcspec
+  "Specs/Core Data.xcspec"
+  Specs/CoreML.xcspec
+  "Specs/Darwin Package Types.xcspec"
+  "Specs/Darwin Product Types.xcspec"
+  Specs/DriverKit.xcspec
+  Specs/DTrace.xcspec
+  Specs/Embedded-Device.xcspec
+  Specs/Embedded-Shared.xcspec
+  Specs/Embedded-Simulator.xcspec
+  Specs/EmbeddedBinaryValidationUtility.xcspec
+  Specs/GenerateAppPlaygroundAssetCatalog.xcspec
+  Specs/GenerateTextureAtlas.xcspec
+  Specs/IBCompiler.xcspec
+  Specs/IBPostprocessor.xcspec
+  Specs/IBStoryboardCompiler.xcspec
+  Specs/IBStoryboardLinker.xcspec
+  Specs/IBStoryboardPostprocessor.xcspec
+  Specs/Iconutil.xcspec
+  Specs/Iig.xcspec
+  Specs/InfoPlistUtility.xcspec
+  Specs/InstrumentsPackage.xcspec
+  Specs/Intents.xcspec
+  "Specs/Interface Builder File Types.xcspec"
+  "Specs/iOS Device.xcspec"
+  "Specs/iOS Shared.xcspec"
+  "Specs/iOS Simulator.xcspec"
+  Specs/KernelExtension.xcspec
+  Specs/Lipo.xcspec
+  Specs/LSRegisterURL.xcspec
+  "Specs/MacOSX Architectures.xcspec"
+  "Specs/MacOSX Core Build System.xcspec"
+  "Specs/MacOSX Native Build System.xcspec"
+  "Specs/MacOSX Package Types.xcspec"
+  "Specs/MacOSX Product Types.xcspec"
+  Specs/MetalCompiler.xcspec
+  Specs/MetalFileTypes.xcspec
+  Specs/MetalLinker.xcspec
+  Specs/MetalPackageTypes.xcspec
+  Specs/MetalProductTypes.xcspec
+  Specs/MiG.xcspec
+  Specs/OpenCL.xcspec
+  Specs/OSACompile.xcspec
+  Specs/RCFileTypes.xcspec
+  Specs/RealityAssets.xcspec
+  Specs/ReferenceObject.xcspec
+  Specs/ResMerger.xcspec
+  Specs/Rez.xcspec
+  "Specs/SceneKit FileTypes.xcspec"
+  "Specs/SceneKit Tools.xcspec"
+  Specs/SpriteKitFileTypes.xcspec
+  Specs/TiffUtil.xcspec
+  "Specs/tvOS Device.xcspec"
+  "Specs/tvOS Shared.xcspec"
+  "Specs/tvOS Simulator.xcspec"
+  Specs/WatchKit1ProductTypes.xcspec
+  "Specs/watchOS Device.xcspec"
+  "Specs/watchOS Shared.xcspec"
+  "Specs/watchOS Simulator.xcspec"
+  Specs/XCAppExtensionPoints.xcspec
+  Specs/XCStrings.xcspec
+  "Specs/xrOS Device.xcspec"
+  "Specs/xrOS Shared.xcspec"
+  "Specs/xrOS Simulator.xcspec")
+set_target_properties(SWBApplePlatform PROPERTIES
+  Swift_LANGUAGE_VERSION 6)
+target_link_libraries(SWBApplePlatform PUBLIC
+  SWBCore
+  SWBMacro
+  SWBUtil
+  SWBProtocol
+  SWBTaskConstruction)
+
+set_target_properties(SWBApplePlatform PROPERTIES
+  INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_Swift_MODULE_DIRECTORY})
+
+set_property(GLOBAL APPEND PROPERTY SWIFTBUILD_EXPORTS SWBApplePlatform)
+
+install(TARGETS SWBApplePlatform
+    ARCHIVE DESTINATION "${SwiftBuild_INSTALL_LIBDIR}")

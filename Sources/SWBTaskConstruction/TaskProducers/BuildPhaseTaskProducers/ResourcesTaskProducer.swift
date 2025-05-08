@@ -13,6 +13,7 @@
 import SWBCore
 import SWBUtil
 import SWBMacro
+import Foundation
 
 /// Produces tasks for files in a Copy Resources build phase in an Xcode target.
 final class ResourcesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBasedBuildPhaseTaskProducer {
@@ -42,7 +43,7 @@ final class ResourcesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBa
         // If no resources are going to be processed, then we're done here!
         guard shouldProcessResources(scope) else { return }
 
-        // Add all of the resources as inputs as any change to a resource will result in an output that goes into a product that will be signed. This is a slightly naive approach to this, but calculating everything can be expensive and this should suffice without oversigning the product.
+        // Add all of the resources as inputs as any change to a resource will result in an output that goes into a product that will be signed. This is a slightly naive approach to this, but calculating everything can be expensive and this should suffice without over-signing the product.
         context.addAdditionalCodeSignInputs(buildPhase.buildFiles, context)
     }
 
@@ -111,7 +112,7 @@ final class ResourcesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBa
             context.didProduceAssetPackSubPath(assetPackInfo, subPath)
         }
 
-        let cbc = CommandBuildContext(producer: context, scope: scope, inputs: group.files, isPreferredArch: buildFilesContext.belongsToPreferedArch, buildPhaseInfo: buildFilesContext.buildPhaseInfo(for: rule), resourcesDir: resourcesDir, tmpResourcesDir: tmpResourcesDir, unlocalizedResourcesDir: unlocalizedResourcesDir)
+        let cbc = CommandBuildContext(producer: context, scope: scope, inputs: group.files, isPreferredArch: buildFilesContext.belongsToPreferredArch, buildPhaseInfo: buildFilesContext.buildPhaseInfo(for: rule), resourcesDir: resourcesDir, tmpResourcesDir: tmpResourcesDir, unlocalizedResourcesDir: unlocalizedResourcesDir)
         await constructTasksForRule(rule, cbc, delegate)
     }
 

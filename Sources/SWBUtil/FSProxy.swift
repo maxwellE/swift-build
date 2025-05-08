@@ -71,6 +71,8 @@ public struct FileInfo: Equatable, Sendable {
 
     public var isExecutable: Bool {
         #if os(Windows)
+        // Per https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/stat-functions, "user execute bits are set according to the filename extension".
+        // Don't use FileManager.isExecutableFile due to https://github.com/swiftlang/swift-foundation/issues/860
         return (statBuf.st_mode & UInt16(_S_IEXEC)) != 0
         #else
         return (statBuf.st_mode & S_IXUSR) != 0
@@ -123,7 +125,7 @@ public enum FileSystemMode: Sendable {
 ///
 /// This protocol is used to allow one part of the codebase to interact with a natural filesystem interface, while still allowing clients to transparently substitute a virtual file system or redirect file system operations.
 ///
-/// NOTE: All of these APIs are sychnronous and could block.
+/// NOTE: All of these APIs are synchronous and could block.
 //
 // FIXME: This API needs error handling support.
 //
@@ -148,6 +150,7 @@ public protocol FSProxy: AnyObject, Sendable {
     // FIXME: Need to document behavior w.r.t. error handling.
     func isDirectory(_ path: Path) -> Bool
 
+    /// Checks whether the given path has the execute bit (which on Windows is determined by the file extension).
     func isExecutable(_ path: Path) throws -> Bool
 
     /// Checks whether the given path is a symlink, also returning whether the linked file exists.
@@ -252,7 +255,7 @@ public protocol FSProxy: AnyObject, Sendable {
     func isOnPotentiallyRemoteFileSystem(_ path: Path) -> Bool
 
     /// Returns the free disk space of the volume of `path` in bytes, or `nil` if the underlying FS implementation doesn't support this.
-    func getFreeDiskSpace(_ path: Path) throws -> Int?
+    func getFreeDiskSpace(_ path: Path) throws -> ByteCount?
 }
 
 public extension FSProxy {
@@ -284,13 +287,17 @@ public extension FSProxy {
         return false
     }
 
-    func getFreeDiskSpace(_ path: Path) throws -> Int? {
+    func getFreeDiskSpace(_ path: Path) throws -> ByteCount? {
         return nil
     }
 
     func isSymlink(_ path: Path) -> Bool {
         var exists: Bool = false
         return isSymlink(path, &exists)
+    }
+
+    func getFileSize(_ path: Path) throws -> ByteCount {
+        try ByteCount(Int64(getFileInfo(path).statBuf.st_size))
     }
 }
 
@@ -608,69 +615,15 @@ class LocalFS: FSProxy, @unchecked Sendable {
     }
 
     func touch(_ path: Path) throws {
-        #if os(Windows)
-        let handle: HANDLE = path.withPlatformString {
-            CreateFileW($0, DWORD(GENERIC_WRITE), DWORD(FILE_SHARE_READ), nil,
-                        DWORD(OPEN_EXISTING), DWORD(FILE_FLAG_BACKUP_SEMANTICS), nil)
-        }
-        if handle == INVALID_HANDLE_VALUE {
-            throw StubError.error("Failed to update file time")
-        }
-        try handle.closeAfter {
-            var ft = FILETIME()
-            var st = SYSTEMTIME()
-            GetSystemTime(&st)
-            SystemTimeToFileTime(&st, &ft)
-            if !SetFileTime(handle, nil, &ft, &ft) {
-                throw StubError.error("Failed to update file time")
-            }
-        }
-        #else
-        try eintrLoop {
-            guard utimensat(AT_FDCWD, path.str, nil, 0) == 0 else {
-                throw POSIXError(errno, context: "utimensat", "AT_FDCWD", path.str)
-            }
-        }
-        #endif
+        try _setFileTimestamp(path, timestamp: Date())
     }
 
     func setFileTimestamp(_ path: Path, timestamp: Int) throws {
-        #if os(Windows)
-        let handle: HANDLE = path.withPlatformString {
-            CreateFileW($0, DWORD(GENERIC_WRITE), DWORD(FILE_SHARE_READ), nil,
-                        DWORD(OPEN_EXISTING), DWORD(FILE_FLAG_BACKUP_SEMANTICS), nil)
-        }
-        if handle == INVALID_HANDLE_VALUE {
-            throw StubError.error("Failed to update file time")
-        }
-        try handle.closeAfter {
-            // Number of 100ns intervals between 1601 and 1970 epochs
-            let delta = 116444736000000000
+        try _setFileTimestamp(path, timestamp: Date(timeIntervalSince1970: Double(timestamp)))
+    }
 
-            let ll = UInt64((timestamp * 10000000) + delta)
-
-            var timeInt = ULARGE_INTEGER()
-            timeInt.QuadPart = ll
-
-            var ft = FILETIME()
-            ft.dwLowDateTime = timeInt.LowPart
-            ft.dwHighDateTime = timeInt.HighPart
-            if !SetFileTime(handle, nil, &ft, &ft) {
-                throw StubError.error("Failed to update file time")
-            }
-        }
-        #else
-        try eintrLoop {
-            #if os(Linux) || os(Android)
-            let UTIME_OMIT = 1073741822
-            #endif
-            let atime = timespec(tv_sec: 0, tv_nsec: Int(UTIME_OMIT))
-            let mtime = timespec(tv_sec: timestamp, tv_nsec: 0)
-            guard utimensat(AT_FDCWD, path.str, [atime, mtime], 0) == 0 else {
-                throw POSIXError(errno, context: "utimensat", "AT_FDCWD", path.str, String(timestamp))
-            }
-        }
-        #endif
+    private func _setFileTimestamp(_ path: Path, timestamp: Date) throws {
+        try fileManager.setAttributes([.modificationDate: timestamp], ofItemAtPath: path.str)
     }
 
     func getFileInfo(_ path: Path) throws -> FileInfo {
@@ -737,7 +690,11 @@ class LocalFS: FSProxy, @unchecked Sendable {
 
         // FIXME: This enumerator has unclear error handling. Does nextObject() return nil on error? That's wrong.
         return try enumerator.compactMap { next in
-            let nextPath = path.join(next as? String)
+            // FileManager.DirectoryEnumerator produces Strings that are backed
+            // by NSPathStore2, which are slower to work with.
+            var next = (next as? String)
+            next?.makeContiguousUTF8()
+            let nextPath = path.join(next)
             return try f(nextPath)
         }
     }
@@ -759,7 +716,10 @@ class LocalFS: FSProxy, @unchecked Sendable {
 
     func listExtendedAttributes(_ path: Path) throws -> [String] {
         #if os(Windows)
-        // no xattrs on Windows
+        // Implement ADS on Windows? See also https://github.com/swiftlang/swift-foundation/issues/1166
+        return []
+        #elseif os(OpenBSD)
+        // OpenBSD no longer supports extended attributes
         return []
         #else
         #if canImport(Darwin)
@@ -797,7 +757,9 @@ class LocalFS: FSProxy, @unchecked Sendable {
 
     func setExtendedAttribute(_ path: Path, key: String, value: ByteString) throws {
         #if os(Windows)
-        // no xattrs on Windows
+        // Implement ADS on Windows? See also https://github.com/swiftlang/swift-foundation/issues/1166
+        #elseif os(OpenBSD)
+        // OpenBSD no longer supports extended attributes
         #else
         try value.bytes.withUnsafeBufferPointer { buf throws -> Void in
             #if canImport(Darwin)
@@ -814,7 +776,11 @@ class LocalFS: FSProxy, @unchecked Sendable {
 
     func getExtendedAttribute(_ path: Path, key: String) throws -> ByteString? {
         #if os(Windows)
-        return nil // no xattrs on Windows
+        // Implement ADS on Windows? See also https://github.com/swiftlang/swift-foundation/issues/1166
+        return nil
+        #elseif os(OpenBSD)
+        // OpenBSD no longer supports extended attributes
+        return nil
         #else
         var bufferSize = 4096
         repeat {
@@ -855,28 +821,10 @@ class LocalFS: FSProxy, @unchecked Sendable {
 
     func realpath(_ path: Path) throws -> Path {
         #if os(Windows)
-        let handle: HANDLE = path.withPlatformString {
-            CreateFileW($0, GENERIC_READ, DWORD(FILE_SHARE_READ), nil,
-                        DWORD(OPEN_EXISTING), DWORD(FILE_FLAG_BACKUP_SEMANTICS), nil)
-        }
-        if handle == INVALID_HANDLE_VALUE {
+        guard exists(path) else {
             throw POSIXError(ENOENT, context: "realpath", path.str)
         }
-        return try handle.closeAfter {
-            let dwLength: DWORD = GetFinalPathNameByHandleW(handle, nil, 0, DWORD(FILE_NAME_NORMALIZED))
-            return try withUnsafeTemporaryAllocation(of: WCHAR.self, capacity: Int(dwLength)) {
-                guard GetFinalPathNameByHandleW(handle, $0.baseAddress!, DWORD($0.count),
-                                                DWORD(FILE_NAME_NORMALIZED)) == dwLength - 1 else {
-                    throw StubError.error("GetFinalPathNameByHandleW failed")
-                }
-                let path = String(platformString: $0.baseAddress!)
-                // Drop UNC prefix if present
-                if path.hasPrefix(#"\\?\"#) {
-                    return Path(path.dropFirst(4))
-                }
-                return Path(path)
-            }
-        }
+        return Path(path.str.standardizingPath)
         #else
         guard let result = SWBLibc.realpath(path.str, nil) else { throw POSIXError(errno, context: "realpath", path.str) }
         defer { free(result) }
@@ -912,12 +860,12 @@ class LocalFS: FSProxy, @unchecked Sendable {
         #endif
     }
 
-    func getFreeDiskSpace(_ path: Path) throws -> Int? {
+    func getFreeDiskSpace(_ path: Path) throws -> ByteCount? {
         let systemAttributes = try fileManager.attributesOfFileSystem(forPath: path.str)
         guard let freeSpace = (systemAttributes[FileAttributeKey.systemFreeSize] as? NSNumber)?.int64Value else {
             return nil
         }
-        return Int(freeSpace)
+        return ByteCount(freeSpace)
     }
 }
 
@@ -1070,7 +1018,7 @@ public class PseudoFS: FSProxy, @unchecked Sendable {
 
     public let fileSystemMode: FileSystemMode
 
-    /// The root filesytem.
+    /// The root filesystem.
     private var root: Node
 
     public init(ignoreFileSystemDeviceInodeChanges: Bool = UserDefaults.ignoreFileSystemDeviceInodeChanges) {
@@ -1377,7 +1325,7 @@ public class PseudoFS: FSProxy, @unchecked Sendable {
                 #if os(Windows)
                 info.st_mtimespec = timespec(tv_sec: Int64(node.timestamp), tv_nsec: 0)
                 #else
-                info.st_mtimespec = timespec(tv_sec: node.timestamp, tv_nsec: 0)
+                info.st_mtimespec = timespec(tv_sec: time_t(node.timestamp), tv_nsec: 0)
                 #endif
                 info.st_size = off_t(contents.bytes.count)
                 info.st_dev = node.device
@@ -1390,7 +1338,7 @@ public class PseudoFS: FSProxy, @unchecked Sendable {
                 info.st_mtimespec = timespec(tv_sec: Int64(node.timestamp), tv_nsec: 0)
                 #else
                 info.st_mode = S_IFDIR
-                info.st_mtimespec = timespec(tv_sec: node.timestamp, tv_nsec: 0)
+                info.st_mtimespec = timespec(tv_sec: time_t(node.timestamp), tv_nsec: 0)
                 #endif
                 info.st_size = off_t(dir.contents.count)
                 info.st_dev = node.device
@@ -1403,7 +1351,7 @@ public class PseudoFS: FSProxy, @unchecked Sendable {
                 info.st_mtimespec = timespec(tv_sec: Int64(node.timestamp), tv_nsec: 0)
                 #else
                 info.st_mode = S_IFLNK
-                info.st_mtimespec = timespec(tv_sec: node.timestamp, tv_nsec: 0)
+                info.st_mtimespec = timespec(tv_sec: time_t(node.timestamp), tv_nsec: 0)
                 #endif
                 info.st_size = off_t(0)
                 info.st_dev = node.device
@@ -1621,13 +1569,6 @@ extension HANDLE {
         if !CloseHandle(self) {
             throw Win32Error(GetLastError())
         }
-    }
-}
-
-fileprivate struct Win32Error: Error {
-    let error: DWORD
-    init(_ error: DWORD) {
-        self.error = error
     }
 }
 #endif

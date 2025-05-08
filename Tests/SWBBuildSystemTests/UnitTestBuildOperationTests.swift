@@ -17,6 +17,7 @@ import SWBTestSupport
 import SWBCore
 import SWBProtocol
 import SWBUtil
+import SWBTaskExecution
 
 
 @Suite
@@ -53,7 +54,7 @@ fileprivate struct UnitTestBuildOperationTests: CoreBasedTests {
                 overrides["DSTROOT"] = tmpDirPath.join("dst").str
             }
             let parameters = BuildParameters(action: parameters.action, configuration: parameters.configuration, activeRunDestination: parameters.activeRunDestination, activeArchitecture: parameters.activeArchitecture, overrides: overrides)
-            try await tester.checkBuild(parameters: parameters, persistent: true, signableTargets: signableTargets, signableTargetInputs: provisioningInputs, sourceLocation: sourceLocation) { results in
+            try await tester.checkBuild(parameters: parameters, runDestination: nil, persistent: true, signableTargets: signableTargets, signableTargetInputs: provisioningInputs, sourceLocation: sourceLocation) { results in
                 check(results)
             }
         }
@@ -199,7 +200,7 @@ fileprivate struct UnitTestBuildOperationTests: CoreBasedTests {
                 return
             }
 
-            // Check tbhat the app sign task runs after the test targets' end gate tasks.
+            // Check that the app sign task runs after the test targets' end gate tasks.
             results.check(event: .taskHadEvent(testOneGateTask, event: .completed), precedes: .taskHadEvent(appSignTask, event: .started))
             results.check(event: .taskHadEvent(testTwoGateTask, event: .completed), precedes: .taskHadEvent(appSignTask, event: .started))
 
@@ -593,7 +594,7 @@ fileprivate struct UnitTestBuildOperationTests: CoreBasedTests {
                 "ENABLE_ADDITIONAL_CODESIGN_INPUT_TRACKING_FOR_SCRIPT_OUTPUTS": "YES",
             ])
 
-            try await tester.checkBuild(parameters: params, schemeCommand: .test, persistent: true, signableTargets: signableTargets) { results in
+            try await tester.checkBuild(parameters: params, runDestination: .macOS, schemeCommand: .test, persistent: true, signableTargets: signableTargets) { results in
                 results.consumeTasksMatchingRuleTypes(excludedTasks)
 
                 results.checkTasks { tasks in
@@ -605,7 +606,7 @@ fileprivate struct UnitTestBuildOperationTests: CoreBasedTests {
             }
 
             // Validate a null build.
-            try await tester.checkBuild(parameters: params, schemeCommand: .test, persistent: true, signableTargets: signableTargets) { results in
+            try await tester.checkBuild(parameters: params, runDestination: .macOS, schemeCommand: .test, persistent: true, signableTargets: signableTargets) { results in
                 // Check that no tasks ran.
                 if SWBFeatureFlag.performOwnershipAnalysis.value {
                     results.consumeTasksMatchingRuleTypes(["ClangStatCache"])
@@ -622,7 +623,7 @@ fileprivate struct UnitTestBuildOperationTests: CoreBasedTests {
             try await tester.fs.writeFileContents(testWorkspace.sourceRoot.join("aProject/Resource.txt")) { stream in
                 stream <<< "goodbye\n"
             }
-            try await tester.checkBuild(parameters: params, schemeCommand: .test, persistent: true, signableTargets: signableTargets) { results in
+            try await tester.checkBuild(parameters: params, runDestination: .macOS, schemeCommand: .test, persistent: true, signableTargets: signableTargets) { results in
                 results.consumeTasksMatchingRuleTypes(excludedTasks)
 
                 results.checkTask(.matchRule(["Copy", "\(buildDirectory)/Debug/AppTarget.app/Contents/Resources/Resource.txt", "\(SRCROOT)/aProject/Resource.txt"])) { _ in }
@@ -636,7 +637,7 @@ fileprivate struct UnitTestBuildOperationTests: CoreBasedTests {
             try await tester.fs.writeFileContents(testWorkspace.sourceRoot.join("aProject/ResourceTwo.txt")) { stream in
                 stream <<< "yeah baby!\n"
             }
-            try await tester.checkBuild(parameters: params, schemeCommand: .test, persistent: true, signableTargets: signableTargets) { results in
+            try await tester.checkBuild(parameters: params, runDestination: .macOS, schemeCommand: .test, persistent: true, signableTargets: signableTargets) { results in
                 results.consumeTasksMatchingRuleTypes(excludedTasks)
 
                 results.checkTask(.matchRule(["Copy", "\(buildDirectory)/Debug/AppTarget.app/Contents/PlugIns/UnitTestTargetTwo.xctest/Contents/Resources/ResourceTwo.txt", "\(SRCROOT)/aProject/ResourceTwo.txt"])) { _ in }
@@ -746,7 +747,7 @@ fileprivate struct UnitTestBuildOperationTests: CoreBasedTests {
             let signableTargets: Set<String> = ["UnitTestTarget", "AppTarget"]
 
             // Perform the initial build, which should fail due to the syntax error in the test target's source file.
-            try await tester.checkBuild(parameters: buildParameters, persistent: true, signableTargets: signableTargets) { results in
+            try await tester.checkBuild(parameters: buildParameters, runDestination: .macOS, persistent: true, signableTargets: signableTargets) { results in
                 withKnownIssue("fails due to rdar://72202535") {
                     // Check that the app target's compile task ran.  (The link command may or may not run, so we don't check it here.)
                     if let task = results.getTask(.matchTargetName("AppTarget"), .matchRuleType("SwiftDriver")) {
@@ -785,7 +786,7 @@ fileprivate struct UnitTestBuildOperationTests: CoreBasedTests {
             try await tester.fs.writeFileContents(testWorkspace.sourceRoot.join("aProject/TestOne.swift")) { stream in
                 stream <<< "func testFoo(){}"
             }
-            try await tester.checkBuild(parameters: buildParameters, persistent: true, signableTargets: signableTargets) { results in
+            try await tester.checkBuild(parameters: buildParameters, runDestination: .macOS, persistent: true, signableTargets: signableTargets) { results in
                 withKnownIssue("fails due to rdar://72202535") {
                     // Check that the app target's compile and link tasks ran.
                     if let task = results.getTask(.matchTargetName("AppTarget"), .matchRuleType("SwiftDriver")) {
@@ -820,7 +821,7 @@ fileprivate struct UnitTestBuildOperationTests: CoreBasedTests {
             try await tester.fs.writeFileContents(testWorkspace.sourceRoot.join("aProject/TestOne.swift")) { stream in
                 stream <<< "func testFoo(){  }"
             }
-            try await tester.checkBuild(parameters: buildParameters, persistent: true, signableTargets: signableTargets) { results in
+            try await tester.checkBuild(parameters: buildParameters, runDestination: .macOS, persistent: true, signableTargets: signableTargets) { results in
                 withKnownIssue("fails due to rdar://72202535") {
                     // Check that the app target's compile and link tasks did not run.
                     if let task = results.getTask(.matchTargetName("AppTarget"), .matchRuleType("SwiftDriver")) {
@@ -1267,65 +1268,6 @@ fileprivate struct UnitTestBuildOperationTests: CoreBasedTests {
                 else {
                     Issue.record("Could not get path to Info.plist for XCTRunner.app from rule: \(task.ruleInfo)")
                 }
-            }
-        }
-    }
-
-    /// Validates that a project building for a platform which uses bitcode is able to build successfully when linking to XCTest.
-    /// Testing frameworks like XCTest are not built with bitcode because they aren't intended to be shipped, and so dependencies of these targets should have bitcode disabled.
-    /// This is especially important for packages, which cannot disable bitcode.
-    @Test(.requireSDKs(.iOS))
-    func testingFrameworksWithBitcode() async throws {
-        try await withTemporaryDirectory { tmpDir in
-            let testWorkspace = TestWorkspace(
-                "Test",
-                sourceRoot: tmpDir.join("Test"),
-                projects: [
-                    TestProject(
-                        "aProject",
-                        groupTree: TestGroup(
-                            "Framework",
-                            children: [
-                                TestFile("Test.swift"),
-                                TestFile("XCTest.framework")
-                            ]),
-                        buildConfigurations: [
-                            TestBuildConfiguration(
-                                "Debug",
-                                buildSettings: [:]),
-                        ],
-                        targets: [
-                            TestStandardTarget(
-                                "Framework",
-                                type: .framework,
-                                buildConfigurations: [
-                                    TestBuildConfiguration(
-                                        "Debug",
-                                        buildSettings: [
-                                            "ENABLE_BITCODE": "YES",
-                                            "PRODUCT_NAME": "$(TARGET_NAME)",
-                                            "SDKROOT": "iphoneos",
-                                            "SWIFT_VERSION": "5.0",
-                                        ]),
-                                ],
-                                buildPhases: [
-                                    TestSourcesBuildPhase([
-                                        "Test.swift",
-                                    ]),
-                                    TestFrameworksBuildPhase([
-                                        "XCTest.framework"
-                                    ])
-                                ]
-                            )
-                        ])
-                ])
-            let tester = try await BuildOperationTester(getCore(), testWorkspace, simulated: false)
-
-            try tester.fs.createDirectory(testWorkspace.sourceRoot.join("aProject"), recursive: true)
-            try tester.fs.write(testWorkspace.sourceRoot.join("aProject").join("Test.swift"), contents: "import XCTest")
-
-            try await tester.checkBuild(runDestination: .iOS) { results in
-                results.checkNoDiagnostics()
             }
         }
     }

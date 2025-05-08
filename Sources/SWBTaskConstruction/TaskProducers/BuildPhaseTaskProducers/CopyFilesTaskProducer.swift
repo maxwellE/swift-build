@@ -13,12 +13,14 @@
 import SWBCore
 import SWBUtil
 import SWBMacro
+import SWBProtocol
+import Foundation
 
 /// Produces tasks for files in a Copy Files build phase in an Xcode target.
 ///
 /// Also subclassed by ``SwiftPackageCopyFilesTaskProducer``.
 class CopyFilesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBasedBuildPhaseTaskProducer {
-    typealias ManagedBuildPhase = CopyFilesBuildPhase
+    typealias ManagedBuildPhase = SWBCore.CopyFilesBuildPhase
 
     func prepare() {
         let scope = context.settings.globalScope
@@ -169,7 +171,7 @@ class CopyFilesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBasedBui
 
         // FIXME: Merge the region variant.
 
-        let cbc = CommandBuildContext(producer: context, scope: scope, inputs: group.files, isPreferredArch: buildFilesContext.belongsToPreferedArch, buildPhaseInfo: buildFilesContext.buildPhaseInfo(for: rule), resourcesDir: dstFolder, unlocalizedResourcesDir: dstFolder)
+        let cbc = CommandBuildContext(producer: context, scope: scope, inputs: group.files, isPreferredArch: buildFilesContext.belongsToPreferredArch, buildPhaseInfo: buildFilesContext.buildPhaseInfo(for: rule), resourcesDir: dstFolder, unlocalizedResourcesDir: dstFolder)
         await constructTasksForRule(rule, cbc, delegate)
     }
 
@@ -237,11 +239,12 @@ class CopyFilesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBasedBui
         // Determine whether we should re-sign on copy.  This is only done if the file-to-build wants it, *and* the file type supports it.
         let codeSignAfterCopying = ftb.codeSignOnCopy && ftb.fileType.codeSignOnCopy
 
-        // Determine whether we should strip bitcode during copying.  The default value of STRIP_BITCODE_FROM_COPIED_FILES is set on a per-SDK basis.
+        // Determine whether we should strip bitcode during copying.
+        // STRIP_BITCODE_FROM_COPIED_FILES is set to YES for non-simulator embedded platforms, so we don't need to spend time stripping it for other platforms.
         let stripBitcode = scope.evaluate(BuiltinMacros.STRIP_BITCODE_FROM_COPIED_FILES) && codeSignAfterCopying
 
         // SUPPORT FOR MERGEABLE LIBRARIES
-        // If this file was built as mergeable, and either we are a merged binary which is merging or reeexporting that file (and embedding it, which is the step that we're setting up here), or we are embedding that merged/reexported binary product as well as this product, then we need to skip copying the product's binary.
+        // If this file was built as mergeable, and either we are a merged binary which is merging or re-exporting that file (and embedding it, which is the step that we're setting up here), or we are embedding that merged/reexported binary product as well as this product, then we need to skip copying the product's binary.
         // Note that we remove the binary even for the debug workflow, because the SourcesTaskProducer will copy only the binary part of the product into the merged product to mimic the actual merge workflow.
         // FIXME: At present only products of other targets in this build, and XCFrameworks, are supported here.
         var subpathsToExclude = [String]()
@@ -323,7 +326,7 @@ class CopyFilesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBasedBui
                             for cTarget in [configuredTarget] + context.globalProductPlan.dependencies(of: configuredTarget) {
                                 // FIXME: Perhaps knowing "does this target link this XCFramework" is something that the GlobalProductPlan or XCFrameworkContext should know.
                                 var didFindBuildFile = false
-                                if let frameworksBuildPhase = (cTarget.target as? BuildPhaseTarget)?.frameworksBuildPhase {
+                                if let frameworksBuildPhase = (cTarget.target as? SWBCore.BuildPhaseTarget)?.frameworksBuildPhase {
                                     for linkedBuildFile in frameworksBuildPhase.buildFiles {
                                         // FIXME: This is sketchy: It's using the current context to evaluate a build file in potentially a different target. This might rarely matter since this code only applies to XCFrameworks, but it feels wrong.
                                         if let resolvedLinkedBuildFile = try? context.resolveBuildFileReference(linkedBuildFile), resolvedLinkedBuildFile.fileType.identifier == "wrapper.xcframework", resolvedBuildFile.absolutePath == resolvedLinkedBuildFile.absolutePath {
@@ -378,7 +381,7 @@ class CopyFilesTaskProducer: FilesBasedBuildPhaseTaskProducerBase, FilesBasedBui
                             }
                         default:
                             // These types do not support mergeable metadata.  This should have been caught at XCFramework creation time, but perhaps someone edited the XCFramework after creation.
-                            // In this case, we emit a warning and copy these items normally, withoutn stripping any mergeable metadata they may have.  We may refine this in the future.
+                            // In this case, we emit a warning and copy these items normally, without stripping any mergeable metadata they may have.  We may refine this in the future.
                             context.warning("XCFramework claims \(library.libraryType.libraryTypeName) contains mergeable metadata, which is not supported: \(resolvedBuildFile.absolutePath)")
                         }
                     }

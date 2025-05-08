@@ -15,6 +15,7 @@ import SWBUtil
 import SWBCore
 
 import SWBTestSupport
+import SWBProtocol
 
 @Suite(.performance)
 fileprivate struct SettingsPerfTests: CoreBasedTests, PerfTests {
@@ -28,7 +29,7 @@ fileprivate struct SettingsPerfTests: CoreBasedTests, PerfTests {
                 projects: [
                     TestProject("aProject",
                                 groupTree: TestGroup("SomeFiles"),
-                                targets: [TestStandardTarget("Target1")]
+                                targets: [TestStandardTarget("Target1", type: .application)]
                                )
                 ]).loadHelper(getCore())
             let context = helper.workspaceContext

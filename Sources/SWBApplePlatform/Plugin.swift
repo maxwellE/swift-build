@@ -18,6 +18,7 @@ import Foundation
 import SWBTaskConstruction
 
 @PluginExtensionSystemActor public func initializePlugin(_ manager: PluginManager) {
+    manager.register(AppleDeveloperDirectoryExtension(), type: DeveloperDirectoryExtensionPoint.self)
     manager.register(ApplePlatformSpecsExtension(), type: SpecificationsExtensionPoint.self)
     manager.register(ActoolInputFileGroupingStrategyExtension(), type: InputFileGroupingStrategyExtensionPoint.self)
     manager.register(ImageScaleFactorsInputFileGroupingStrategyExtension(), type: InputFileGroupingStrategyExtensionPoint.self)
@@ -25,7 +26,14 @@ import SWBTaskConstruction
     manager.register(XCStringsInputFileGroupingStrategyExtension(), type: InputFileGroupingStrategyExtensionPoint.self)
     manager.register(TaskProducersExtension(), type: TaskProducerExtensionPoint.self)
     manager.register(MacCatalystInfoExtension(), type: SDKVariantInfoExtensionPoint.self)
+    manager.register(ApplePlatformInfoExtension(), type: PlatformInfoExtensionPoint.self)
     manager.register(AppleSettingsBuilderExtension(), type: SettingsBuilderExtensionPoint.self)
+}
+
+struct AppleDeveloperDirectoryExtension: DeveloperDirectoryExtension {
+    func fallbackDeveloperDirectory(hostOperatingSystem: OperatingSystem) async throws -> Path? {
+        try await hostOperatingSystem == .macOS ? Xcode.getActiveDeveloperDirectoryPath() : nil
+    }
 }
 
 struct TaskProducersExtension: TaskProducerExtension {
@@ -39,7 +47,15 @@ struct TaskProducersExtension: TaskProducerExtension {
     }
 
     var unorderedPostSetupTaskProducers: [any TaskProducerFactory] {
-        [StubBinaryTaskProducerFactory()]
+        [
+            StubBinaryTaskProducerFactory()
+        ]
+    }
+
+    var unorderedPostBuildPhasesTaskProducers: [any TaskProducerFactory] {
+        [
+            AppIntentsMetadataTaskProducerFactory()
+        ]
     }
 
     var globalTaskProducers: [any GlobalTaskProducerFactory] {
@@ -61,6 +77,16 @@ struct StubBinaryTaskProducerFactory: TaskProducerFactory, GlobalTaskProducerFac
     }
 }
 
+struct AppIntentsMetadataTaskProducerFactory : TaskProducerFactory {
+    var name: String {
+        "AppIntentsMetadataTaskProducer"
+    }
+
+    func createTaskProducer(_ context: TargetTaskProducerContext, startPhaseNodes: [PlannedVirtualNode], endPhaseNode: PlannedVirtualNode) -> any TaskProducer {
+        AppIntentsMetadataTaskProducer(context, phaseStartNodes: startPhaseNodes, phaseEndNode: endPhaseNode)
+    }
+}
+
 struct RealityAssetsTaskProducerFactory: TaskProducerFactory {
     var name: String {
         "RealityAssetsTaskProducer"
@@ -75,6 +101,8 @@ struct ApplePlatformSpecsExtension: SpecificationsExtension {
     func specificationClasses() -> [any SpecIdentifierType.Type] {
         [
             ActoolCompilerSpec.self,
+            AppIntentsMetadataCompilerSpec.self,
+            AppIntentsSSUTrainingCompilerSpec.self,
             CoreDataModelCompilerSpec.self,
             CoreMLCompilerSpec.self,
             CopyTiffFileSpec.self,
@@ -98,8 +126,8 @@ struct ApplePlatformSpecsExtension: SpecificationsExtension {
         ]
     }
 
-    func specificationFiles() -> Bundle? {
-        .module
+    func specificationFiles(resourceSearchPaths: [Path]) -> Bundle? {
+        findResourceBundle(nameWhenInstalledInToolchain: "SwiftBuild_SWBApplePlatform", resourceSearchPaths: resourceSearchPaths, defaultBundle: Bundle.module)
     }
 
     func specificationDomains() -> [String : [String]] {
@@ -127,6 +155,10 @@ struct ActoolInputFileGroupingStrategyExtension: InputFileGroupingStrategyExtens
         }
         return ["actool": Factory()]
     }
+
+    func fileTypesCompilingToSwiftSources() -> [String] {
+        return ["folder.abstractassetcatalog"]
+    }
 }
 
 struct ImageScaleFactorsInputFileGroupingStrategyExtension: InputFileGroupingStrategyExtension {
@@ -137,6 +169,10 @@ struct ImageScaleFactorsInputFileGroupingStrategyExtension: InputFileGroupingStr
             }
         }
         return ["image-scale-factors": Factory()]
+    }
+
+    func fileTypesCompilingToSwiftSources() -> [String] {
+        return []
     }
 }
 
@@ -149,6 +185,10 @@ struct LocalizationInputFileGroupingStrategyExtension: InputFileGroupingStrategy
         }
         return ["region": Factory()]
     }
+
+    func fileTypesCompilingToSwiftSources() -> [String] {
+        return []
+    }
 }
 
 struct XCStringsInputFileGroupingStrategyExtension: InputFileGroupingStrategyExtension {
@@ -159,6 +199,36 @@ struct XCStringsInputFileGroupingStrategyExtension: InputFileGroupingStrategyExt
             }
         }
         return ["xcstrings": Factory()]
+    }
+
+    func fileTypesCompilingToSwiftSources() -> [String] {
+        return []
+    }
+}
+
+struct ApplePlatformInfoExtension: PlatformInfoExtension {
+    func knownDeploymentTargetMacroNames() -> Set<String> {
+        [
+            "MACOSX_DEPLOYMENT_TARGET",
+            "IPHONEOS_DEPLOYMENT_TARGET",
+            "TVOS_DEPLOYMENT_TARGET",
+            "WATCHOS_DEPLOYMENT_TARGET",
+            "DRIVERKIT_DEPLOYMENT_TARGET",
+            "XROS_DEPLOYMENT_TARGET",
+        ]
+    }
+
+    func preferredArchValue(for platformName: String) -> String? {
+        // FIXME: rdar://65011964 (Remove PLATFORM_PREFERRED_ARCH)
+        // Don't add values for any new platforms
+        switch platformName {
+        case "macosx", "iphonesimulator", "appletvsimulator", "watchsimulator":
+            return "x86_64"
+        case "iphoneos", "appletvos", "watchos":
+            return "arm64"
+        default:
+            return nil
+        }
     }
 }
 
