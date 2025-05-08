@@ -78,12 +78,11 @@ package actor BazelBuildManager {
 
         var environment: [String: String] = workspaceContext.userInfo?.processEnvironment ?? [:]
 
-        let settings: Settings = buildRequestContext.getCachedSettings(request.buildTargets.first!.parameters, target: request.buildTargets.first!.target)
-
-        let scriptEnvironment: [String: String] = computeScriptEnvironment(.shellScriptPhase, scope: settings.globalScope, settings: settings, workspaceContext: workspaceContext)
-
-        environment.merge(scriptEnvironment) { lhs, rhs in
-            lhs
+        for buildTarget in request.buildTargets {
+            let settings: Settings = buildRequestContext.getCachedSettings(buildTarget.parameters, target: buildTarget.target)
+            environment.merge(computeScriptEnvironment(.shellScriptPhase, scope: settings.globalScope, settings: settings, workspaceContext: workspaceContext)) { lhs, rhs in
+                lhs
+            }
         }
 
         return BazelBuildOperation(request, buildRequestContext, description, environment: environment, operationDelegate, clientDelegate, cachedBuildSystems, persistent: true, buildOutputMap: buildOutputMap, nodesToBuild: nodesToBuild, workspace: workspaceContext.workspace, core: workspaceContext.core, userPreferences: workspaceContext.userPreferences)

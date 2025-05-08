@@ -14,7 +14,7 @@ protocol BazelBuildProcess {
                 _ environment: [String: String],
                 _ finishStartup: @escaping (_ buildLabelsResult: Result<[String], any Error>) -> Void
             ) -> Void,
-            _ startProcessHandler: @escaping (_ finalTargetPatterns: String, _ workingDirectory: String, _ environment: [String: String]) -> String
+            _ startProcessHandler: @escaping (_ finalTargetPatterns: String, _ workingDirectory: String, _ environment: [String: String], _ scriptPath: String) -> String
         ) -> Void,
         outputHandler: @escaping (Data) -> Void,
         bepHandler: @escaping (BuildEventStream_BuildEvent) -> Void,
@@ -70,7 +70,7 @@ final class BazelClient: BazelBuildProcess {
                 _ environment: [String: String],
                 _ finishStartup: @escaping (_ buildLabelsResult: Result<[String], any Error>) -> Void
             ) -> Void,
-            _ startProcessHandler: @escaping (_ finalTargetPatterns: String, _ workingDirectory: String, _ environment: [String: String]) -> String
+            _ startProcessHandler: @escaping (_ finalTargetPatterns: String, _ workingDirectory: String, _ environment: [String: String], _ scriptPath: String) -> String
         ) -> Void,
         outputHandler: @escaping (Data) -> Void,
         bepHandler: @escaping (BuildEventStream_BuildEvent) -> Void,
@@ -217,7 +217,7 @@ final class BazelClient: BazelBuildProcess {
                     uniqueBuildLabelsHandler: finishStartup
                 )
             },
-            { [process, bepPath] finalTargetPatterns, workingDirectory, environment in
+            { [process, bepPath] finalTargetPatterns, workingDirectory, environment, scriptPath in
                 var environment = environment
                 environment["SWIFT_BUILD_BEP_PATH"] = bepPath
                 environment["OUTPUT_GROUPS_FILE"] = self.createOutputGroupsFile(finalTargetPatterns)
@@ -228,7 +228,7 @@ final class BazelClient: BazelBuildProcess {
 
                 let arguments: [String] = [
                     "-c",
-                    "$BAZEL_INTEGRATION_DIR/proxy_build.sh"
+                    scriptPath
                 ]
 
                 process.arguments = arguments
@@ -238,13 +238,20 @@ final class BazelClient: BazelBuildProcess {
                 try! process.run()
                 process.waitUntilExit()
 
+                let renderedEnvironment: [String] = (process.environment ?? [:]).sorted { lhs, rhs in
+                    lhs < rhs
+                }.map {
+                    "\($0)=\($1.exportQuoted)"
+                }
+
+                try! renderedEnvironment.joined(separator: .newline).write(toFile: "/tmp/printenvdumpforbwp.txt", atomically: true, encoding: .utf8)
+
                 return """
                 cd \(process.currentDirectoryPath)
                 \(
-                    (process.environment ?? [:])
-                        .sorted { $0.key < $1.key }
-                        .map { "export \($0)=\($1.exportQuoted)" }
-                        .joined(separator: "\n")
+                    (renderedEnvironment
+                        .map { "export \($0)" }
+                        .joined(separator: "\n"))
                 )
                 \(command)
                 """
@@ -305,7 +312,7 @@ final class CleanBuildFolderProcess: BazelBuildProcess {
                 _ environment: [String: String],
                 _ finishStartup: @escaping (_ buildLabelsResult: Result<[String], any Error>) -> Void
             ) -> Void,
-            _ startProcessHandler: @escaping (_ finalTargetPatterns: String, _ workingDirectory: String, _ environment: [String: String]) -> String
+            _ startProcessHandler: @escaping (_ finalTargetPatterns: String, _ workingDirectory: String, _ environment: [String: String], _ scriptPath: String) -> String
         ) -> Void,
         outputHandler: @escaping (Data) -> Void,
         bepHandler: @escaping (BuildEventStream_BuildEvent) -> Void,
@@ -358,7 +365,7 @@ final class CleanBuildFolderProcess: BazelBuildProcess {
         let command = "\(process.launchPath!) \(process.arguments!.joined(separator: " "))"
 
         logger.info("Cleaning build folder with command: \(command)")
-        startedHandler({ $3(.success([])) }, { [process] _, _, _ in
+        startedHandler({ $3(.success([])) }, { [process] _, _, _, _ in
             try! process.run()
             return ""
         })
