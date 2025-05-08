@@ -58,7 +58,6 @@ package final class BazelBuildOperation: BuildOperation {
                     commandEnvironment = passedEnvironment
                 }
 
-
                 commandEnvironment["RULES_XCODEPROJ_BUILD_MODE"] = "proxy"
                 commandEnvironment["DEVELOPER_DIR"] = self.core.developerPath.path.str
                 commandEnvironment["XCODE_PRODUCT_BUILD_VERSION"] = self.core.xcodeProductBuildVersionString
@@ -98,7 +97,7 @@ package final class BazelBuildOperation: BuildOperation {
                     targetPatterns.joined(separator: "\n"),
                     commandEnvironment["SRCROOT"]!,
                     commandEnvironment.filter({ (key: String, value: String) in
-                        !(key.hasPrefix("BAZEL_OUTPUTS_") || key.hasPrefix("INDEX_DATA_STORE_DIR"))
+                        !(key.hasPrefix("BAZEL_OUTPUTS_") || key.hasPrefix("$(INDEX_DATA_STORE_DIR)"))
                     }),
                     self.workspace.path.dirname.str + "/rules_xcodeproj/bazel/proxy_build.sh"
                 )
@@ -122,7 +121,7 @@ package final class BazelBuildOperation: BuildOperation {
                         let completedActionsRange = Range(match.range(at: 1), in: message),
                         let totalActionsRange = Range(match.range(at: 3), in: message)
                     {
-                        self.delegate.updateBuildProgress(statusMessage: String(message[finalMessageRange]).capitalized, showInLog: true)
+                        self.delegate.updateBuildProgress(statusMessage: String(message[finalMessageRange]), showInLog: true)
                         let completedActionsString = message[completedActionsRange]
                             .replacingOccurrences(of: ",", with: "")
                         let totalActionsString = message[totalActionsRange]
